@@ -99,7 +99,7 @@ section[data-testid="stSidebar"] .stButton > button {
     background: transparent !important;
     border: none !important;
     border-radius: 6px !important;
-    color: #3d4a1e !important;
+    color: #7a8c3a !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.84rem !important;
     font-weight: 500 !important;
@@ -111,14 +111,14 @@ section[data-testid="stSidebar"] .stButton > button {
     width: 100% !important;
 }
 section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #d4dbb8 !important;
-    color: #1a2208 !important;
+    background: #dde4c4 !important;
+    color: #5a6e20 !important;
 }
 /* Logout button — keep it styled differently */
 section[data-testid="stSidebar"] div:has(> button[kind="secondary"]#logout_btn) button,
 section[data-testid="stSidebar"] [data-testid="stButton"]:last-of-type button {
-    background: #3d4a1e !important;
-    color: #e8eddf !important;
+    background: #8a9e45 !important;
+    color: #f5f7ee !important;
     text-align: center !important;
     justify-content: center !important;
 }
@@ -3289,7 +3289,7 @@ def render_sidebar():
             is_active = st.session_state["current_page"] == page
             label = ("▶ " if is_active else "   ") + page
             btn_style = (
-                "background:#d4dbb8 !important;color:#1a2208 !important;font-weight:700 !important;"
+                "background:#dde4c4 !important;color:#5a6e20 !important;font-weight:700 !important;"
                 if is_active else ""
             )
             st.markdown(
