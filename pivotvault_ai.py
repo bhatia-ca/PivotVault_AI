@@ -58,7 +58,15 @@ html, body, [class*="css"] {
     background-color: var(--bg);
     color: var(--text);
 }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer { visibility: hidden; }
+header { visibility: hidden; }
+/* Keep sidebar toggle button visible on mobile */
+header [data-testid="stSidebarCollapsedControl"],
+button[kind="header"],
+div[data-testid="collapsedControl"] {
+    visibility: visible !important;
+    display: flex !important;
+}
 .block-container { padding: 1.5rem 2rem 2rem; max-width: 1500px; }
 
 /* ── SIDEBAR — light olive green ─────────────────────────────────────── */
