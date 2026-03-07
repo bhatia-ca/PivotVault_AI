@@ -937,40 +937,80 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
         st.caption("Data unavailable — NSE API may require VPN / direct browser session.")
         return
 
-    for _, row in df.iterrows():
-        sym   = str(row.get("Symbol", "")).strip()
-        ltp   = row.get("LTP", "")
-        chg   = row.get("Chg %", "")
-        chg_str = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else str(chg)
-        btn_color = "#00e5a0" if color == "#00e5a0" else "#ff4d6a"
+    # CSS: make symbol buttons look like hyperlinks, not buttons
+    st.markdown("""
+    <style>
+    [data-testid="stHorizontalBlock"] .mover-link-btn button {
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        text-decoration: underline !important;
+        text-underline-offset: 3px !important;
+        text-decoration-style: dotted !important;
+        cursor: pointer !important;
+        justify-content: flex-start !important;
+        letter-spacing: 0.01em !important;
+        min-height: unset !important;
+        height: auto !important;
+        line-height: 1.4 !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stHorizontalBlock"] .mover-link-btn button:hover {
+        text-decoration-style: solid !important;
+        background: transparent !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-        col_sym, col_ltp, col_chg, col_btn = st.columns([2.5, 1.8, 1.8, 1.5])
+    # Header row
+    h1, h2, h3 = st.columns([2.8, 1.8, 1.8])
+    h1.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>SYMBOL</div>", unsafe_allow_html=True)
+    h2.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>LTP</div>", unsafe_allow_html=True)
+    h3.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>CHG %</div>", unsafe_allow_html=True)
+
+    chg_color = "#00e5a0" if color == "#00e5a0" else "#ff4d6a"
+
+    for _, row in df.iterrows():
+        sym     = str(row.get("Symbol", "")).strip()
+        ltp     = row.get("LTP", "—")
+        chg     = row.get("Chg %", "")
+        chg_str = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else str(chg)
+
+        col_sym, col_ltp, col_chg = st.columns([2.8, 1.8, 1.8])
+
         with col_sym:
-            st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
-                f"font-weight:600;color:#d4daf0;padding-top:0.45rem;'>{sym}</div>",
-                unsafe_allow_html=True,
+            # Wrap in a div with our CSS class so the button looks like a link
+            st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
+            clicked = st.button(
+                sym,
+                key=f"mover_lnk_{sym}_{color[-3:]}",
+                use_container_width=False,
             )
+            st.markdown('</div>', unsafe_allow_html=True)
+            if clicked:
+                st.session_state["screener_symbol"]      = sym
+                st.session_state["screener_nav_pending"] = True
+                st.session_state["mobile_page"]          = "Stock Screener"
+                # Also drive sidebar radio to Screener
+                st.session_state["_sidebar_nav"]         = "Stock Screener"
+                st.query_params["nav"] = "screener"
+                st.rerun()
+
         with col_ltp:
             st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
-                f"color:#9aa3c0;padding-top:0.45rem;'>{ltp}</div>",
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
+                f"color:#9aa3c0;padding-top:0.3rem;'>{ltp}</div>",
                 unsafe_allow_html=True,
             )
         with col_chg:
             st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
-                f"color:{btn_color};padding-top:0.45rem;'>{chg_str}</div>",
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
+                f"color:{chg_color};padding-top:0.3rem;'>{chg_str}</div>",
                 unsafe_allow_html=True,
             )
-        with col_btn:
-            if st.button("Analyse →", key=f"mover_btn_{sym}_{color[-3:]}",
-                         use_container_width=True):
-                st.session_state["screener_symbol"]      = sym
-                st.session_state["screener_nav_pending"] = True
-                st.session_state["mobile_page"]          = "Stock Screener"
-                st.query_params["nav"] = "screener"
-                st.rerun()
 
 
 @st.cache_data(ttl=300)
@@ -1273,15 +1313,18 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 )
                 for _, r in top_g.iterrows():
                     _sym = r["Symbol"]; _chg = r["Change%"]
-                    ca, cb, cc = st.columns([2.5, 1.8, 1.5])
-                    ca.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#d4daf0;padding-top:0.4rem;'>{_sym}</div>", unsafe_allow_html=True)
-                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#00e5a0;padding-top:0.4rem;'>+{_chg:.2f}%</div>", unsafe_allow_html=True)
-                    if cc.button("→", key=f"hm_g_{_sym}", use_container_width=True):
-                        st.session_state["screener_symbol"]      = _sym
-                        st.session_state["screener_nav_pending"] = True
-                        st.session_state["mobile_page"]          = "Stock Screener"
-                        st.query_params["nav"] = "screener"
-                        st.rerun()
+                    ca, cb = st.columns([3.2, 2.2])
+                    with ca:
+                        st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
+                        if st.button(_sym, key=f"hm_g_{_sym}", use_container_width=False):
+                            st.session_state["screener_symbol"]      = _sym
+                            st.session_state["screener_nav_pending"] = True
+                            st.session_state["mobile_page"]          = "Stock Screener"
+                            st.session_state["_sidebar_nav"]         = "Stock Screener"
+                            st.query_params["nav"] = "screener"
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#00e5a0;padding-top:0.3rem;'>+{_chg:.2f}%</div>", unsafe_allow_html=True)
 
             with d2:
                 st.markdown(
@@ -1293,15 +1336,18 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 )
                 for _, r in top_l.iterrows():
                     _sym = r["Symbol"]; _chg = r["Change%"]
-                    ca, cb, cc = st.columns([2.5, 1.8, 1.5])
-                    ca.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#d4daf0;padding-top:0.4rem;'>{_sym}</div>", unsafe_allow_html=True)
-                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#ff4d6a;padding-top:0.4rem;'>{_chg:.2f}%</div>", unsafe_allow_html=True)
-                    if cc.button("→", key=f"hm_l_{_sym}", use_container_width=True):
-                        st.session_state["screener_symbol"]      = _sym
-                        st.session_state["screener_nav_pending"] = True
-                        st.session_state["mobile_page"]          = "Stock Screener"
-                        st.query_params["nav"] = "screener"
-                        st.rerun()
+                    ca, cb = st.columns([3.2, 2.2])
+                    with ca:
+                        st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
+                        if st.button(_sym, key=f"hm_l_{_sym}", use_container_width=False):
+                            st.session_state["screener_symbol"]      = _sym
+                            st.session_state["screener_nav_pending"] = True
+                            st.session_state["mobile_page"]          = "Stock Screener"
+                            st.session_state["_sidebar_nav"]         = "Stock Screener"
+                            st.query_params["nav"] = "screener"
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#ff4d6a;padding-top:0.3rem;'>{_chg:.2f}%</div>", unsafe_allow_html=True)
 
     else:
         st.markdown(
@@ -3218,10 +3264,15 @@ def render_sidebar():
             "margin-bottom:1.25rem;'>Pivot Boss · Equity Terminal</div>",
             unsafe_allow_html=True,
         )
+        # If a stock was clicked from Market Snapshot, force Screener tab
+        _forced = st.session_state.pop("_sidebar_nav", None)
+        _nav_idx = _NAV_PAGES.index(_forced) if _forced in _NAV_PAGES else None
         menu = st.radio(
             "Navigation",
             _NAV_PAGES,
+            index=_nav_idx if _nav_idx is not None else 0,
             label_visibility="collapsed",
+            key="sidebar_radio",
         )
         st.divider()
         wl_count = len(st.session_state["watchlist"])
@@ -3261,10 +3312,11 @@ def main():
     # Inject mobile bottom nav (hidden on desktop via CSS)
     render_mobile_nav(mobile_menu)
 
-    # On mobile the sidebar is hidden, so use mobile_menu;
-    # on desktop use the sidebar radio. We detect by checking query param.
+    # If navigated from a stock click, always land on Screener regardless of device
     params = st.query_params
-    if params.get("nav"):
+    if st.session_state.get("screener_nav_pending"):
+        menu = "Stock Screener"
+    elif params.get("nav"):
         menu = mobile_menu
     else:
         menu = desktop_menu
