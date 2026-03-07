@@ -94,15 +94,33 @@ section[data-testid="stSidebar"] .stRadio label:hover {
 section[data-testid="stSidebar"] hr {
     border-color: #c5cfa8 !important;
 }
+/* Sidebar nav buttons */
 section[data-testid="stSidebar"] .stButton > button {
-    background: #3d4a1e !important;
-    border: 1px solid #2d3318 !important;
-    color: #e8eddf !important;
-    font-weight: 600;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 6px !important;
+    color: #3d4a1e !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.84rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.02em !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    padding: 0.45rem 0.75rem !important;
+    transition: background 0.15s !important;
+    width: 100% !important;
 }
 section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #2d3318 !important;
+    background: #d4dbb8 !important;
+    color: #1a2208 !important;
+}
+/* Logout button — keep it styled differently */
+section[data-testid="stSidebar"] div:has(> button[kind="secondary"]#logout_btn) button,
+section[data-testid="stSidebar"] [data-testid="stButton"]:last-of-type button {
+    background: #3d4a1e !important;
     color: #e8eddf !important;
+    text-align: center !important;
+    justify-content: center !important;
 }
 
 div[data-testid="metric-container"] {
@@ -993,9 +1011,8 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
             if clicked:
                 st.session_state["screener_symbol"]      = sym
                 st.session_state["screener_nav_pending"] = True
+                st.session_state["current_page"]         = "Stock Screener"
                 st.session_state["mobile_page"]          = "Stock Screener"
-                # Also drive sidebar radio to Screener
-                st.session_state["_sidebar_nav"]         = "Stock Screener"
                 st.query_params["nav"] = "screener"
                 st.rerun()
 
@@ -1319,8 +1336,8 @@ def page_market_snapshot(nse500: pd.DataFrame):
                         if st.button(_sym, key=f"hm_g_{_sym}", use_container_width=False):
                             st.session_state["screener_symbol"]      = _sym
                             st.session_state["screener_nav_pending"] = True
+                            st.session_state["current_page"]         = "Stock Screener"
                             st.session_state["mobile_page"]          = "Stock Screener"
-                            st.session_state["_sidebar_nav"]         = "Stock Screener"
                             st.query_params["nav"] = "screener"
                             st.rerun()
                         st.markdown('</div>', unsafe_allow_html=True)
@@ -1342,8 +1359,8 @@ def page_market_snapshot(nse500: pd.DataFrame):
                         if st.button(_sym, key=f"hm_l_{_sym}", use_container_width=False):
                             st.session_state["screener_symbol"]      = _sym
                             st.session_state["screener_nav_pending"] = True
+                            st.session_state["current_page"]         = "Stock Screener"
                             st.session_state["mobile_page"]          = "Stock Screener"
-                            st.session_state["_sidebar_nav"]         = "Stock Screener"
                             st.query_params["nav"] = "screener"
                             st.rerun()
                         st.markdown('</div>', unsafe_allow_html=True)
@@ -3264,16 +3281,30 @@ def render_sidebar():
             "margin-bottom:1.25rem;'>Pivot Boss · Equity Terminal</div>",
             unsafe_allow_html=True,
         )
-        # If a stock was clicked from Market Snapshot, force Screener tab
-        _forced = st.session_state.pop("_sidebar_nav", None)
-        _nav_idx = _NAV_PAGES.index(_forced) if _forced in _NAV_PAGES else None
-        menu = st.radio(
-            "Navigation",
-            _NAV_PAGES,
-            index=_nav_idx if _nav_idx is not None else 0,
-            label_visibility="collapsed",
-            key="sidebar_radio",
-        )
+        # Use session_state key so we can change it programmatically
+        if "current_page" not in st.session_state:
+            st.session_state["current_page"] = "Market Snapshot"
+
+        for page in _NAV_PAGES:
+            is_active = st.session_state["current_page"] == page
+            label = ("▶ " if is_active else "   ") + page
+            btn_style = (
+                "background:#d4dbb8 !important;color:#1a2208 !important;font-weight:700 !important;"
+                if is_active else ""
+            )
+            st.markdown(
+                f"<style>.sidebar-btn-{_NAV_PAGES.index(page)} button{{{btn_style}}}</style>",
+                unsafe_allow_html=True,
+            )
+            col = st.container()
+            with col:
+                if st.button(label, key=f"nav_btn_{page}", use_container_width=True):
+                    st.session_state["current_page"]         = page
+                    st.session_state["mobile_page"]          = page
+                    st.session_state["screener_nav_pending"] = False
+                    st.query_params.clear()
+                    st.rerun()
+
         st.divider()
         wl_count = len(st.session_state["watchlist"])
         st.markdown(
@@ -3290,10 +3321,9 @@ def render_sidebar():
             f"<span style='color:#1a2208;font-weight:600;'>{user}</span></div>",
             unsafe_allow_html=True,
         )
-        if st.button("Logout", use_container_width=True):
+        if st.button("Logout", key="logout_btn", use_container_width=True):
             st.session_state["logged_in"] = False
             st.rerun()
-    return menu
 
 
 # ─────────────────────────────────────────────
@@ -3304,23 +3334,25 @@ def main():
         page_login()
         return
 
-    # Desktop: sidebar drives navigation
-    # Mobile: bottom nav + query params drive navigation
-    desktop_menu = render_sidebar()
-    mobile_menu  = get_mobile_page()
+    # Initialise current_page if missing
+    if "current_page" not in st.session_state:
+        st.session_state["current_page"] = "Market Snapshot"
 
-    # Inject mobile bottom nav (hidden on desktop via CSS)
-    render_mobile_nav(mobile_menu)
+    # Handle mobile bottom-nav query param
+    nav_key = st.query_params.get("nav")
+    key_to_page = dict(zip(_NAV_KEYS, _NAV_PAGES))
+    if nav_key in key_to_page:
+        st.session_state["current_page"] = key_to_page[nav_key]
 
-    # If navigated from a stock click, always land on Screener regardless of device
-    params = st.query_params
+    # Stock click from Market Snapshot overrides everything
     if st.session_state.get("screener_nav_pending"):
-        menu = "Stock Screener"
-    elif params.get("nav"):
-        menu = mobile_menu
-    else:
-        menu = desktop_menu
+        st.session_state["current_page"]         = "Stock Screener"
+        st.session_state["screener_nav_pending"] = False
 
+    menu = st.session_state["current_page"]
+
+    render_sidebar()
+    render_mobile_nav(menu)
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
