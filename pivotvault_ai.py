@@ -315,6 +315,8 @@ defaults = {
     'wl_data': {},
     'wl_last_refresh': None,
     'mobile_page': 'Market Snapshot',
+    'screener_symbol': None,
+    'screener_nav_pending': False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -933,8 +935,42 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
     )
     if df.empty:
         st.caption("Data unavailable — NSE API may require VPN / direct browser session.")
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        return
+
+    for _, row in df.iterrows():
+        sym   = str(row.get("Symbol", "")).strip()
+        ltp   = row.get("LTP", "")
+        chg   = row.get("Chg %", "")
+        chg_str = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else str(chg)
+        btn_color = "#00e5a0" if color == "#00e5a0" else "#ff4d6a"
+
+        col_sym, col_ltp, col_chg, col_btn = st.columns([2.5, 1.8, 1.8, 1.5])
+        with col_sym:
+            st.markdown(
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
+                f"font-weight:600;color:#d4daf0;padding-top:0.45rem;'>{sym}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_ltp:
+            st.markdown(
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
+                f"color:#9aa3c0;padding-top:0.45rem;'>{ltp}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_chg:
+            st.markdown(
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
+                f"color:{btn_color};padding-top:0.45rem;'>{chg_str}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            if st.button("Analyse →", key=f"mover_btn_{sym}_{color[-3:]}",
+                         use_container_width=True):
+                st.session_state["screener_symbol"]      = sym
+                st.session_state["screener_nav_pending"] = True
+                st.session_state["mobile_page"]          = "Stock Screener"
+                st.query_params["nav"] = "screener"
+                st.rerun()
 
 
 @st.cache_data(ttl=300)
@@ -1231,23 +1267,41 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
                     f"letter-spacing:0.08em;text-transform:uppercase;color:#00e5a0;"
-                    f"margin-bottom:0.35rem;'>▲ Top 5 Gainers</div>",
+                    f"margin-bottom:0.35rem;'>▲ Top 5 Gainers  "
+                    f"<span style='color:#4a5068;font-size:0.62rem;'>(click to screen)</span></div>",
                     unsafe_allow_html=True,
                 )
-                g_rows = [{"Symbol": r["Symbol"], "Change %": f"+{r['Change%']:.2f}%"}
-                          for _, r in top_g.iterrows()]
-                st.dataframe(pd.DataFrame(g_rows), use_container_width=True, hide_index=True)
+                for _, r in top_g.iterrows():
+                    _sym = r["Symbol"]; _chg = r["Change%"]
+                    ca, cb, cc = st.columns([2.5, 1.8, 1.5])
+                    ca.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#d4daf0;padding-top:0.4rem;'>{_sym}</div>", unsafe_allow_html=True)
+                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#00e5a0;padding-top:0.4rem;'>+{_chg:.2f}%</div>", unsafe_allow_html=True)
+                    if cc.button("→", key=f"hm_g_{_sym}", use_container_width=True):
+                        st.session_state["screener_symbol"]      = _sym
+                        st.session_state["screener_nav_pending"] = True
+                        st.session_state["mobile_page"]          = "Stock Screener"
+                        st.query_params["nav"] = "screener"
+                        st.rerun()
 
             with d2:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
                     f"letter-spacing:0.08em;text-transform:uppercase;color:#ff4d6a;"
-                    f"margin-bottom:0.35rem;'>▼ Top 5 Losers</div>",
+                    f"margin-bottom:0.35rem;'>▼ Top 5 Losers  "
+                    f"<span style='color:#4a5068;font-size:0.62rem;'>(click to screen)</span></div>",
                     unsafe_allow_html=True,
                 )
-                l_rows = [{"Symbol": r["Symbol"], "Change %": f"{r['Change%']:.2f}%"}
-                          for _, r in top_l.iterrows()]
-                st.dataframe(pd.DataFrame(l_rows), use_container_width=True, hide_index=True)
+                for _, r in top_l.iterrows():
+                    _sym = r["Symbol"]; _chg = r["Change%"]
+                    ca, cb, cc = st.columns([2.5, 1.8, 1.5])
+                    ca.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#d4daf0;padding-top:0.4rem;'>{_sym}</div>", unsafe_allow_html=True)
+                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#ff4d6a;padding-top:0.4rem;'>{_chg:.2f}%</div>", unsafe_allow_html=True)
+                    if cc.button("→", key=f"hm_l_{_sym}", use_container_width=True):
+                        st.session_state["screener_symbol"]      = _sym
+                        st.session_state["screener_nav_pending"] = True
+                        st.session_state["mobile_page"]          = "Stock Screener"
+                        st.query_params["nav"] = "screener"
+                        st.rerun()
 
     else:
         st.markdown(
@@ -1288,6 +1342,21 @@ def page_stock_screener(nse500: pd.DataFrame):
     )
 
     symbols = nse500["Symbol"].dropna().sort_values().tolist()
+
+    # ── Auto-select symbol if navigated from Market Snapshot ─────────────────
+    if st.session_state.get("screener_nav_pending") and st.session_state.get("screener_symbol"):
+        _pre = st.session_state["screener_symbol"]
+        if _pre in symbols:
+            _default_idx = symbols.index(_pre)
+        else:
+            _default_idx = 0
+        st.session_state["screener_nav_pending"] = False
+        st.toast(f"📊 Loaded {_pre} from Market Snapshot", icon="🚀")
+    else:
+        _default_idx = 0
+        if st.session_state.get("screener_symbol") in symbols:
+            _default_idx = symbols.index(st.session_state["screener_symbol"])
+
     # ── Interval → allowed periods mapping ──────────────────────────────────
     INTERVAL_CFG = {
         "5 min":   {"interval": "5m",  "periods": ["1d", "2d", "5d"],          "default": "5d"},
@@ -1304,7 +1373,7 @@ def page_stock_screener(nse500: pd.DataFrame):
 
     c1, c2, c3, c4 = st.columns([3, 1.2, 1.2, 1])
     with c1:
-        choice = st.selectbox("Symbol", symbols, label_visibility="collapsed")
+        choice = st.selectbox("Symbol", symbols, index=_default_idx, label_visibility="collapsed", key="screener_sym_select")
     with c2:
         tf_label = st.selectbox(
             "Interval",
