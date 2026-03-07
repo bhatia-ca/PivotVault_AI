@@ -10,11 +10,6 @@ from io import StringIO
 from datetime import datetime, timedelta
 import time
 import smtplib
-try:
-    from mobile_patch import inject_mobile
-    _MOBILE_PATCH = True
-except ImportError:
-    _MOBILE_PATCH = False
 import io
 import base64
 from reportlab.lib.pagesizes import A4
@@ -39,10 +34,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Mobile PWA injection
-if _MOBILE_PATCH:
-    inject_mobile()
-
 # ─────────────────────────────────────────────
 #  CUSTOM CSS
 # ─────────────────────────────────────────────
@@ -51,270 +42,194 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
 :root {
-    --bg:        #f5f7fa;
-    --surface:   #ffffff;
-    --border:    #dde2ec;
-    --accent:    #1a6b3c;
-    --accent2:   #1d4ed8;
-    --danger:    #dc2626;
-    --warn:      #d97706;
-    --muted:     #9ca3af;
-    --text:      #1e293b;
-    --text-dim:  #64748b;
+    --bg:        #0d0f14;
+    --surface:   #141720;
+    --border:    #1e2330;
+    --accent:    #00e5a0;
+    --accent2:   #4d7cfe;
+    --danger:    #ff4d6a;
+    --warn:      #f5a623;
+    --muted:     #4a5068;
+    --text:      #d4daf0;
+    --text-dim:  #6b7490;
 }
-
-/* ── GLOBAL BACKGROUND ─────────────────────────────── */
-html, body,
-[class*="css"],
-.stApp,
-.stApp > div,
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewBlockContainer"] {
-    font-family: 'IBM Plex Sans', sans-serif !important;
-    background-color: #f5f7fa !important;
-    color: #1e293b !important;
-}
-[data-testid="stMain"],
-[data-testid="stVerticalBlock"],
-section.main > div {
-    background-color: #f5f7fa !important;
+html, body, [class*="css"] {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
 }
 #MainMenu, footer, header { visibility: hidden; }
-.block-container {
-    padding: 1.5rem 2rem 2rem;
-    max-width: 1500px;
-    background: #f5f7fa !important;
-}
+.block-container { padding: 1.5rem 2rem 2rem; max-width: 1500px; }
 
-/* ── SIDEBAR ────────────────────────────────────────── */
+/* ── SIDEBAR — light olive green ─────────────────────────────────────── */
 section[data-testid="stSidebar"] {
-    background: #1e293b !important;
-    border-right: 2px solid #334155 !important;
+    background: #e8eddf !important;
+    border-right: 2px solid #c5cfa8;
 }
 section[data-testid="stSidebar"] * {
-    color: #e2e8f0 !important;
+    color: #2d3318 !important;
 }
 section[data-testid="stSidebar"] .stRadio label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.84rem;
     font-weight: 500;
     letter-spacing: 0.03em;
-    color: #cbd5e1 !important;
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
+    color: #3d4a1e !important;
+    padding: 0.45rem 0.6rem;
+    border-radius: 5px;
     transition: background 0.18s, color 0.18s;
-    cursor: pointer;
 }
 section[data-testid="stSidebar"] .stRadio label:hover {
-    background: #334155 !important;
-    color: #f1f5f9 !important;
+    background: #d4dbb8;
+    color: #1a2208 !important;
 }
 section[data-testid="stSidebar"] hr {
-    border-color: #334155 !important;
+    border-color: #c5cfa8 !important;
 }
 section[data-testid="stSidebar"] .stButton > button {
-    background: #334155 !important;
-    border: 1px solid #475569 !important;
-    color: #e2e8f0 !important;
+    background: #3d4a1e !important;
+    border: 1px solid #2d3318 !important;
+    color: #e8eddf !important;
     font-weight: 600;
 }
 section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #475569 !important;
-    color: #f8fafc !important;
+    background: #2d3318 !important;
+    color: #e8eddf !important;
 }
 
-/* ── METRIC CARDS ───────────────────────────────────── */
 div[data-testid="metric-container"] {
-    background: #ffffff !important;
-    border: 1px solid #dde2ec !important;
-    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     padding: 1rem 1.25rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 div[data-testid="metric-container"] label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #64748b !important;
+    color: var(--text-dim) !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 1.4rem;
     font-weight: 600;
-    color: #1e293b !important;
+    color: var(--text) !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
 }
-
-/* ── BUTTONS ────────────────────────────────────────── */
 .stButton > button {
-    background: #ffffff !important;
-    border: 1.5px solid #1a6b3c !important;
-    color: #1a6b3c !important;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
     letter-spacing: 0.06em;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.4rem 1rem;
     transition: background 0.2s, color 0.2s;
-    font-weight: 600;
 }
-.stButton > button:hover {
-    background: #1a6b3c !important;
-    color: #ffffff !important;
-}
-
-/* ── TABLES ─────────────────────────────────────────── */
+.stButton > button:hover { background: var(--accent); color: #000; }
 .stDataFrame, .stTable { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; }
-.stDataFrame [data-testid="stDataFrameContainer"] {
-    background: #ffffff !important;
-    border: 1px solid #dde2ec !important;
-    border-radius: 8px;
-}
-
-/* ── SELECTBOXES ────────────────────────────────────── */
+/* ── SELECTBOXES & INPUTS — light olive green ───────────────────────── */
 .stSelectbox > div > div,
 .stSelectbox [data-baseweb="select"] > div,
 div[data-baseweb="select"] > div {
-    background: #ffffff !important;
-    border: 1.5px solid #cbd5e1 !important;
-    border-radius: 6px !important;
+    background: #edf0e3 !important;
+    border: 1px solid #b5c27a !important;
+    border-radius: 5px !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.82rem !important;
-    color: #1e293b !important;
+    color: #2d3318 !important;
 }
 div[data-baseweb="select"] span,
 div[data-baseweb="select"] div {
-    color: #1e293b !important;
+    color: #2d3318 !important;
     font-family: 'IBM Plex Mono', monospace !important;
-    background: transparent !important;
 }
+/* Dropdown menu list */
 ul[data-baseweb="menu"],
 div[data-baseweb="popover"] > div {
-    background: #ffffff !important;
-    border: 1.5px solid #cbd5e1 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.1) !important;
+    background: #f2f5e8 !important;
+    border: 1px solid #b5c27a !important;
 }
 li[role="option"] {
-    background: #ffffff !important;
-    color: #1e293b !important;
+    background: #f2f5e8 !important;
+    color: #2d3318 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.82rem !important;
 }
 li[role="option"]:hover,
 li[aria-selected="true"] {
-    background: #f0fdf4 !important;
-    color: #1a6b3c !important;
+    background: #d4dbb8 !important;
+    color: #1a2208 !important;
 }
-
-/* ── TEXT INPUTS ────────────────────────────────────── */
+/* Text inputs */
 .stTextInput > div > div > input,
 input[type="text"], input[type="password"] {
-    background: #ffffff !important;
-    border: 1.5px solid #cbd5e1 !important;
-    border-radius: 6px !important;
-    color: #1e293b !important;
+    background: #edf0e3 !important;
+    border: 1px solid #b5c27a !important;
+    border-radius: 5px !important;
+    color: #2d3318 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.85rem !important;
 }
 .stTextInput > div > div > input::placeholder {
-    color: #94a3b8 !important;
+    color: #7d8c55 !important;
 }
 .stTextInput > div > div > input:focus {
-    border-color: #1a6b3c !important;
-    box-shadow: 0 0 0 3px rgba(26,107,60,0.12) !important;
+    border-color: #6b8c2a !important;
+    box-shadow: 0 0 0 2px rgba(107,140,42,0.18) !important;
 }
+h1, h2, h3 { font-family: 'IBM Plex Mono', monospace; letter-spacing: -0.02em; color: var(--text); }
+hr { border-color: var(--border); margin: 1rem 0; }
 
-/* ── HEADINGS & DIVIDERS ────────────────────────────── */
-h1, h2, h3 {
-    font-family: 'IBM Plex Mono', monospace;
-    letter-spacing: -0.02em;
-    color: #1e293b !important;
-}
-hr { border-color: #e2e8f0 !important; margin: 1rem 0; }
-
-/* ── EXPANDER ───────────────────────────────────────── */
-[data-testid="stExpander"] {
-    background: #ffffff !important;
-    border: 1px solid #dde2ec !important;
-    border-radius: 8px !important;
-}
-[data-testid="stExpander"] summary {
-    color: #1e293b !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-
-/* ── CHECKBOXES ─────────────────────────────────────── */
-.stCheckbox label {
-    color: #1e293b !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.85rem !important;
-}
-
-/* ── ALERT BOXES ────────────────────────────────────── */
-.stCaption, .stCaption p { color: #64748b !important; font-family: 'IBM Plex Mono', monospace !important; }
-[data-testid="stInfo"]    { background: #eff6ff !important; border-left: 4px solid #3b82f6 !important; }
-[data-testid="stWarning"] { background: #fffbeb !important; border-left: 4px solid #f59e0b !important; }
-[data-testid="stSuccess"] { background: #f0fdf4 !important; border-left: 4px solid #22c55e !important; }
-[data-testid="stError"]   { background: #fef2f2 !important; border-left: 4px solid #ef4444 !important; }
-
-/* ── WATCHLIST PILLS ────────────────────────────────── */
 .wl-pill {
     display: inline-block;
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    color: #1a6b3c;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--accent);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
     padding: 0.2rem 0.65rem;
     border-radius: 20px;
     margin: 0.2rem;
-    font-weight: 600;
 }
-
-/* ── LIVE DOT ────────────────────────────────────────── */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 .live-dot {
     display: inline-block; width: 8px; height: 8px;
-    background: #16a34a; border-radius: 50%;
+    background: var(--accent); border-radius: 50%;
     margin-right: 6px; animation: pulse 1.6s ease-in-out infinite;
 }
-
-/* ── TITLE BAR ───────────────────────────────────────── */
-.title-bar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
-.title-bar h1 { margin: 0; font-size: 1.4rem; color: #1e293b !important; }
+.title-bar {
+    display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;
+}
+.title-bar h1 { margin: 0; font-size: 1.4rem; }
 .title-bar .ts {
     margin-left: auto; font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem; color: #64748b;
+    font-size: 0.72rem; color: var(--text-dim);
 }
-
-/* ── PIVOT BOSS CARDS ───────────────────────────────── */
 .pb-card {
-    background: #ffffff;
-    border: 1px solid #dde2ec;
-    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
     padding: 1rem 1.25rem;
     margin-bottom: 0.75rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
 .pb-card-title {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.68rem;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #64748b;
+    color: var(--text-dim);
     margin-bottom: 0.5rem;
 }
 .pb-card-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.1rem; font-weight: 600; }
-.pb-bull  { color: #16a34a; }
-.pb-bear  { color: #dc2626; }
-.pb-neut  { color: #d97706; }
-
-/* ── SIGNAL BADGES ───────────────────────────────────── */
+.pb-bull  { color: #00e5a0; }
+.pb-bear  { color: #ff4d6a; }
+.pb-neut  { color: #f5a623; }
 .signal-badge {
     display: inline-block;
     font-family: 'IBM Plex Mono', monospace;
@@ -323,86 +238,12 @@ hr { border-color: #e2e8f0 !important; margin: 1rem 0; }
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 0.25rem 0.75rem;
-    border-radius: 4px;
+    border-radius: 3px;
     margin: 0.15rem 0.1rem;
 }
-.sig-bull { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
-.sig-bear { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-.sig-neut { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
-
-/* ── MOBILE SIDEBAR FIX ──────────────────────────────── */
-@media (max-width: 768px) {
-    button[data-testid="baseButton-header"],
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        top: 12px !important;
-        left: 12px !important;
-        z-index: 9999999 !important;
-        background: #1a6b3c !important;
-        color: #ffffff !important;
-        border-radius: 8px !important;
-        width: 44px !important;
-        height: 44px !important;
-        border: none !important;
-        box-shadow: 0 2px 12px rgba(26,107,60,0.3) !important;
-    }
-    .block-container {
-        padding-top: 64px !important;
-        padding-left: 0.75rem !important;
-        padding-right: 0.75rem !important;
-        padding-bottom: 72px !important;
-        max-width: 100vw !important;
-    }
-    section[data-testid="stSidebar"] {
-        min-width: 82vw !important;
-        max-width: 85vw !important;
-        z-index: 9999998 !important;
-        box-shadow: 4px 0 24px rgba(0,0,0,0.2) !important;
-    }
-    section[data-testid="stSidebar"] .stRadio label {
-        min-height: 52px !important;
-        padding: 0.85rem 1rem !important;
-        font-size: 1rem !important;
-        display: flex !important;
-        align-items: center !important;
-        margin-bottom: 4px !important;
-    }
-}
-
-/* ── MOBILE BOTTOM NAV ───────────────────────────────── */
-#mobile-nav-bar { display: none; }
-@media (max-width: 768px) {
-    #mobile-nav-bar {
-        display: flex !important;
-        position: fixed; bottom: 0; left: 0; right: 0;
-        height: 60px;
-        background: #1e293b;
-        border-top: 1px solid #334155;
-        z-index: 999998;
-        align-items: center; justify-content: space-around;
-        padding: 0 8px;
-        padding-bottom: env(safe-area-inset-bottom, 0);
-    }
-    #mobile-nav-bar button {
-        flex: 1; height: 52px;
-        background: transparent; border: none;
-        color: #64748b;
-        font-size: 0.6rem;
-        font-family: 'IBM Plex Mono', monospace;
-        letter-spacing: 0.04em; text-transform: uppercase;
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        gap: 3px; cursor: pointer; border-radius: 8px;
-        transition: color 0.15s, background 0.15s;
-        -webkit-tap-highlight-color: transparent;
-    }
-    #mobile-nav-bar button:active  { background: #334155; color: #22c55e; }
-    #mobile-nav-bar button.active  { color: #22c55e; }
-    #mobile-nav-bar button .nav-icon { font-size: 1.3rem; line-height: 1; }
-}
+.sig-bull { background: rgba(0,229,160,0.12); color: #00e5a0; border: 1px solid rgba(0,229,160,0.3); }
+.sig-bear { background: rgba(255,77,106,0.12); color: #ff4d6a; border: 1px solid rgba(255,77,106,0.3); }
+.sig-neut { background: rgba(245,166,35,0.12); color: #f5a623;  border: 1px solid rgba(245,166,35,0.3); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -894,7 +735,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         x0, x1 = df.index[0], df.index[-1]
         fig.add_trace(go.Scatter(
             x=[x0, x1, x1, x0], y=[cpr["TC"], cpr["TC"], cpr["BC"], cpr["BC"]],
-            fill="toself", fillcolor="rgba(29,78,216,0.05)",
+            fill="toself", fillcolor="rgba(77,124,254,0.07)",
             line=dict(color="rgba(77,124,254,0)", width=0),
             name="CPR Band", showlegend=True, mode="lines",
         ), row=1, col=1)
@@ -951,7 +792,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
             x=df_ind.index, y=df_ind["RSI14"],
             name="RSI(14)", line=dict(color="#4d7cfe", width=1.2), showlegend=False,
         ), row=3, col=1)
-        for level, color in [(70, "rgba(220,38,38,0.15)"), (30, "rgba(22,163,74,0.15)"), (50, "#1e2330")]:
+        for level, color in [(70, "rgba(255,77,106,0.33)"), (30, "rgba(0,229,160,0.33)"), (50, "#1e2330")]:
             fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"), row=3, col=1)
 
     # Volume
@@ -965,10 +806,10 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
     # Layout
     fig.update_layout(
         height=800,
-        paper_bgcolor="#f5f7fa", plot_bgcolor="#ffffff",
-        font=dict(family="IBM Plex Mono", color="#475569", size=10),
+        paper_bgcolor="#0d0f14", plot_bgcolor="#0d0f14",
+        font=dict(family="IBM Plex Mono", color="#6b7490", size=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    font=dict(size=10), bgcolor="rgba(255,255,255,0.95)"),
+                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=0, r=90, t=30, b=0),
         xaxis_rangeslider_visible=False,
         title=dict(
@@ -977,8 +818,8 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         ),
     )
     for i in range(1, 5):
-        fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
-        fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
+        fig.update_xaxes(showgrid=True, gridcolor="#1a1e2a", row=i, col=1)
+        fig.update_yaxes(showgrid=True, gridcolor="#1a1e2a", row=i, col=1)
     fig.update_yaxes(title_text="3/10", title_font_size=9, row=2, col=1)
     fig.update_yaxes(title_text="RSI",  title_font_size=9, row=3, col=1)
     fig.update_yaxes(title_text="Vol",  title_font_size=9, row=4, col=1)
@@ -991,17 +832,17 @@ def build_stoch_chart(df_ind: pd.DataFrame) -> go.Figure:
                              name="%K", line=dict(color="#00e5a0", width=1.2)))
     fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind["STOCH_D"],
                              name="%D", line=dict(color="#f5a623", width=1.2, dash="dot")))
-    for level, color in [(80, "rgba(220,38,38,0.15)"), (20, "rgba(22,163,74,0.15)"), (50, "#1e2330")]:
+    for level, color in [(80, "rgba(255,77,106,0.33)"), (20, "rgba(0,229,160,0.33)"), (50, "#1e2330")]:
         fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"))
     fig.update_layout(
-        height=200, paper_bgcolor="#f5f7fa", plot_bgcolor="#ffffff",
-        font=dict(family="IBM Plex Mono", color="#475569", size=10),
+        height=200, paper_bgcolor="#0d0f14", plot_bgcolor="#0d0f14",
+        font=dict(family="IBM Plex Mono", color="#6b7490", size=10),
         margin=dict(l=0, r=60, t=28, b=0),
-        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(255,255,255,0.9)"),
+        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
         title=dict(text="Stochastic (14, 3, 3)", font=dict(size=11, color="#d4daf0")),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
-    fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
+    fig.update_xaxes(showgrid=True, gridcolor="#1a1e2a")
+    fig.update_yaxes(showgrid=True, gridcolor="#1a1e2a")
     return fig
 
 
@@ -1155,7 +996,7 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     ))
 
     fig.update_layout(
-        paper_bgcolor="#f5f7fa",
+        paper_bgcolor="#0d0f14",
         margin=dict(l=0, r=0, t=0, b=0),
         height=480,
         font=dict(family="IBM Plex Mono", color="#d4daf0"),
@@ -1175,11 +1016,11 @@ def page_login():
     <div style="display:flex;flex-direction:column;align-items:center;
                 justify-content:center;min-height:70vh;gap:1rem;">
         <div style="font-family:'IBM Plex Mono',monospace;font-size:2.8rem;
-                    font-weight:600;letter-spacing:-0.03em;color:#1e293b;">
-            🏦 PivotVault <span style="color:#16a34a;">AI</span>
+                    font-weight:600;letter-spacing:-0.03em;color:#d4daf0;">
+            🏦 PivotVault <span style="color:#00e5a0;">AI</span>
         </div>
         <div style="font-family:'IBM Plex Mono',monospace;font-size:0.82rem;
-                    color:#64748b;letter-spacing:0.1em;text-transform:uppercase;">
+                    color:#4a5068;letter-spacing:0.1em;text-transform:uppercase;">
             Indian Equity Intelligence Terminal · Pivot Boss Methodology
         </div>
     </div>""", unsafe_allow_html=True)
@@ -1199,8 +1040,8 @@ def page_login():
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
-        '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1e293b;">Market Snapshot</h1>'
-        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        '<div class="title-bar"><span class="live-dot"></span><h1>Market Snapshot</h1>'
+        f'<span class="ts">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
     gainers, losers = get_market_movers()
@@ -1214,7 +1055,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with hm_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "letter-spacing:0.08em;text-transform:uppercase;color:#64748b;"
+            "letter-spacing:0.08em;text-transform:uppercase;color:#4a5068;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
             "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
@@ -1223,10 +1064,10 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with legend_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "color:#64748b;padding-top:0.1rem;line-height:1.9;'>"
-            "<span style='color:#16a34a;'>■</span> Strong Gain<br>"
+            "color:#4a5068;padding-top:0.1rem;line-height:1.9;'>"
+            "<span style='color:#00e5a0;'>■</span> Strong Gain<br>"
             "<span style='color:#27ae60;'>■</span> Gain<br>"
-            "<span style='color:#e2e8f0;border:1px solid #333;'>■</span> Flat<br>"
+            "<span style='color:#1e2330;border:1px solid #333;'>■</span> Flat<br>"
             "<span style='color:#e74c3c;'>■</span> Loss<br>"
             "<span style='color:#7b0020;'>■</span> Strong Loss"
             "</div>",
@@ -1314,7 +1155,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;padding:0.5rem 0;"
                     f"border-bottom:1px solid #1e2330;margin-bottom:0.6rem;'>"
-                    f"<span style='font-size:1rem;font-weight:700;color:#1e293b;'>"
+                    f"<span style='font-size:1rem;font-weight:700;color:#d4daf0;'>"
                     f"{clicked_sector}</span>"
                     f"<span style='font-size:0.8rem;color:{col_fg};margin-left:1rem;'>"
                     f"{arrow} {avg_chg:+.2f}% avg  ·  {len(sector_stocks)} stocks</span>"
@@ -1330,7 +1171,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             with d1:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#16a34a;"
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#00e5a0;"
                     f"margin-bottom:0.35rem;'>▲ Top 5 Gainers</div>",
                     unsafe_allow_html=True,
                 )
@@ -1341,7 +1182,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             with d2:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#dc2626;"
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#ff4d6a;"
                     f"margin-bottom:0.35rem;'>▼ Top 5 Losers</div>",
                     unsafe_allow_html=True,
                 )
@@ -1352,8 +1193,8 @@ def page_market_snapshot(nse500: pd.DataFrame):
     else:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "color:#94a3b8;text-align:center;padding:0.55rem;"
-            "border:1px dashed #e2e8f0;border-radius:6px;margin-top:0.25rem;'>"
+            "color:#2a3040;text-align:center;padding:0.55rem;"
+            "border:1px dashed #1e2330;border-radius:6px;margin-top:0.25rem;'>"
             "👆  Click any sector tile to see its Top 5 Gainers &amp; Losers</div>",
             unsafe_allow_html=True,
         )
@@ -1608,7 +1449,7 @@ def page_stock_screener(nse500: pd.DataFrame):
             })
         st.markdown(
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            f"letter-spacing:0.08em;text-transform:uppercase;color:#64748b;"
+            f"letter-spacing:0.08em;text-transform:uppercase;color:#5a6b30;"
             f"margin-bottom:0.4rem;'>{scr_pivot_type} Pivot Levels</div>",
             unsafe_allow_html=True,
         )
@@ -1984,14 +1825,14 @@ def build_email_html(scan_df: pd.DataFrame, scan_date: str) -> str:
       {"" if not bull_rows else f"""
       <div style="font-family:'Courier New',monospace;font-size:0.72rem;
                   letter-spacing:0.1em;text-transform:uppercase;color:#1a7a4a;
-                  border-left:4px solid #16a34a;padding-left:10px;
+                  border-left:4px solid #1a7a4a;padding-left:10px;
                   margin-bottom:14px;">▲ Bullish Setups</div>
       {bull_rows}"""}
 
       {"" if not bear_rows else f"""
       <div style="font-family:'Courier New',monospace;font-size:0.72rem;
                   letter-spacing:0.1em;text-transform:uppercase;color:#c0392b;
-                  border-left:4px solid #dc2626;padding-left:10px;
+                  border-left:4px solid #c0392b;padding-left:10px;
                   margin-bottom:14px;margin-top:8px;">▼ Bearish Setups</div>
       {bear_rows}"""}
 
@@ -2491,8 +2332,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.68rem;'
-        'color:#64748b;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
-        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        'color:#4a5068;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
+        f'<span class="ts">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -2556,9 +2397,9 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
     # ── Overall Bias Banner ───────────────────────────────────────────────────
     bias_palette = {
-        "bull": ("#f0fdf4", "#00e5a0"),
-        "bear": ("#fef2f2", "#ff4d6a"),
-        "neut": ("#fffbeb", "#f5a623"),
+        "bull": ("#0a2318", "#00e5a0"),
+        "bear": ("#21080f", "#ff4d6a"),
+        "neut": ("#1a1505", "#f5a623"),
     }
     bg, fg = bias_palette.get(analysis["ov_col"], ("#141720", "#d4daf0"))
     st.markdown(
@@ -2592,7 +2433,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>Central Pivot Range (CPR)</div>"
             f"<div class='pb-card-value pb-{analysis['cpr_col']}'>{analysis['cpr_position']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
             f"margin-top:0.4rem;'>{cpr_detail}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2602,7 +2443,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>3/10 Oscillator</div>"
             f"<div class='pb-card-value pb-{analysis['osc_col']}'>{analysis['osc_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
             f"margin-top:0.4rem;'>Ochoa's momentum gauge<br>3-MA minus 10-MA vs 16-Signal</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2612,7 +2453,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>HMA(20) Trend</div>"
             f"<div class='pb-card-value pb-{analysis['hma_col']}'>{analysis['hma_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
             f"margin-top:0.4rem;'>Hull Moving Average<br>Low-lag trend direction filter</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2626,7 +2467,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card-title'>RSI (14)</div>"
             f"<div class='pb-card-value pb-{analysis['rsi_col']}'>"
             f"{rsi_val} · {analysis['rsi_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
             f"margin-top:0.4rem;'>{stoch_txt}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2650,7 +2491,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     with col_mp:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "letter-spacing:0.1em;text-transform:uppercase;color:#64748b;"
+            "letter-spacing:0.1em;text-transform:uppercase;color:#6b7490;"
             "margin-bottom:0.5rem;'>Market Profile (Volume at Price)</div>",
             unsafe_allow_html=True,
         )
@@ -2667,8 +2508,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
                         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
                         f"padding:0.3rem 0;border-bottom:1px solid #1e2330;'>"
                         f"<span style='color:{col};'>{label}</span>"
-                        f"<b style='color:#1e293b;float:right;'>{val} "
-                        f"<span style='color:#64748b;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
+                        f"<b style='color:#d4daf0;float:right;'>{val} "
+                        f"<span style='color:#6b7490;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
                         f"</b></div>",
                         unsafe_allow_html=True,
                     )
@@ -2684,7 +2525,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>ATR(14) Volatility</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{'₹' + str(analysis['atr']) if analysis['atr'] else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;margin-top:0.4rem;'>"
             f"{'% of price: ' + str(analysis['atr_pct']) + '%' if analysis['atr_pct'] else ''}"
             f"</div></div>", unsafe_allow_html=True,
         )
@@ -2695,7 +2536,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>Nearest Pivot ★</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{nl[0] + '  ₹' + str(nl[1]) if nl else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;margin-top:0.4rem;'>"
             f"Immediate support / resistance</div></div>", unsafe_allow_html=True,
         )
 
@@ -2718,7 +2559,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         st.divider()
         st.markdown(
             "<h3 style='font-size:0.9rem;margin:1rem 0 0.25rem;'>🔲 Virgin CPR Levels</h3>"
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#64748b;"
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#4a5068;"
             "margin-bottom:0.5rem;'>Untouched CPR bands — Ochoa's high-significance price magnets</div>",
             unsafe_allow_html=True,
         )
@@ -2739,7 +2580,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar" style="margin-top:0.25rem;">'
         '<h2 style="font-size:1.05rem;margin:0;">📄  Download Analysis Report (PDF)</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#64748b;margin-left:0.75rem;">'
+        'color:#4a5068;margin-left:0.75rem;">'
         'Short Term · Medium Term · Long Term Targets · Stop-Loss · Narrative</span>'
         '</div>',
         unsafe_allow_html=True,
@@ -2794,7 +2635,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 arrow  = "▲" if auto_pat == "Bullish" else "▼"
 
                 st.markdown(
-                    f"<div style='background:#f0fdf4;border:1px solid {col_fg}33;"
+                    f"<div style='background:#0d1f0a;border:1px solid {col_fg}33;"
                     f"border-left:4px solid {col_fg};border-radius:8px;"
                     f"padding:1rem 1.5rem;margin:0.5rem 0;'>"
 
@@ -2805,30 +2646,30 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     f"<div style='display:flex;gap:2rem;margin-top:0.6rem;flex-wrap:wrap;'>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Short Term (1-3d)</div>"
+                    f"color:#4a5068;text-transform:uppercase;'>Short Term (1-3d)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#d4daf0;'>T: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{sh.get('target',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{sh.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{sh.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{sh.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Medium Term (1-4w)</div>"
+                    f"color:#4a5068;text-transform:uppercase;'>Medium Term (1-4w)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#d4daf0;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{md.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{md.get('target2',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{md.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{md.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{md.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Long Term (1-3m)</div>"
+                    f"color:#4a5068;text-transform:uppercase;'>Long Term (1-3m)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#d4daf0;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{lg.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target2',0):,.2f}</span>"
                     f" T3: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target3',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{lg.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{lg.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{lg.get('rr',0)}x</b></div></div>"
 
                     f"</div></div>",
@@ -2852,7 +2693,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar" style="margin-top:0.5rem;">'
         '<h2 style="font-size:1.1rem;margin:0;">📡  Narrow CPR Scanner — Daily</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#64748b;margin-left:0.75rem;">Nifty 500 · CPR Width &lt; 0.5% · Bullish / Bearish Pattern</span>'
+        'color:#4a5068;margin-left:0.75rem;">Nifty 500 · CPR Width &lt; 0.5% · Bullish / Bearish Pattern</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -2923,7 +2764,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     st.markdown(
                         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
                         "letter-spacing:0.08em;text-transform:uppercase;"
-                        "color:#16a34a;margin-bottom:0.4rem;border-left:3px solid #16a34a;"
+                        "color:#00e5a0;margin-bottom:0.4rem;border-left:3px solid #00e5a0;"
                         "padding-left:0.6rem;'>"
                         f"▲ Bullish Setup — {len(bull_df)} stocks</div>",
                         unsafe_allow_html=True,
@@ -2944,8 +2785,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     st.markdown(
                         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
                         "letter-spacing:0.08em;text-transform:uppercase;"
-                        "color:#dc2626;margin-bottom:0.4rem;margin-top:1rem;"
-                        "border-left:3px solid #dc2626;padding-left:0.6rem;'>"
+                        "color:#ff4d6a;margin-bottom:0.4rem;margin-top:1rem;"
+                        "border-left:3px solid #ff4d6a;padding-left:0.6rem;'>"
                         f"▼ Bearish Setup — {len(bear_df)} stocks</div>",
                         unsafe_allow_html=True,
                     )
@@ -2975,7 +2816,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
                 st.markdown(
                     "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    "color:#94a3b8;margin-top:0.75rem;'>"
+                    "color:#2e3448;margin-top:0.75rem;'>"
                     "Scoring: Price vs CPR (2pt) · HMA direction (1pt) · 3/10 Oscillator (1pt) · RSI (1pt)  "
                     "·  Results cached 1hr — click <b>Run CPR Scan</b> to refresh.</div>",
                     unsafe_allow_html=True,
@@ -2983,8 +2824,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
     else:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
-            "color:#94a3b8;text-align:center;padding:1rem;"
-            "border:1px dashed #e2e8f0;border-radius:6px;'>"
+            "color:#2a3040;text-align:center;padding:1rem;"
+            "border:1px dashed #1e2330;border-radius:6px;'>"
             "Click <b>🔍 Run CPR Scan</b> to scan Nifty 500 for Narrow CPR stocks "
             "with Bullish / Bearish patterns.</div>",
             unsafe_allow_html=True,
@@ -2998,7 +2839,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar" style="margin-top:0.25rem;">'
         '<h2 style="font-size:1.05rem;margin:0;">📧  Email CPR Report</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#64748b;margin-left:0.75rem;">'
+        'color:#4a5068;margin-left:0.75rem;">'
         'Send Narrow CPR stocks with Targets, Stop-Loss &amp; Pivot Levels to any email</span>'
         '</div>',
         unsafe_allow_html=True,
@@ -3096,7 +2937,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 if show_preview:
                     st.markdown(
                         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                        "color:#64748b;margin-bottom:0.4rem;'>Email Preview:</div>",
+                        "color:#4a5068;margin-bottom:0.4rem;'>Email Preview:</div>",
                         unsafe_allow_html=True,
                     )
                     st.components.v1.html(html_body, height=600, scrolling=True)
@@ -3124,7 +2965,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                             st.error(f"❌ Failed: {msg}")
                             st.markdown(
                                 "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                                "color:#64748b;margin-top:0.5rem;'>"
+                                "color:#4a5068;margin-top:0.5rem;'>"
                                 "💡 <b>Gmail users:</b> Enable 2-Factor Auth and use an App Password "
                                 "(Google Account → Security → App Passwords). "
                                 "Do NOT use your regular Gmail password.</div>",
@@ -3134,7 +2975,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     # ── Methodology footnote ──────────────────────────────────────────────────
     st.divider()
     st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#94a3b8;line-height:1.8;'>"
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#2e3448;line-height:1.8;'>"
         "📖  Based on <i>Secrets of a Pivot Boss</i> by Frank Ochoa.  "
         "Tools implemented: CPR · 3/10 Oscillator · Virgin CPRs · Market Profile (POC/VAH/VAL) · "
         "HMA Trend Filter · ATR · RSI · Stochastic.  "
@@ -3148,7 +2989,7 @@ def page_watchlist():
     wl = st.session_state["watchlist"]
     if not wl:
         st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;color:#64748b;font-size:0.85rem;"
+            "<div style='font-family:IBM Plex Mono,monospace;color:#4a5068;font-size:0.85rem;"
             "padding:2rem 0;'>No stocks added yet. Head to <b>Stock Screener</b> to build your list.</div>",
             unsafe_allow_html=True,
         )
@@ -3191,7 +3032,7 @@ def page_watchlist():
 
     st.divider()
     st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                "color:#64748b;letter-spacing:0.06em;text-transform:uppercase;"
+                "color:#4a5068;letter-spacing:0.06em;text-transform:uppercase;"
                 "margin-bottom:0.5rem;'>Remove</div>", unsafe_allow_html=True)
     rm_cols = st.columns(min(len(wl), 6))
     for i, sym in enumerate(wl[:6]):
@@ -3209,10 +3050,10 @@ def render_sidebar():
     with st.sidebar:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:1.05rem;"
-            "font-weight:700;color:#1e293b;padding:0.5rem 0 0.1rem;'>"
-            "🏦 PivotVault <span style='color:#16a34a;'>AI</span></div>"
+            "font-weight:700;color:#1a2208;padding:0.5rem 0 0.1rem;'>"
+            "🏦 PivotVault <span style='color:#4a6a0a;'>AI</span></div>"
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.63rem;"
-            "color:#64748b;letter-spacing:0.09em;text-transform:uppercase;"
+            "color:#5a6b30;letter-spacing:0.09em;text-transform:uppercase;"
             "margin-bottom:1.25rem;'>Pivot Boss · Equity Terminal</div>",
             unsafe_allow_html=True,
         )
@@ -3220,13 +3061,12 @@ def render_sidebar():
             "Navigation",
             ["Market Snapshot", "Stock Screener", "Pivot Boss Analysis", "Watchlist"],
             label_visibility="collapsed",
-            key="main_nav",
         )
         st.divider()
         wl_count = len(st.session_state["watchlist"])
         st.markdown(
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#475569;'>"
-            f"Watchlist: <span style='color:#16a34a;font-weight:700;'>{wl_count}</span> "
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#3d4a1e;'>"
+            f"Watchlist: <span style='color:#4a6a0a;font-weight:700;'>{wl_count}</span> "
             f"stock{'s' if wl_count != 1 else ''}</div>",
             unsafe_allow_html=True,
         )
@@ -3234,72 +3074,13 @@ def render_sidebar():
         user = st.session_state.get("username", "user")
         st.markdown(
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            f"color:#475569;margin-bottom:0.5rem;'>Logged in as "
-            f"<span style='color:#1e293b;font-weight:600;'>{user}</span></div>",
+            f"color:#3d4a1e;margin-bottom:0.5rem;'>Logged in as "
+            f"<span style='color:#1a2208;font-weight:600;'>{user}</span></div>",
             unsafe_allow_html=True,
         )
         if st.button("Logout", use_container_width=True):
             st.session_state["logged_in"] = False
             st.rerun()
-
-    # ── Mobile Bottom Navigation Bar ──────────────────────────────────────
-    # Visible only on small screens — taps the hidden sidebar radio buttons
-    nav_items = [
-        ("Market Snapshot",    "📊", "Market"),
-        ("Stock Screener",     "🔍", "Screener"),
-        ("Pivot Boss Analysis","📈", "Pivot Boss"),
-        ("Watchlist",          "⭐", "Watchlist"),
-    ]
-    active = st.session_state.get("main_nav", "Market Snapshot")
-
-    buttons_html = ""
-    for label, icon, short in nav_items:
-        is_active = "active" if label == active else ""
-        onclick = "navigateTo(&apos;" + label + "&apos;)"
-        buttons_html += (
-            f'<button class="{is_active}" onclick="{onclick}">'
-            f'<span class="nav-icon">{icon}</span>{short}</button>'
-        )
-
-    st.markdown(
-        f"""
-        <div id='mobile-nav-bar'>
-            {buttons_html}
-        </div>
-        <script>
-        function navigateTo(page) {{
-            // Find the sidebar radio group and click the right option
-            var labels = window.parent.document.querySelectorAll(
-                'section[data-testid="stSidebar"] .stRadio label'
-            );
-            var pages = [
-                "Market Snapshot", "Stock Screener",
-                "Pivot Boss Analysis", "Watchlist"
-            ];
-            var idx = pages.indexOf(page);
-            if (idx >= 0 && labels[idx]) {{
-                labels[idx].click();
-            }}
-            // Also try opening sidebar first on mobile
-            var toggleBtn = window.parent.document.querySelector(
-                'button[data-testid="baseButton-header"]'
-            );
-        }}
-
-        // Highlight active tab
-        (function() {{
-            var active = "{active}";
-            var pages  = ["Market Snapshot","Stock Screener","Pivot Boss Analysis","Watchlist"];
-            var btns   = document.querySelectorAll('#mobile-nav-bar button');
-            btns.forEach(function(b, i) {{
-                if (pages[i] === active) b.classList.add('active');
-                else b.classList.remove('active');
-            }});
-        }})();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
     return menu
 
 
