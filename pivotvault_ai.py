@@ -863,7 +863,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
             x=df_ind.index, y=df_ind["SIG16"],
             name="Signal(16)", line=dict(color="#f5a623", width=1.2, dash="dot"),
         ), row=2, col=1)
-        fig.add_hline(y=0, line=dict(color="#1e2330", width=1), row=2, col=1)
+        fig.add_hline(y=0, line=dict(color="#cbd5e1", width=1), row=2, col=1)
 
     # RSI
     if "RSI14" in df_ind.columns:
@@ -871,7 +871,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
             x=df_ind.index, y=df_ind["RSI14"],
             name="RSI(14)", line=dict(color="#4d7cfe", width=1.2), showlegend=False,
         ), row=3, col=1)
-        for level, color in [(70, "rgba(255,77,106,0.33)"), (30, "rgba(0,229,160,0.33)"), (50, "#1e2330")]:
+        for level, color in [(70, "rgba(255,77,106,0.33)"), (30, "rgba(0,229,160,0.33)"), (50, "#94a3b8")]:
             fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"), row=3, col=1)
 
     # Volume
@@ -885,20 +885,20 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
     # Layout
     fig.update_layout(
         height=800,
-        paper_bgcolor="#0d0f14", plot_bgcolor="#0d0f14",
-        font=dict(family="IBM Plex Mono", color="#6b7490", size=10),
+        paper_bgcolor="#ffffff", plot_bgcolor="#fafafa",
+        font=dict(family="IBM Plex Mono", color="#4a5568", size=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+                    font=dict(size=10), bgcolor="rgba(255,255,255,0)"),
         margin=dict(l=0, r=90, t=30, b=0),
         xaxis_rangeslider_visible=False,
         title=dict(
             text=f"{symbol}  ·  {pivot_type} Pivots  ·  Pivot Boss Analysis",
-            font=dict(family="IBM Plex Mono", size=12, color="#d4daf0"),
+            font=dict(family="IBM Plex Mono", size=12, color="#1e293b"),
         ),
     )
     for i in range(1, 5):
-        fig.update_xaxes(showgrid=True, gridcolor="#1a1e2a", row=i, col=1)
-        fig.update_yaxes(showgrid=True, gridcolor="#1a1e2a", row=i, col=1)
+        fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
+        fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
     fig.update_yaxes(title_text="3/10", title_font_size=9, row=2, col=1)
     fig.update_yaxes(title_text="RSI",  title_font_size=9, row=3, col=1)
     fig.update_yaxes(title_text="Vol",  title_font_size=9, row=4, col=1)
@@ -911,17 +911,17 @@ def build_stoch_chart(df_ind: pd.DataFrame) -> go.Figure:
                              name="%K", line=dict(color="#00e5a0", width=1.2)))
     fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind["STOCH_D"],
                              name="%D", line=dict(color="#f5a623", width=1.2, dash="dot")))
-    for level, color in [(80, "rgba(255,77,106,0.33)"), (20, "rgba(0,229,160,0.33)"), (50, "#1e2330")]:
+    for level, color in [(80, "rgba(255,77,106,0.33)"), (20, "rgba(0,229,160,0.33)"), (50, "#94a3b8")]:
         fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"))
     fig.update_layout(
-        height=200, paper_bgcolor="#0d0f14", plot_bgcolor="#0d0f14",
-        font=dict(family="IBM Plex Mono", color="#6b7490", size=10),
+        height=200, paper_bgcolor="#ffffff", plot_bgcolor="#fafafa",
+        font=dict(family="IBM Plex Mono", color="#4a5568", size=10),
         margin=dict(l=0, r=60, t=28, b=0),
-        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
-        title=dict(text="Stochastic (14, 3, 3)", font=dict(size=11, color="#d4daf0")),
+        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(255,255,255,0)"),
+        title=dict(text="Stochastic (14, 3, 3)", font=dict(size=11, color="#1e293b")),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#1a1e2a")
-    fig.update_yaxes(showgrid=True, gridcolor="#1a1e2a")
+    fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
+    fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
     return fig
 
 
