@@ -9,6 +9,7 @@ import requests
 from io import StringIO
 from datetime import datetime, timedelta
 import time
+import hashlib
 import smtplib
 import io
 import base64
@@ -1163,6 +1164,11 @@ def sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
 # ─────────────────────────────────────────────
 #  PAGES
 # ─────────────────────────────────────────────
+def _make_token(username: str) -> str:
+    """Create a simple non-secret session token from username."""
+    raw = f"pivotvault:{username}:session"
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
+
 def page_login():
     st.markdown("""
     <div style="display:flex;flex-direction:column;align-items:center;
@@ -1183,8 +1189,13 @@ def page_login():
                                  label_visibility="collapsed")
         if st.button("→  Enter Terminal", use_container_width=True):
             if username.strip() and password.strip():
+                token = _make_token(username.strip())
                 st.session_state["logged_in"] = True
                 st.session_state["username"]  = username.strip()
+                st.session_state["auth_token"] = token
+                # Write token + username into URL so refresh restores session
+                st.query_params["auth"]  = token
+                st.query_params["user"]  = username.strip()
                 st.rerun()
             else:
                 st.error("Enter username and password.")
@@ -3247,8 +3258,12 @@ def render_mobile_nav(current_page: str):
     items_html = ""
     for icon, label, key, page in zip(_NAV_ICONS, _NAV_LABELS, _NAV_KEYS, _NAV_PAGES):
         active_cls = "active" if current_page == page else ""
+        # Preserve auth params in mobile nav links so session survives tab switches
+        _auth = st.session_state.get("auth_token", "")
+        _user = st.session_state.get("username", "")
+        _auth_qs = f"&auth={_auth}&user={_user}" if _auth else ""
         items_html += (
-            f'<a href="?nav={key}" class="{active_cls}" target="_self">'
+            f'<a href="?nav={key}{_auth_qs}" class="{active_cls}" target="_self">'
             f'<span class="nav-icon">{icon}</span>{label}</a>'
         )
     st.markdown(
@@ -3302,7 +3317,12 @@ def render_sidebar():
                     st.session_state["current_page"]         = page
                     st.session_state["mobile_page"]          = page
                     st.session_state["screener_nav_pending"] = False
+                    # Clear nav params but keep auth params
+                    _a = st.session_state.get("auth_token", "")
+                    _u = st.session_state.get("username", "")
                     st.query_params.clear()
+                    if _a: st.query_params["auth"] = _a
+                    if _u: st.query_params["user"] = _u
                     st.rerun()
 
         st.divider()
@@ -3322,7 +3342,10 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
         if st.button("Logout", key="logout_btn", use_container_width=True):
-            st.session_state["logged_in"] = False
+            st.session_state["logged_in"]  = False
+            st.session_state["username"]   = ""
+            st.session_state["auth_token"] = ""
+            st.query_params.clear()
             st.rerun()
 
 
@@ -3330,6 +3353,15 @@ def render_sidebar():
 #  MAIN
 # ─────────────────────────────────────────────
 def main():
+    # ── Restore session from URL on page refresh ──────────────────────────────
+    if not st.session_state["logged_in"]:
+        url_auth = st.query_params.get("auth", "")
+        url_user = st.query_params.get("user", "")
+        if url_auth and url_user and url_auth == _make_token(url_user):
+            st.session_state["logged_in"]   = True
+            st.session_state["username"]    = url_user
+            st.session_state["auth_token"]  = url_auth
+
     if not st.session_state["logged_in"]:
         page_login()
         return
