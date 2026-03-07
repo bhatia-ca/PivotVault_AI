@@ -1164,10 +1164,33 @@ def sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
 # ─────────────────────────────────────────────
 #  PAGES
 # ─────────────────────────────────────────────
-def _make_token(username: str) -> str:
-    """Create a simple non-secret session token from username."""
-    raw = f"pivotvault:{username}:session"
-    return hashlib.md5(raw.encode()).hexdigest()[:16]
+#  CREDENTIALS  — edit this dict to add/remove users
+# ─────────────────────────────────────────────
+# Format:  "username": "password"
+VALID_USERS = {
+    "admin":   "pivot@2024",
+    "trader1": "nse#boss1",
+    "trader2": "nse#boss2",
+}
+
+def _hash_password(password: str) -> str:
+    """SHA-256 hash of password (never store plain text)."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# Pre-hash all passwords at startup
+_HASHED_USERS = {u: _hash_password(p) for u, p in VALID_USERS.items()}
+
+def _make_token(username: str, password_hash: str) -> str:
+    """Session token tied to both username AND password hash."""
+    raw = f"pivotvault:{username}:{password_hash}:session"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+def _check_credentials(username: str, password: str) -> bool:
+    """Return True only if username exists and password matches."""
+    expected_hash = _HASHED_USERS.get(username.strip().lower())
+    if not expected_hash:
+        return False
+    return _hash_password(password) == expected_hash
 
 def page_login():
     st.markdown("""
@@ -1184,21 +1207,26 @@ def page_login():
     </div>""", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([2, 1, 2])
     with c2:
-        username = st.text_input("Username", placeholder="demo", label_visibility="collapsed")
+        username = st.text_input("Username", placeholder="username", label_visibility="collapsed")
         password = st.text_input("Password", type="password", placeholder="password",
                                  label_visibility="collapsed")
         if st.button("→  Enter Terminal", use_container_width=True):
-            if username.strip() and password.strip():
-                token = _make_token(username.strip())
-                st.session_state["logged_in"] = True
-                st.session_state["username"]  = username.strip()
+            u = username.strip().lower()
+            p = password.strip()
+            if not u or not p:
+                st.error("Enter username and password.")
+            elif _check_credentials(u, p):
+                pwd_hash = _HASHED_USERS[u]
+                token    = _make_token(u, pwd_hash)
+                st.session_state["logged_in"]  = True
+                st.session_state["username"]   = u
                 st.session_state["auth_token"] = token
-                # Write token + username into URL so refresh restores session
-                st.query_params["auth"]  = token
-                st.query_params["user"]  = username.strip()
+                st.query_params["auth"] = token
+                st.query_params["user"] = u
                 st.rerun()
             else:
-                st.error("Enter username and password.")
+                st.error("❌ Invalid username or password.")
+                time.sleep(1)   # small delay to slow brute-force
 
 
 def page_market_snapshot(nse500: pd.DataFrame):
@@ -3357,10 +3385,14 @@ def main():
     if not st.session_state["logged_in"]:
         url_auth = st.query_params.get("auth", "")
         url_user = st.query_params.get("user", "")
-        if url_auth and url_user and url_auth == _make_token(url_user):
-            st.session_state["logged_in"]   = True
-            st.session_state["username"]    = url_user
-            st.session_state["auth_token"]  = url_auth
+        # Validate token against stored password hash (not just username)
+        if url_auth and url_user:
+            pwd_hash = _HASHED_USERS.get(url_user.strip().lower(), "")
+            expected = _make_token(url_user.strip().lower(), pwd_hash) if pwd_hash else ""
+            if expected and url_auth == expected:
+                st.session_state["logged_in"]   = True
+                st.session_state["username"]    = url_user
+                st.session_state["auth_token"]  = url_auth
 
     if not st.session_state["logged_in"]:
         page_login()
