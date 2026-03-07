@@ -252,6 +252,56 @@ hr { border-color: var(--border); margin: 1rem 0; }
 .sig-bull { background: rgba(0,229,160,0.12); color: #00e5a0; border: 1px solid rgba(0,229,160,0.3); }
 .sig-bear { background: rgba(255,77,106,0.12); color: #ff4d6a; border: 1px solid rgba(255,77,106,0.3); }
 .sig-neut { background: rgba(245,166,35,0.12); color: #f5a623;  border: 1px solid rgba(245,166,35,0.3); }
+
+/* ── MOBILE BOTTOM NAV ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Hide sidebar entirely on mobile */
+    section[data-testid="stSidebar"],
+    [data-testid="collapsedControl"] { display: none !important; }
+
+    /* Give content breathing room above bottom nav */
+    .block-container { padding: 1rem 0.75rem 80px !important; }
+
+    /* Bottom nav bar */
+    .mobile-nav {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        height: 62px;
+        background: #1a1f2e;
+        border-top: 1px solid #2a3050;
+        display: flex;
+        align-items: stretch;
+        z-index: 9999;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+    }
+    .mobile-nav a {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        text-decoration: none;
+        color: #6b7490;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.55rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        transition: color 0.15s, background 0.15s;
+        border-top: 2px solid transparent;
+        padding: 0 4px;
+    }
+    .mobile-nav a .nav-icon { font-size: 1.2rem; line-height: 1; }
+    .mobile-nav a.active {
+        color: #00e5a0;
+        border-top-color: #00e5a0;
+        background: rgba(0,229,160,0.06);
+    }
+    .mobile-nav a:hover { color: #00e5a0; }
+}
+@media (min-width: 769px) {
+    .mobile-nav { display: none !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -264,6 +314,7 @@ defaults = {
     'logged_in': False,
     'wl_data': {},
     'wl_last_refresh': None,
+    'mobile_page': 'Market Snapshot',
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -3052,6 +3103,39 @@ def page_watchlist():
 
 
 # ─────────────────────────────────────────────
+#  MOBILE BOTTOM NAV
+# ─────────────────────────────────────────────
+_NAV_PAGES = ["Market Snapshot", "Stock Screener", "Pivot Boss Analysis", "Watchlist"]
+_NAV_ICONS = ["📊", "🔍", "🎯", "⭐"]
+_NAV_LABELS = ["Market", "Screener", "Pivot Boss", "Watchlist"]
+_NAV_KEYS   = ["market", "screener", "pivotboss", "watchlist"]
+
+def render_mobile_nav(current_page: str):
+    """Renders a fixed bottom nav bar (visible only on mobile via CSS)."""
+    items_html = ""
+    for icon, label, key, page in zip(_NAV_ICONS, _NAV_LABELS, _NAV_KEYS, _NAV_PAGES):
+        active_cls = "active" if current_page == page else ""
+        items_html += (
+            f'<a href="?nav={key}" class="{active_cls}" target="_self">'
+            f'<span class="nav-icon">{icon}</span>{label}</a>'
+        )
+    st.markdown(
+        f'<nav class="mobile-nav">{items_html}</nav>',
+        unsafe_allow_html=True,
+    )
+
+def get_mobile_page() -> str:
+    """Read page from query param on mobile, fall back to session state."""
+    params = st.query_params
+    nav_key = params.get("nav", None)
+    key_to_page = dict(zip(_NAV_KEYS, _NAV_PAGES))
+    if nav_key in key_to_page:
+        page = key_to_page[nav_key]
+        st.session_state["mobile_page"] = page
+        return page
+    return st.session_state.get("mobile_page", "Market Snapshot")
+
+# ─────────────────────────────────────────────
 #  SIDEBAR
 # ─────────────────────────────────────────────
 def render_sidebar():
@@ -3067,7 +3151,7 @@ def render_sidebar():
         )
         menu = st.radio(
             "Navigation",
-            ["Market Snapshot", "Stock Screener", "Pivot Boss Analysis", "Watchlist"],
+            _NAV_PAGES,
             label_visibility="collapsed",
         )
         st.divider()
@@ -3100,7 +3184,22 @@ def main():
         page_login()
         return
 
-    menu   = render_sidebar()
+    # Desktop: sidebar drives navigation
+    # Mobile: bottom nav + query params drive navigation
+    desktop_menu = render_sidebar()
+    mobile_menu  = get_mobile_page()
+
+    # Inject mobile bottom nav (hidden on desktop via CSS)
+    render_mobile_nav(mobile_menu)
+
+    # On mobile the sidebar is hidden, so use mobile_menu;
+    # on desktop use the sidebar radio. We detect by checking query param.
+    params = st.query_params
+    if params.get("nav"):
+        menu = mobile_menu
+    else:
+        menu = desktop_menu
+
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
