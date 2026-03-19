@@ -354,6 +354,8 @@ defaults = {
     'wl_data':      {},
     'wl_last_refresh': None,
     'smtp_cfg': {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""},
+    'auto_email_enabled': False,
+    'auto_email_to': "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -2678,6 +2680,154 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     return df_out.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).reset_index(drop=True)
 
 
+def build_scanner_pdf(top_bull: pd.DataFrame, top_bear: pd.DataFrame,
+                      tf_choice: str, scan_time_str: str) -> bytes:
+    """Build CPR Scanner PDF report. Returns bytes."""
+    import io as _io
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors as rl_c
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle as PS
+
+    buf  = _io.BytesIO()
+    doc  = SimpleDocTemplate(buf, pagesize=A4,
+                              leftMargin=14*mm, rightMargin=14*mm,
+                              topMargin=13*mm,  bottomMargin=13*mm)
+    W    = A4[0] - 28*mm
+
+    OLIVE  = rl_c.HexColor("#1e293b")
+    GREEN  = rl_c.HexColor("#16a34a")
+    RED    = rl_c.HexColor("#dc2626")
+    AMBER  = rl_c.HexColor("#d97706")
+    LIGHT  = rl_c.HexColor("#f8fafc")
+    BORDER = rl_c.HexColor("#e2e8f0")
+    WHITE  = rl_c.white
+
+    s_title = PS("t", fontSize=15, fontName="Helvetica-Bold",
+                 textColor=rl_c.HexColor("#1a2332"), leading=20, spaceAfter=3)
+    s_sub   = PS("s", fontSize=8,  fontName="Helvetica",
+                 textColor=rl_c.HexColor("#5a6a80"), leading=12, spaceAfter=8)
+    s_h     = PS("h", fontSize=9,  fontName="Helvetica-Bold",
+                 textColor=rl_c.HexColor("#1a2332"), leading=13, spaceBefore=8, spaceAfter=4)
+    s_disc  = PS("d", fontSize=7,  fontName="Helvetica",
+                 textColor=rl_c.HexColor("#94a3b8"), leading=10)
+
+    story = []
+    story.append(Paragraph("PivotVault AI — CPR Scanner Report", s_title))
+    story.append(Paragraph(
+        f"{tf_choice}  ·  Frank Ochoa Strategy  ·  {scan_time_str}", s_sub))
+    story.append(HRFlowable(width=W, thickness=1, color=BORDER, spaceAfter=5))
+
+    def _tbl(df, direction):
+        is_bull = direction == "Bullish"
+        hdr_c   = GREEN if is_bull else RED
+        arrow   = "▲" if is_bull else "▼"
+        story.append(Paragraph(
+            f"{arrow} {direction} Setups — Top 10 · Pivot-Based Targets · Frank Ochoa", s_h))
+        if df.empty:
+            story.append(Paragraph(f"No {direction} setups found.", s_disc))
+            return
+        hdrs = ["Symbol","LTP","Score","Candle","Entry","T1","T2","SL","R:R","RSI","CPR%"]
+        data = [hdrs]
+        for _, r in df.iterrows():
+            rr   = r.get("RR1", 0)
+            data.append([
+                str(r["Symbol"]),
+                f"Rs.{r['LTP']:,.2f}",
+                f"{int(r['Strength%'])}%",
+                str(r.get("Candle","—")),
+                f"Rs.{r['Entry']:,.2f}",
+                f"Rs.{r['T1']:,.2f}",
+                f"Rs.{r['T2']:,.2f}",
+                f"Rs.{r['SL']:,.2f}",
+                f"{rr}x",
+                str(r["RSI"]),
+                f"{r.get('CPR Width%',0):.3f}%",
+            ])
+        cw = [W*0.1,W*0.09,W*0.07,W*0.13,W*0.09,W*0.09,W*0.09,W*0.08,W*0.07,W*0.08,W*0.1]
+        tbl = Table(data, colWidths=cw, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0), (-1,0), OLIVE),
+            ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
+            ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0,0), (-1,-1), 7),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, LIGHT]),
+            ("GRID",          (0,0), (-1,-1), 0.4, BORDER),
+            ("PADDING",       (0,0), (-1,-1), 4),
+            ("TEXTCOLOR",     (2,1), (2,-1),  hdr_c),
+            ("FONTNAME",      (2,1), (2,-1),  "Helvetica-Bold"),
+            ("TEXTCOLOR",     (4,1), (6,-1),  hdr_c),
+            ("TEXTCOLOR",     (7,1), (7,-1),  RED),
+            ("FONTNAME",      (0,1), (0,-1),  "Helvetica-Bold"),
+        ]))
+        story.append(tbl)
+        story.append(Spacer(1, 5*mm))
+
+    _tbl(top_bull, "Bullish")
+    _tbl(top_bear, "Bearish")
+    story.append(HRFlowable(width=W, thickness=0.5, color=BORDER, spaceAfter=3))
+    story.append(Paragraph(
+        "DISCLAIMER: Educational/informational purposes only. Not financial advice. "
+        "Entry/Target/SL levels derived from Frank Ochoa Pivot Boss methodology + ATR-14. "
+        "Always use proper risk management. Consult a SEBI-registered advisor.",
+        s_disc,
+    ))
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+def send_scanner_pdf_email(pdf_bytes: bytes, to_email: str, tf_label: str,
+                           scan_time: str, smtp_cfg: dict) -> tuple:
+    """Send CPR Scanner PDF as email attachment."""
+    import smtplib, ssl
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text    import MIMEText
+    from email.mime.base    import MIMEBase
+    from email              import encoders
+    try:
+        msg            = MIMEMultipart()
+        msg["Subject"] = f"PivotVault AI — CPR Scanner {tf_label} — {scan_time}"
+        msg["From"]    = smtp_cfg["sender"]
+        msg["To"]      = to_email
+
+        body = MIMEText(
+            f"<html><body style='font-family:monospace;'>"
+            f"<h2 style='color:#1a2332;'>PivotVault AI — CPR Scanner Auto-Report</h2>"
+            f"<p style='color:#5a6a80;'>{tf_label} &nbsp;|&nbsp; {scan_time}</p>"
+            f"<p>Please find the latest CPR Scanner report attached as PDF.</p>"
+            f"<p style='color:#16a34a;'>Scan completed automatically. Top 10 Bullish + Top 10 Bearish stocks.</p>"
+            f"<hr/>"
+            f"<p style='color:#94a3b8;font-size:0.8em;'>For educational purposes only. Not financial advice.</p>"
+            f"</body></html>",
+            "html"
+        )
+        msg.attach(body)
+
+        # Attach PDF
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(pdf_bytes)
+        encoders.encode_base64(part)
+        fname = f"PivotVault_Scanner_{scan_time.replace(' ','_').replace(':','')}.pdf"
+        part.add_header("Content-Disposition", f"attachment; filename={fname}")
+        msg.attach(part)
+
+        ctx = ssl.create_default_context()
+        if smtp_cfg["port"] == 465:
+            with smtplib.SMTP_SSL(smtp_cfg["host"], 465, context=ctx) as s:
+                s.login(smtp_cfg["sender"], smtp_cfg["password"])
+                s.sendmail(smtp_cfg["sender"], to_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_cfg["host"], smtp_cfg["port"]) as s:
+                s.ehlo(); s.starttls(context=ctx)
+                s.login(smtp_cfg["sender"], smtp_cfg["password"])
+                s.sendmail(smtp_cfg["sender"], to_email, msg.as_string())
+        return True, "✅ Auto-report sent!"
+    except Exception as e:
+        return False, str(e)
+
+
 def page_cpr_scanner(nse500: pd.DataFrame):
     """
     CPR Scanner — one timeframe at a time.
@@ -2738,6 +2888,48 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     tf_tag     = cfg["tag"]
     refresh_s  = cfg["refresh"]
 
+    # ── Auto-Email Config ─────────────────────────────────────────────────────
+    with st.expander("📧 Auto-Email Settings — send PDF on every scan refresh", expanded=False):
+        ae1, ae2, ae3 = st.columns([1, 3, 2])
+        with ae1:
+            auto_on = st.toggle(
+                "Auto-Send",
+                value=st.session_state.get("auto_email_enabled", False),
+                key="auto_email_toggle",
+            )
+            st.session_state["auto_email_enabled"] = auto_on
+        with ae2:
+            auto_to = st.text_input(
+                "Send PDF to",
+                value=st.session_state.get("auto_email_to", ""),
+                placeholder="your@email.com",
+                label_visibility="collapsed",
+                key="auto_email_to_input",
+            )
+            st.session_state["auto_email_to"] = auto_to
+        with ae3:
+            smtp = st.session_state.get("smtp_cfg", {})
+            if smtp.get("sender") and smtp.get("password"):
+                st.markdown(
+                    "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
+                    "color:#16a34a;padding-top:0.5rem;'>✅ SMTP configured</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
+                    "color:#dc2626;padding-top:0.5rem;'>⚠️ Configure SMTP below first</div>",
+                    unsafe_allow_html=True,
+                )
+        if auto_on:
+            st.markdown(
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
+                f"color:#1a6b3c;padding:0.4rem 0;'>"
+                f"🔄 PDF will auto-send to <b>{auto_to or '—'}</b> every time the scanner refreshes "
+                f"(every <b>{cfg['refresh_label']}</b>)</div>",
+                unsafe_allow_html=True,
+            )
+
     scan_key      = f"cpr_scan_{tf_tag}"
     scan_time_key = f"cpr_scan_time_{tf_tag}"
 
@@ -2758,6 +2950,25 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.session_state[scan_key]      = result
         st.session_state[scan_time_key] = now
         last_scan = now
+
+        # ── Auto-email PDF on every scan refresh ──────────────────────────────
+        _auto_on  = st.session_state.get("auto_email_enabled", False)
+        _auto_to  = st.session_state.get("auto_email_to", "").strip()
+        _smtp_cfg = st.session_state.get("smtp_cfg", {})
+        if _auto_on and _auto_to and _smtp_cfg.get("sender") and _smtp_cfg.get("password"):
+            try:
+                _scan_t = datetime.now().strftime("%d %b %Y  %H:%M")
+                # Get top 10 from fresh result
+                _bull = result[result["Pattern"]=="Bullish"].sort_values(["Strength%","CPR Width%"],ascending=[False,True]).head(10) if not result.empty else pd.DataFrame()
+                _bear = result[result["Pattern"]=="Bearish"].sort_values(["Strength%","CPR Width%"],ascending=[False,True]).head(10) if not result.empty else pd.DataFrame()
+                _pdf  = build_scanner_pdf(_bull, _bear, tf_choice, _scan_t)
+                _ok, _msg = send_scanner_pdf_email(_pdf, _auto_to, tf_choice, _scan_t, _smtp_cfg)
+                if _ok:
+                    st.toast(f"📧 Auto-report sent to {_auto_to}", icon="✅")
+                else:
+                    st.toast(f"Auto-email failed: {_msg}", icon="⚠️")
+            except Exception as _e:
+                st.toast(f"Auto-email error: {_e}", icon="⚠️")
 
     scan_df  = st.session_state.get(scan_key, pd.DataFrame())
     elapsed  = int(now - last_scan)
@@ -3086,91 +3297,16 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.caption("💡 You can also copy the message above and paste into any chat — WhatsApp, Telegram, SMS, etc.")
 
     with rtab3:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Generate and download the scanner report as a PDF file.</div>", unsafe_allow_html=True)
-        if st.button("📄 Generate PDF", use_container_width=True, key="sc_gen_pdf"):
-            with st.spinner("Building PDF report…"):
+        st.markdown(
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;"
+            "margin-bottom:0.75rem;'>Download the scanner report as a PDF. "
+            "Use <b>Auto-Email Settings</b> above to send automatically on every refresh.</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("📄 Generate & Download PDF", use_container_width=True, key="sc_gen_pdf"):
+            with st.spinner("Building PDF…"):
                 try:
-                    import io as _io
-                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.lib import colors as rl_c
-                    from reportlab.lib.units import mm
-                    from reportlab.lib.styles import ParagraphStyle as PS
-
-                    buf = _io.BytesIO()
-                    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14*mm, rightMargin=14*mm, topMargin=13*mm, bottomMargin=13*mm)
-                    W   = A4[0] - 28*mm
-                    story = []
-
-                    OLIVE  = rl_c.HexColor("#1e293b")
-                    GREEN  = rl_c.HexColor("#16a34a")
-                    RED    = rl_c.HexColor("#dc2626")
-                    LIGHT  = rl_c.HexColor("#f8fafc")
-                    BORDER = rl_c.HexColor("#e2e8f0")
-                    WHITE  = rl_c.white
-
-                    s_title = PS("t", fontSize=15, fontName="Helvetica-Bold", textColor=rl_c.HexColor("#1a2332"), leading=19, spaceAfter=3)
-                    s_sub   = PS("s", fontSize=8,  fontName="Helvetica", textColor=rl_c.HexColor("#5a6a80"), leading=12, spaceAfter=8)
-                    s_h     = PS("h", fontSize=9,  fontName="Helvetica-Bold", textColor=rl_c.HexColor("#1a2332"), leading=13, spaceBefore=7, spaceAfter=4)
-                    s_disc  = PS("d", fontSize=7,  fontName="Helvetica", textColor=rl_c.HexColor("#94a3b8"), leading=10)
-
-                    story.append(Paragraph("PivotVault AI — CPR Scanner Report", s_title))
-                    story.append(Paragraph(f"{tf_choice}  ·  Frank Ochoa Strategy  ·  {scan_time_str}", s_sub))
-                    story.append(HRFlowable(width=W, thickness=1, color=BORDER, spaceAfter=5))
-
-                    def _add_table(df, direction):
-                        is_bull = direction == "Bullish"
-                        hdr_c   = GREEN if is_bull else RED
-                        arrow   = "▲" if is_bull else "▼"
-                        story.append(Paragraph(f"{arrow} {direction} Setups — Narrow CPR + Strength 85–100% + R:R >= 1.5x", s_h))
-                        if df.empty:
-                            story.append(Paragraph("No qualifying stocks on this timeframe.", s_disc))
-                            return
-                        hdrs = ["Symbol","LTP","Score","Candle","Entry","T1","T2","SL","R:R","RSI","CPR%"]
-                        data = [hdrs]
-                        for _, r in df.iterrows():
-                            data.append([
-                                str(r["Symbol"]),
-                                f"Rs.{r['LTP']:,.2f}",
-                                f"{int(r['Strength%'])}%",
-                                str(r.get("Candle","—")),
-                                f"Rs.{r['Entry']:,.2f}",
-                                f"Rs.{r['T1']:,.2f}",
-                                f"Rs.{r['T2']:,.2f}",
-                                f"Rs.{r['SL']:,.2f}",
-                                f"{r.get('RR1',0)}x",
-                                str(r["RSI"]),
-                                f"{r.get('CPR Width%',0):.3f}%",
-                            ])
-                        cw = [W*0.1,W*0.09,W*0.07,W*0.13,W*0.09,W*0.09,W*0.09,W*0.09,W*0.07,W*0.08,W*0.1]
-                        tbl = Table(data, colWidths=cw, repeatRows=1)
-                        tbl.setStyle(TableStyle([
-                            ("BACKGROUND",    (0,0),(-1,0), OLIVE),
-                            ("TEXTCOLOR",     (0,0),(-1,0), WHITE),
-                            ("FONTNAME",      (0,0),(-1,0), "Helvetica-Bold"),
-                            ("FONTSIZE",      (0,0),(-1,-1), 7),
-                            ("ROWBACKGROUNDS",(0,1),(-1,-1), [WHITE, LIGHT]),
-                            ("GRID",          (0,0),(-1,-1), 0.4, BORDER),
-                            ("PADDING",       (0,0),(-1,-1), 4),
-                            ("TEXTCOLOR",     (2,1),(2,-1), hdr_c),
-                            ("FONTNAME",      (2,1),(2,-1), "Helvetica-Bold"),
-                            ("TEXTCOLOR",     (7,1),(7,-1), RED),
-                            ("FONTNAME",      (0,1),(0,-1), "Helvetica-Bold"),
-                        ]))
-                        story.append(tbl)
-                        story.append(Spacer(1, 4*mm))
-
-                    _add_table(top_bull, "Bullish")
-                    _add_table(top_bear, "Bearish")
-                    story.append(HRFlowable(width=W, thickness=0.5, color=BORDER, spaceAfter=3))
-                    story.append(Paragraph(
-                        "DISCLAIMER: Educational/informational purposes only. Not financial advice. "
-                        "Levels derived from Frank Ochoa Pivot Boss + ATR-14. Use proper risk management. Consult SEBI-registered advisor.",
-                        s_disc,
-                    ))
-                    doc.build(story)
-                    buf.seek(0)
-                    pdf_bytes = buf.read()
+                    pdf_bytes = build_scanner_pdf(top_bull, top_bear, tf_choice, scan_time_str)
                     st.download_button(
                         label=f"⬇️ Download PDF — {cfg['tag'].upper()} Scanner",
                         data=pdf_bytes,
@@ -3179,7 +3315,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                         use_container_width=True,
                         key="sc_pdf_dl",
                     )
-                    st.success("PDF ready!")
+                    st.success("PDF ready — click button above to download!")
                 except Exception as ex:
                     st.error(f"PDF error: {ex}")
 
