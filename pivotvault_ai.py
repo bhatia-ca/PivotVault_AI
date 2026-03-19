@@ -3172,9 +3172,9 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                     buf.seek(0)
                     pdf_bytes = buf.read()
                     st.download_button(
-                        label=f"⬇️ Download PDF — {tf_cfg['tag'].upper()} Scanner",
+                        label=f"⬇️ Download PDF — {cfg['tag'].upper()} Scanner",
                         data=pdf_bytes,
-                        file_name=f"PivotVault_Scanner_{tf_cfg['tag']}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        file_name=f"PivotVault_Scanner_{cfg['tag']}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
                         use_container_width=True,
                         key="sc_pdf_dl",
