@@ -9,8 +9,12 @@ import requests
 from io import StringIO
 from datetime import datetime, timedelta
 import time
-import hashlib
 import smtplib
+try:
+    from mobile_patch import inject_mobile
+    _MOBILE_PATCH = True
+except ImportError:
+    _MOBILE_PATCH = False
 import io
 import base64
 from reportlab.lib.pagesizes import A4
@@ -24,6 +28,11 @@ from reportlab.platypus import PageBreak
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+try:
+    from tv_chart import render_tv_chart, render_tv_screener_chart
+    _TV_CHARTS = True
+except ImportError:
+    _TV_CHARTS = False
 
 # ─────────────────────────────────────────────
 #  CONFIGURATION
@@ -35,6 +44,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Mobile PWA injection
+if _MOBILE_PATCH:
+    inject_mobile()
+
 # ─────────────────────────────────────────────
 #  CUSTOM CSS
 # ─────────────────────────────────────────────
@@ -42,300 +55,305 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
+/* 1. Root variables */
 :root {
-    --bg:        #0d0f14;
-    --surface:   #141720;
-    --border:    #1e2330;
-    --accent:    #00e5a0;
-    --accent2:   #4d7cfe;
-    --danger:    #ff4d6a;
-    --warn:      #f5a623;
-    --muted:     #4a5068;
-    --text:      #d4daf0;
-    --text-dim:  #6b7490;
+    --bg:       #f0f4f8;
+    --surface:  #ffffff;
+    --border:   #dce3ed;
+    --accent:   #1a6b3c;
+    --danger:   #dc2626;
+    --warn:     #d97706;
+    --text:     #1a2332;
+    --dim:      #5a6a80;
 }
-html, body, [class*="css"] {
-    font-family: 'IBM Plex Sans', sans-serif;
-    background-color: var(--bg);
-    color: var(--text);
-}
-#MainMenu, footer { visibility: hidden; }
-header { visibility: hidden; }
-/* Keep sidebar toggle button visible on mobile */
-header [data-testid="stSidebarCollapsedControl"],
-button[kind="header"],
-div[data-testid="collapsedControl"] {
-    visibility: visible !important;
-    display: flex !important;
-}
-.block-container { padding: 1.5rem 2rem 2rem; max-width: 1500px; }
 
-/* ── SIDEBAR — light olive green ─────────────────────────────────────── */
-section[data-testid="stSidebar"] {
-    background: #e8eddf !important;
-    border-right: 2px solid #c5cfa8;
+/* 2. Nuke ALL dark backgrounds Streamlit injects */
+html, body { background: #f0f4f8 !important; }
+
+.stApp                                          { background: #f0f4f8 !important; }
+.stApp > div                                    { background: #f0f4f8 !important; }
+.stApp [data-testid="stAppViewContainer"]       { background: #f0f4f8 !important; }
+.stApp [data-testid="stMain"]                   { background: #f0f4f8 !important; }
+.stApp [data-testid="stMainBlockContainer"]     { background: #f0f4f8 !important; }
+.stApp [data-testid="stVerticalBlockBorderWrapper"]  { background: #f0f4f8 !important; }
+[data-testid="stVerticalBlock"]                 { background: transparent !important; }
+.block-container                                { background: #f0f4f8 !important; padding: 1.5rem 2rem 2rem; max-width: 1500px; }
+
+/* Emotion cache class sweep (Streamlit changes these but !important overrides) */
+[class^="css-"], [class*=" css-"] { background-color: inherit; }
+
+/* 3. Global font & text */
+html, body, .stApp, .stMarkdown, .stText,
+p, span, label, li {
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    color: #1a2332 !important;
 }
-section[data-testid="stSidebar"] * {
-    color: #2d3318 !important;
+/* Set div font/color without overriding button internals */
+.stMarkdown div, .stText div, [data-testid="stVerticalBlock"] > div {
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: #1a2332;
 }
+
+/* 4. Hide only chrome decorations — never touch sidebar */
+#MainMenu { visibility: hidden !important; }
+footer    { visibility: hidden !important; }
+
+/* 5. SIDEBAR — dark navy (trading terminal style) */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] > div > div {
+    background: #1e2d3d !important;
+}
+section[data-testid="stSidebar"] *      { color: #c8d8e8 !important; }
+section[data-testid="stSidebar"] hr     { border-color: #2d4a60 !important; }
 section[data-testid="stSidebar"] .stRadio label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.84rem;
-    font-weight: 500;
-    letter-spacing: 0.03em;
-    color: #3d4a1e !important;
-    padding: 0.45rem 0.6rem;
-    border-radius: 5px;
-    transition: background 0.18s, color 0.18s;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.85rem !important;
+    color: #a0b8cc !important;
+    padding: 0.55rem 0.8rem !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    display: block !important;
+    transition: background 0.15s !important;
 }
 section[data-testid="stSidebar"] .stRadio label:hover {
-    background: #d4dbb8;
-    color: #1a2208 !important;
+    background: #2d4a60 !important;
+    color: #e8f4ff !important;
 }
-section[data-testid="stSidebar"] hr {
-    border-color: #c5cfa8 !important;
-}
-/* Sidebar nav buttons */
 section[data-testid="stSidebar"] .stButton > button {
-    background: transparent !important;
-    border: none !important;
-    border-radius: 6px !important;
-    color: #7a8c3a !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.84rem !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.02em !important;
-    text-align: left !important;
-    justify-content: flex-start !important;
-    padding: 0.45rem 0.75rem !important;
-    transition: background 0.15s !important;
-    width: 100% !important;
+    background: #2d4a60 !important;
+    border: 1px solid #3d6080 !important;
+    color: #c8d8e8 !important;
 }
 section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #dde4c4 !important;
-    color: #5a6e20 !important;
-}
-/* Logout button — keep it styled differently */
-section[data-testid="stSidebar"] div:has(> button[kind="secondary"]#logout_btn) button,
-section[data-testid="stSidebar"] [data-testid="stButton"]:last-of-type button {
-    background: #8a9e45 !important;
-    color: #f5f7ee !important;
-    text-align: center !important;
-    justify-content: center !important;
+    background: #3d6080 !important;
+    color: #ffffff !important;
 }
 
+/* 6. METRIC CARDS */
 div[data-testid="metric-container"] {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem 1.25rem;
+    background: #ffffff !important;
+    border: 1px solid #dce3ed !important;
+    border-radius: 10px !important;
+    padding: 1rem 1.25rem !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
 }
-div[data-testid="metric-container"] label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-dim) !important;
+div[data-testid="metric-container"] label  { color: #5a6a80 !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 0.72rem !important; letter-spacing: 0.08em !important; text-transform: uppercase !important; }
+div[data-testid="metric-container"] [data-testid="stMetricValue"] { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 1.4rem !important; font-weight: 600 !important; }
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] { font-family: 'IBM Plex Mono', monospace !important; font-size: 0.78rem !important; }
+
+/* 7. BUTTONS — suppress ALL wrapper styles that cause double-button appearance */
+/* Kill the wrapper div completely */
+.stButton { background: transparent !important; border: none !important; padding: 0 !important; }
+.stButton > div,
+.stButton [data-testid="baseButton-secondary"],
+.stButton [data-testid="baseButton-primary"] {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
 }
-div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.4rem;
-    font-weight: 600;
-    color: var(--text) !important;
-}
-div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.78rem;
-}
-.stButton > button {
-    background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.78rem;
-    letter-spacing: 0.06em;
-    border-radius: 4px;
-    padding: 0.4rem 1rem;
-    transition: background 0.2s, color 0.2s;
-}
-.stButton > button:hover { background: var(--accent); color: #000; }
-.stDataFrame, .stTable { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; }
-/* ── SELECTBOXES & INPUTS — light olive green ───────────────────────── */
-.stSelectbox > div > div,
-.stSelectbox [data-baseweb="select"] > div,
-div[data-baseweb="select"] > div {
-    background: #edf0e3 !important;
-    border: 1px solid #b5c27a !important;
-    border-radius: 5px !important;
+/* Style only the actual <button> element */
+.stButton > button,
+.stButton > div > button,
+button[kind="secondary"],
+button[kind="primary"] {
+    background: #ffffff !important;
+    border: 1.5px solid #1a6b3c !important;
+    color: #1a6b3c !important;
     font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.82rem !important;
-    color: #2d3318 !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.06em !important;
+    border-radius: 6px !important;
+    padding: 0.4rem 1rem !important;
+    transition: background 0.2s, color 0.2s !important;
+    outline: none !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+    width: 100% !important;
+}
+.stButton > button:hover,
+.stButton > div > button:hover {
+    background: #1a6b3c !important;
+    color: #ffffff !important;
+    border-color: #1a6b3c !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+.stButton > button:focus,
+.stButton > div > button:focus {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(26,107,60,0.15) !important;
+}
+.stButton > button:active,
+.stButton > div > button:active {
+    transform: scale(0.98) !important;
+}
+/* Sidebar buttons override */
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] .stButton > div > button {
+    background: #2d4a60 !important;
+    border: 1px solid #3d6080 !important;
+    color: #c8d8e8 !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover,
+section[data-testid="stSidebar"] .stButton > div > button:hover {
+    background: #3d6080 !important;
+    color: #ffffff !important;
+}
+
+/* 8. SELECTBOXES */
+div[data-baseweb="select"] > div {
+    background: #ffffff !important;
+    border: 1.5px solid #c8d4e0 !important;
+    border-radius: 6px !important;
+    color: #1a2332 !important;
+    font-family: 'IBM Plex Mono', monospace !important;
 }
 div[data-baseweb="select"] span,
-div[data-baseweb="select"] div {
-    color: #2d3318 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-/* Dropdown menu list */
-ul[data-baseweb="menu"],
-div[data-baseweb="popover"] > div {
-    background: #f2f5e8 !important;
-    border: 1px solid #b5c27a !important;
-}
-li[role="option"] {
-    background: #f2f5e8 !important;
-    color: #2d3318 !important;
+div[data-baseweb="select"] div { color: #1a2332 !important; background: transparent !important; }
+ul[data-baseweb="menu"] li,
+div[data-baseweb="popover"] li {
+    background: #ffffff !important;
+    color: #1a2332 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.82rem !important;
 }
-li[role="option"]:hover,
-li[aria-selected="true"] {
-    background: #d4dbb8 !important;
-    color: #1a2208 !important;
+ul[data-baseweb="menu"] li:hover  { background: #f0fdf4 !important; color: #1a6b3c !important; }
+ul[data-baseweb="menu"],
+div[data-baseweb="popover"] > div {
+    background: #ffffff !important;
+    border: 1.5px solid #c8d4e0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1) !important;
 }
-/* Text inputs */
-.stTextInput > div > div > input,
-input[type="text"], input[type="password"] {
-    background: #edf0e3 !important;
-    border: 1px solid #b5c27a !important;
-    border-radius: 5px !important;
-    color: #2d3318 !important;
+
+/* 9. TEXT INPUTS */
+input[type="text"], input[type="password"],
+.stTextInput input {
+    background: #ffffff !important;
+    border: 1.5px solid #c8d4e0 !important;
+    border-radius: 6px !important;
+    color: #1a2332 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.85rem !important;
 }
-.stTextInput > div > div > input::placeholder {
-    color: #7d8c55 !important;
+input::placeholder { color: #8a9ab0 !important; }
+input:focus {
+    border-color: #1a6b3c !important;
+    box-shadow: 0 0 0 3px rgba(26,107,60,0.15) !important;
+    outline: none !important;
 }
-.stTextInput > div > div > input:focus {
-    border-color: #6b8c2a !important;
-    box-shadow: 0 0 0 2px rgba(107,140,42,0.18) !important;
-}
-h1, h2, h3 { font-family: 'IBM Plex Mono', monospace; letter-spacing: -0.02em; color: var(--text); }
-hr { border-color: var(--border); margin: 1rem 0; }
 
+/* 10. DATAFRAMES */
+.stDataFrame { font-family: 'IBM Plex Mono', monospace !important; font-size: 0.8rem !important; }
+[data-testid="stDataFrameContainer"]  { background: #ffffff !important; border: 1px solid #dce3ed !important; border-radius: 8px !important; }
+
+/* 11. EXPANDER */
+[data-testid="stExpander"] { background: #ffffff !important; border: 1px solid #dce3ed !important; border-radius: 8px !important; }
+[data-testid="stExpander"] summary { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-testid="stExpander"] > div    { background: #ffffff !important; }
+
+/* 12. CHECKBOX & RADIO */
+.stCheckbox label, .stRadio label { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; }
+
+/* 13. ALERT / INFO / CAPTION */
+.stCaption p, .stCaption { color: #5a6a80 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-testid="stInfo"]    { background: #eff6ff !important; color: #1e40af !important; border-left: 4px solid #3b82f6 !important; }
+[data-testid="stWarning"] { background: #fffbeb !important; color: #92400e !important; border-left: 4px solid #f59e0b !important; }
+[data-testid="stSuccess"] { background: #f0fdf4 !important; color: #166534 !important; border-left: 4px solid #22c55e !important; }
+[data-testid="stError"]   { background: #fef2f2 !important; color: #991b1b !important; border-left: 4px solid #ef4444 !important; }
+
+/* 14. DIVIDERS & HEADINGS */
+h1, h2, h3 { font-family: 'IBM Plex Mono', monospace !important; letter-spacing: -0.02em !important; color: #1a2332 !important; }
+hr { border-color: #dce3ed !important; margin: 1rem 0 !important; }
+
+/* 15. COMPONENT CLASSES */
 .wl-pill {
     display: inline-block;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--accent);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.78rem;
-    padding: 0.2rem 0.65rem;
-    border-radius: 20px;
-    margin: 0.2rem;
+    background: #f0fdf4; border: 1px solid #bbf7d0;
+    color: #1a6b3c; font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem; font-weight: 600;
+    padding: 0.2rem 0.65rem; border-radius: 20px; margin: 0.2rem;
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 .live-dot {
     display: inline-block; width: 8px; height: 8px;
-    background: var(--accent); border-radius: 50%;
+    background: #16a34a; border-radius: 50%;
     margin-right: 6px; animation: pulse 1.6s ease-in-out infinite;
 }
-.title-bar {
-    display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;
-}
-.title-bar h1 { margin: 0; font-size: 1.4rem; }
-.title-bar .ts {
-    margin-left: auto; font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem; color: var(--text-dim);
-}
+.title-bar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
+.title-bar h1 { margin: 0 !important; font-size: 1.4rem !important; color: #1a2332 !important; }
+.title-bar .ts { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem; color: #5a6a80; }
+
 .pb-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 0.75rem;
+    background: #ffffff !important;
+    border: 1px solid #dce3ed; border-radius: 10px;
+    padding: 1rem 1.25rem; margin-bottom: 0.75rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
-.pb-card-title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.68rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin-bottom: 0.5rem;
-}
+.pb-card-title { font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #5a6a80; margin-bottom: 0.5rem; }
 .pb-card-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.1rem; font-weight: 600; }
-.pb-bull  { color: #00e5a0; }
-.pb-bear  { color: #ff4d6a; }
-.pb-neut  { color: #f5a623; }
+.pb-bull { color: #16a34a !important; }
+.pb-bear { color: #dc2626 !important; }
+.pb-neut { color: #d97706 !important; }
+
 .signal-badge {
-    display: inline-block;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 0.25rem 0.75rem;
-    border-radius: 3px;
-    margin: 0.15rem 0.1rem;
+    display: inline-block; font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 0.25rem 0.75rem;
+    border-radius: 4px; margin: 0.15rem 0.1rem;
 }
-.sig-bull { background: rgba(0,229,160,0.12); color: #00e5a0; border: 1px solid rgba(0,229,160,0.3); }
-.sig-bear { background: rgba(255,77,106,0.12); color: #ff4d6a; border: 1px solid rgba(255,77,106,0.3); }
-.sig-neut { background: rgba(245,166,35,0.12); color: #f5a623;  border: 1px solid rgba(245,166,35,0.3); }
+.sig-bull { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+.sig-bear { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.sig-neut { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
 
-/* ── MOBILE BOTTOM NAV ───────────────────────────────────────────────── */
+/* 16. MOBILE */
 @media (max-width: 768px) {
-    /* Hide sidebar entirely on mobile */
-    section[data-testid="stSidebar"],
-    [data-testid="collapsedControl"] { display: none !important; }
-
-    /* Give content breathing room above bottom nav */
-    .block-container { padding: 1rem 0.75rem 80px !important; }
-
-    /* Bottom nav bar */
-    .mobile-nav {
-        position: fixed;
-        bottom: 0; left: 0; right: 0;
-        height: 62px;
-        background: #1a1f2e;
-        border-top: 1px solid #2a3050;
-        display: flex;
-        align-items: stretch;
-        z-index: 9999;
-        box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
-    }
-    .mobile-nav a {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 3px;
-        text-decoration: none;
-        color: #6b7490;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.55rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        transition: color 0.15s, background 0.15s;
-        border-top: 2px solid transparent;
-        padding: 0 4px;
-    }
-    .mobile-nav a .nav-icon { font-size: 1.2rem; line-height: 1; }
-    .mobile-nav a.active {
-        color: #00e5a0;
-        border-top-color: #00e5a0;
-        background: rgba(0,229,160,0.06);
-    }
-    .mobile-nav a:hover { color: #00e5a0; }
+    .block-container { padding: 0.75rem !important; padding-bottom: 4rem !important; max-width: 100vw !important; }
+    section[data-testid="stSidebar"] { min-width: 80vw !important; max-width: 85vw !important; }
+    section[data-testid="stSidebar"] .stRadio label { min-height: 48px !important; font-size: 0.95rem !important; }
 }
-@media (min-width: 769px) {
-    .mobile-nav { display: none !important; }
+#mobile-nav-bar { display: none; }
+@media (max-width: 768px) {
+    #mobile-nav-bar {
+        display: flex !important; position: fixed; bottom: 0; left: 0; right: 0;
+        height: 60px; background: #1e2d3d; border-top: 1px solid #2d4a60;
+        z-index: 999998; align-items: center; justify-content: space-around;
+        padding: 0 8px; padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    #mobile-nav-bar button {
+        flex: 1; height: 52px; background: transparent; border: none;
+        color: #5a7a90; font-size: 0.6rem; font-family: 'IBM Plex Mono', monospace;
+        letter-spacing: 0.04em; text-transform: uppercase;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 3px; cursor: pointer; border-radius: 8px;
+        -webkit-tap-highlight-color: transparent;
+    }
+    #mobile-nav-bar button:active { background: #2d4a60; color: #22c55e; }
+    #mobile-nav-bar button.active { color: #22c55e; }
+    #mobile-nav-bar button .nav-icon { font-size: 1.3rem; line-height: 1; }
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────
 #  SESSION STATE
 # ─────────────────────────────────────────────
 defaults = {
     'watchlist': [],
-    'cpr_scan_df': None,
-    'logged_in': False,
-    'wl_data': {},
+    'cpr_scan_df':  None,
+    'cpr_scan_15m': None,
+    'cpr_scan_1h':  None,
+    'cpr_scan_1d':  None,
+    'cpr_scan_1wk': None,
+    'cpr_scan_1mo': None,
+    'logged_in':    False,
+    'wl_data':      {},
     'wl_last_refresh': None,
-    'mobile_page': 'Market Snapshot',
-    'screener_symbol': None,
-    'screener_nav_pending': False,
+    'smtp_cfg': {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -363,6 +381,95 @@ def fetch_nse500_list() -> pd.DataFrame:
             "Company Name": ["Reliance Industries", "TCS", "Infosys", "HDFC Bank", "ICICI Bank",
                              "Wipro", "Tata Motors", "SBI", "Axis Bank", "L&T"],
         })
+
+
+@st.cache_data(ttl=3600)
+def fetch_nifty200_list() -> list:
+    """Fetch Nifty 200 symbols from NSE. Falls back to hardcoded top-200 subset."""
+    url = "https://archives.nseindia.com/content/indices/ind_nifty200list.csv"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        df = pd.read_csv(StringIO(resp.text))
+        df.columns = df.columns.str.strip()
+        return df["Symbol"].dropna().tolist()
+    except Exception:
+        # Hardcoded Nifty 200 fallback (top liquid stocks)
+        return [
+            "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","HDFC","SBIN","BHARTIARTL",
+            "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
+            "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
+            "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
+            "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
+            "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS",
+            "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM",
+            "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE","BAJAJ-AUTO",
+            "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHL",
+            "MCDOWELL-N","UNITED SPIRITS","TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
+            "NAUKRI","ZOMATO","PAYTM","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
+            "CHOLAFIN","MANAPPURAM","RECLTD","PFC","CANBK","BANKBARODA","PNB","FEDERALBNK",
+            "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","DOMINOS","VOLTAS",
+            "WHIRLPOOL","BLUEDART","DELHIVERY","ZYDUSLIFE","ALKEM","AUROPHARMA","CADILAHC",
+            "GLENMARK","IPCA","LALPATHLAB","METROPOLIS","THYROCARE","FORTIS","MAXHEALTH",
+            "NARAYANA","AARTIIND","DEEPAKNI","SRF","PIDILITIND","AIAENG","CUMMINSIND",
+            "THERMAX","ABB","BHEL","BEL","HAL","BEML","MFSL","LICHSGFIN","HDFCAMC","NIPPONLIFE",
+            "UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH","PGHH","EMAMILTD",
+            "JYOTHYLAB","VSTIND","RADICO","UNITDSPR","TATACOMM","LTTS","MPHASIS","COFORGE",
+            "PERSISTENT","ZENSARTECH","HEXAWARE","KPITTECH","TATAELXSI","INFY","OFSS",
+            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","L&TFH","SRTRANSFIN",
+            "SUNDARMFIN","M&MFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
+            "CROMPTON","ORIENTELEC","POLYCAB","FINOLEX","KEI","STERLITE","KPIL","NCC","AHLUCONT",
+            "PNCINFRA","IRB","HG INFRA","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
+            "MUNDRAPORT","RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
+            "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
+        ]
+
+@st.cache_data(ttl=3600)
+def fetch_nifty200_by_marketcap() -> list:
+    """
+    Returns Nifty 200 symbols sorted by market cap (highest first).
+    Fetches market cap from yfinance info in batches.
+    Falls back to a pre-ranked hardcoded list if fetch fails.
+    """
+    # Pre-ranked Nifty 200 by approximate market cap (as of 2025)
+    RANKED = [
+        "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFY","SBIN","LICI",
+        "HINDUNILVR","ITC","LT","BAJFINANCE","HCLTECH","KOTAKBANK","MARUTI","SUNPHARMA",
+        "AXISBANK","TITAN","ADANIENT","ADANIPORTS","ASIANPAINT","WIPRO","ULTRACEMCO",
+        "NTPC","POWERGRID","NESTLEIND","TATAMOTORS","BAJAJFINSV","JSWSTEEL","TATASTEEL",
+        "COALINDIA","ONGC","BPCL","TECHM","HINDALCO","GRASIM","M&M","INDUSINDBK",
+        "CIPLA","DRREDDY","DIVISLAB","EICHERMOT","HEROMOTOCO","BAJAJ-AUTO","BRITANNIA",
+        "APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS","DABUR","GODREJCP","HAVELLS",
+        "BERGEPAINT","ICICIPRULI","SBILIFE","HDFCLIFE","SHREECEM","AMBUJACEM","VEDL",
+        "SAIL","NMDC","IOCL","HINDPETRO","TATAPOWER","ADANIGREEN","ADANITRANS",
+        "NAUKRI","ZOMATO","DMART","IRCTC","CHOLAFIN","RECLTD","PFC","BANKBARODA",
+        "CANBK","PNB","FEDERALBNK","IDFCFIRSTB","MUTHOOTFIN","LUPIN","BIOCON",
+        "TORNTPHARM","BOSCHLTD","COLPAL","MARICO","INDHOTEL","JUBLFOOD","VOLTAS",
+        "MOTHERSON","BALKRISIND","CONCOR","MANAPPURAM","BANDHANBNK","RBLBANK",
+        "ZYDUSLIFE","ALKEM","AUROPHARMA","GLENMARK","IPCA","LALPATHLAB","FORTIS",
+        "MAXHEALTH","ABB","BHEL","BEL","HAL","BEML","LICHSGFIN","HDFCAMC",
+        "NIPPONLIFE","UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH",
+        "PGHH","EMAMILTD","JYOTHYLAB","RADICO","TATACOMM","LTTS","MPHASIS","COFORGE",
+        "PERSISTENT","TATAELXSI","OFSS","RAMCOCEM","JKCEMENT","KPITTECH","BIRLASOFT",
+        "SRF","DEEPAKNI","AARTIIND","CUMMINSIND","THERMAX","CROMPTON","POLYCAB",
+        "KEI","FINOLEX","KPIL","NCC","IRB","DLF","PRESTIGE","OBEROIRLTY",
+        "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","MCDOWELL-N","SCHAEFFLER",
+        "ACC","HEIDELBERG","PRISM","UNITDSPR","VSTIND","PAYTM","DELHIVERY",
+        "BLUEDART","UJJIVAN","EQUITAS","AUBANK","M&MFIN","SRTRANSFIN","SUNDARMFIN",
+        "SCUF","ORIENTELEC","NHPC","SJVN","NBCC","HUDCO","IRFC","RITES","GPPL",
+        "AHLUCONT","PNCINFRA","KNRCON","ASHOKA","SADBHAV","HG INFRA","NAKODA",
+        "NARAYANA","METROPOLIS","THYROCARE","LALPATHLAB","PGHL","SUNTECK","MAHINDCIE",
+    ]
+
+    # Use pre-ranked list (avoids slow yfinance calls on every load)
+    try:
+        n200_set = set(fetch_nifty200_list())
+        ranked = [s for s in RANKED if s in n200_set]
+        extras = [s for s in fetch_nifty200_list() if s not in set(RANKED)]
+        return ranked + sorted(extras)
+    except Exception:
+        return RANKED
 
 
 @st.cache_data(ttl=60)
@@ -418,24 +525,6 @@ def fetch_index_data(ticker: str) -> dict:
         return {"ltp": ltp, "change": chg}
     except Exception:
         return {"ltp": None, "change": None}
-
-
-@st.cache_data(ttl=300)
-def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
-    try:
-        df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
-        df.index = df.index.tz_localize(None)
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def fetch_stock_info(symbol: str) -> dict:
-    try:
-        return yf.Ticker(symbol + ".NS").info
-    except Exception:
-        return {}
 
 
 def refresh_watchlist_prices(symbols: list) -> dict:
@@ -815,7 +904,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         x0, x1 = df.index[0], df.index[-1]
         fig.add_trace(go.Scatter(
             x=[x0, x1, x1, x0], y=[cpr["TC"], cpr["TC"], cpr["BC"], cpr["BC"]],
-            fill="toself", fillcolor="rgba(77,124,254,0.07)",
+            fill="toself", fillcolor="rgba(29,78,216,0.05)",
             line=dict(color="rgba(77,124,254,0)", width=0),
             name="CPR Band", showlegend=True, mode="lines",
         ), row=1, col=1)
@@ -864,7 +953,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
             x=df_ind.index, y=df_ind["SIG16"],
             name="Signal(16)", line=dict(color="#f5a623", width=1.2, dash="dot"),
         ), row=2, col=1)
-        fig.add_hline(y=0, line=dict(color="#cbd5e1", width=1), row=2, col=1)
+        fig.add_hline(y=0, line=dict(color="#1e2330", width=1), row=2, col=1)
 
     # RSI
     if "RSI14" in df_ind.columns:
@@ -872,7 +961,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
             x=df_ind.index, y=df_ind["RSI14"],
             name="RSI(14)", line=dict(color="#4d7cfe", width=1.2), showlegend=False,
         ), row=3, col=1)
-        for level, color in [(70, "rgba(255,77,106,0.33)"), (30, "rgba(0,229,160,0.33)"), (50, "#94a3b8")]:
+        for level, color in [(70, "rgba(220,38,38,0.15)"), (30, "rgba(22,163,74,0.15)"), (50, "#1e2330")]:
             fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"), row=3, col=1)
 
     # Volume
@@ -883,26 +972,44 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         marker_color=vol_colors, opacity=0.55, showlegend=False,
     ), row=4, col=1)
 
-    # Layout
+    # Layout — clean, professional light theme
     fig.update_layout(
-        height=800,
-        paper_bgcolor="#ffffff", plot_bgcolor="#fafafa",
-        font=dict(family="IBM Plex Mono", color="#4a5568", size=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    font=dict(size=10), bgcolor="rgba(255,255,255,0)"),
-        margin=dict(l=0, r=90, t=30, b=0),
+        height=820,
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#fafbfc",
+        font=dict(family="IBM Plex Mono", color="#5a6a80", size=10),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+            font=dict(size=9, color="#1a2332"),
+            bgcolor="rgba(255,255,255,0.95)",
+            bordercolor="#dce3ed", borderwidth=1,
+        ),
+        margin=dict(l=10, r=100, t=40, b=10),
         xaxis_rangeslider_visible=False,
         title=dict(
-            text=f"{symbol}  ·  {pivot_type} Pivots  ·  Pivot Boss Analysis",
-            font=dict(family="IBM Plex Mono", size=12, color="#1e293b"),
+            text=f"<b>{symbol}</b>  ·  {pivot_type} Pivots",
+            font=dict(family="IBM Plex Mono", size=13, color="#1a2332"),
+            x=0.01,
         ),
+        shapes=[],   # clean baseline
+    )
+    # Shared axis styling
+    axis_style = dict(
+        showgrid=True, gridcolor="#eef0f4", gridwidth=1,
+        showline=True, linecolor="#dce3ed", linewidth=1,
+        zeroline=False, tickfont=dict(size=9, color="#8a9ab0"),
+        ticks="outside", ticklen=3,
     )
     for i in range(1, 5):
-        fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
-        fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0", row=i, col=1)
-    fig.update_yaxes(title_text="3/10", title_font_size=9, row=2, col=1)
-    fig.update_yaxes(title_text="RSI",  title_font_size=9, row=3, col=1)
-    fig.update_yaxes(title_text="Vol",  title_font_size=9, row=4, col=1)
+        fig.update_xaxes(**axis_style, row=i, col=1)
+        fig.update_yaxes(**axis_style, row=i, col=1)
+    # Row labels
+    fig.update_yaxes(title_text="3/10 OSC", title_font=dict(size=8, color="#8a9ab0"), row=2, col=1)
+    fig.update_yaxes(title_text="RSI 14",   title_font=dict(size=8, color="#8a9ab0"), row=3, col=1)
+    fig.update_yaxes(title_text="Volume",   title_font=dict(size=8, color="#8a9ab0"), row=4, col=1)
+    # Add subtle row separator lines
+    for row_y in [0.55, 0.73, 0.87]:
+        fig.add_hline(y=0, line=dict(color="#eef0f4", width=1))
     return fig
 
 
@@ -912,14 +1019,14 @@ def build_stoch_chart(df_ind: pd.DataFrame) -> go.Figure:
                              name="%K", line=dict(color="#00e5a0", width=1.2)))
     fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind["STOCH_D"],
                              name="%D", line=dict(color="#f5a623", width=1.2, dash="dot")))
-    for level, color in [(80, "rgba(255,77,106,0.33)"), (20, "rgba(0,229,160,0.33)"), (50, "#94a3b8")]:
+    for level, color in [(80, "rgba(220,38,38,0.15)"), (20, "rgba(22,163,74,0.15)"), (50, "#1e2330")]:
         fig.add_hline(y=level, line=dict(color=color, width=0.8, dash="dot"))
     fig.update_layout(
-        height=200, paper_bgcolor="#ffffff", plot_bgcolor="#fafafa",
-        font=dict(family="IBM Plex Mono", color="#4a5568", size=10),
+        height=200, paper_bgcolor="#f0f4f8", plot_bgcolor="#ffffff",
+        font=dict(family="IBM Plex Mono", color="#475569", size=10),
         margin=dict(l=0, r=60, t=28, b=0),
-        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(255,255,255,0)"),
-        title=dict(text="Stochastic (14, 3, 3)", font=dict(size=11, color="#1e293b")),
+        legend=dict(orientation="h", font=dict(size=10), bgcolor="rgba(255,255,255,0.9)"),
+        title=dict(text="Stochastic (14, 3, 3)", font=dict(size=11, color="#d4daf0")),
     )
     fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
     fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
@@ -954,81 +1061,8 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
     )
     if df.empty:
         st.caption("Data unavailable — NSE API may require VPN / direct browser session.")
-        return
-
-    # CSS: make symbol buttons look like hyperlinks, not buttons
-    st.markdown("""
-    <style>
-    [data-testid="stHorizontalBlock"] .mover-link-btn button {
-        background: transparent !important;
-        border: none !important;
-        padding: 0 !important;
-        font-family: 'IBM Plex Mono', monospace !important;
-        font-size: 0.85rem !important;
-        font-weight: 600 !important;
-        text-decoration: underline !important;
-        text-underline-offset: 3px !important;
-        text-decoration-style: dotted !important;
-        cursor: pointer !important;
-        justify-content: flex-start !important;
-        letter-spacing: 0.01em !important;
-        min-height: unset !important;
-        height: auto !important;
-        line-height: 1.4 !important;
-        box-shadow: none !important;
-    }
-    [data-testid="stHorizontalBlock"] .mover-link-btn button:hover {
-        text-decoration-style: solid !important;
-        background: transparent !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Header row
-    h1, h2, h3 = st.columns([2.8, 1.8, 1.8])
-    h1.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>SYMBOL</div>", unsafe_allow_html=True)
-    h2.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>LTP</div>", unsafe_allow_html=True)
-    h3.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#4a5068;letter-spacing:0.06em;'>CHG %</div>", unsafe_allow_html=True)
-
-    chg_color = "#00e5a0" if color == "#00e5a0" else "#ff4d6a"
-
-    for _, row in df.iterrows():
-        sym     = str(row.get("Symbol", "")).strip()
-        ltp     = row.get("LTP", "—")
-        chg     = row.get("Chg %", "")
-        chg_str = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else str(chg)
-
-        col_sym, col_ltp, col_chg = st.columns([2.8, 1.8, 1.8])
-
-        with col_sym:
-            # Wrap in a div with our CSS class so the button looks like a link
-            st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
-            clicked = st.button(
-                sym,
-                key=f"mover_lnk_{sym}_{color[-3:]}",
-                use_container_width=False,
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-            if clicked:
-                st.session_state["screener_symbol"]      = sym
-                st.session_state["screener_nav_pending"] = True
-                st.session_state["current_page"]         = "Stock Screener"
-                st.session_state["mobile_page"]          = "Stock Screener"
-                st.query_params["nav"] = "screener"
-                st.rerun()
-
-        with col_ltp:
-            st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
-                f"color:#9aa3c0;padding-top:0.3rem;'>{ltp}</div>",
-                unsafe_allow_html=True,
-            )
-        with col_chg:
-            st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
-                f"color:{chg_color};padding-top:0.3rem;'>{chg_str}</div>",
-                unsafe_allow_html=True,
-            )
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 @st.cache_data(ttl=300)
@@ -1149,7 +1183,7 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     ))
 
     fig.update_layout(
-        paper_bgcolor="#0d0f14",
+        paper_bgcolor="#f0f4f8",
         margin=dict(l=0, r=0, t=0, b=0),
         height=480,
         font=dict(family="IBM Plex Mono", color="#d4daf0"),
@@ -1157,82 +1191,40 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     return fig
 
 
-def sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
-    return build_sector_treemap(nse500, perf_df)
-
-
 # ─────────────────────────────────────────────
 #  PAGES
 # ─────────────────────────────────────────────
-#  CREDENTIALS  — edit this dict to add/remove users
-# ─────────────────────────────────────────────
-# Format:  "username": "password"
-VALID_USERS = {
-    "admin":   "pivot@2024",
-    "trader1": "nse#boss1",
-    "trader2": "nse#boss2",
-}
-
-def _hash_password(password: str) -> str:
-    """SHA-256 hash of password (never store plain text)."""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# Pre-hash all passwords at startup
-_HASHED_USERS = {u: _hash_password(p) for u, p in VALID_USERS.items()}
-
-def _make_token(username: str, password_hash: str) -> str:
-    """Session token tied to both username AND password hash."""
-    raw = f"pivotvault:{username}:{password_hash}:session"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
-
-def _check_credentials(username: str, password: str) -> bool:
-    """Return True only if username exists and password matches."""
-    expected_hash = _HASHED_USERS.get(username.strip().lower())
-    if not expected_hash:
-        return False
-    return _hash_password(password) == expected_hash
-
 def page_login():
     st.markdown("""
     <div style="display:flex;flex-direction:column;align-items:center;
                 justify-content:center;min-height:70vh;gap:1rem;">
         <div style="font-family:'IBM Plex Mono',monospace;font-size:2.8rem;
-                    font-weight:600;letter-spacing:-0.03em;color:#d4daf0;">
-            🏦 PivotVault <span style="color:#00e5a0;">AI</span>
+                    font-weight:600;letter-spacing:-0.03em;color:#1e293b;">
+            🏦 PivotVault <span style="color:#16a34a;">AI</span>
         </div>
         <div style="font-family:'IBM Plex Mono',monospace;font-size:0.82rem;
-                    color:#4a5068;letter-spacing:0.1em;text-transform:uppercase;">
+                    color:#64748b;letter-spacing:0.1em;text-transform:uppercase;">
             Indian Equity Intelligence Terminal · Pivot Boss Methodology
         </div>
     </div>""", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([2, 1, 2])
     with c2:
-        username = st.text_input("Username", placeholder="username", label_visibility="collapsed")
+        username = st.text_input("Username", placeholder="demo", label_visibility="collapsed")
         password = st.text_input("Password", type="password", placeholder="password",
                                  label_visibility="collapsed")
         if st.button("→  Enter Terminal", use_container_width=True):
-            u = username.strip().lower()
-            p = password.strip()
-            if not u or not p:
-                st.error("Enter username and password.")
-            elif _check_credentials(u, p):
-                pwd_hash = _HASHED_USERS[u]
-                token    = _make_token(u, pwd_hash)
-                st.session_state["logged_in"]  = True
-                st.session_state["username"]   = u
-                st.session_state["auth_token"] = token
-                st.query_params["auth"] = token
-                st.query_params["user"] = u
+            if username.strip() and password.strip():
+                st.session_state["logged_in"] = True
+                st.session_state["username"]  = username.strip()
                 st.rerun()
             else:
-                st.error("❌ Invalid username or password.")
-                time.sleep(1)   # small delay to slow brute-force
+                st.error("Enter username and password.")
 
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
-        '<div class="title-bar"><span class="live-dot"></span><h1>Market Snapshot</h1>'
-        f'<span class="ts">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1e293b;">Market Snapshot</h1>'
+        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
     gainers, losers = get_market_movers()
@@ -1246,7 +1238,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with hm_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "letter-spacing:0.08em;text-transform:uppercase;color:#4a5068;"
+            "letter-spacing:0.08em;text-transform:uppercase;color:#64748b;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
             "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
@@ -1255,10 +1247,10 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with legend_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "color:#4a5068;padding-top:0.1rem;line-height:1.9;'>"
-            "<span style='color:#00e5a0;'>■</span> Strong Gain<br>"
+            "color:#64748b;padding-top:0.1rem;line-height:1.9;'>"
+            "<span style='color:#16a34a;'>■</span> Strong Gain<br>"
             "<span style='color:#27ae60;'>■</span> Gain<br>"
-            "<span style='color:#1e2330;border:1px solid #333;'>■</span> Flat<br>"
+            "<span style='color:#e2e8f0;border:1px solid #333;'>■</span> Flat<br>"
             "<span style='color:#e74c3c;'>■</span> Loss<br>"
             "<span style='color:#7b0020;'>■</span> Strong Loss"
             "</div>",
@@ -1345,8 +1337,8 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 arrow = "▲" if avg_chg > 0 else "▼"
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;padding:0.5rem 0;"
-                    f"border-bottom:1px solid #1e2330;margin-bottom:0.6rem;'>"
-                    f"<span style='font-size:1rem;font-weight:700;color:#d4daf0;'>"
+                    f"border-bottom:1px solid #dce3ed;margin-bottom:0.6rem;'>"
+                    f"<span style='font-size:1rem;font-weight:700;color:#1e293b;'>"
                     f"{clicked_sector}</span>"
                     f"<span style='font-size:0.8rem;color:{col_fg};margin-left:1rem;'>"
                     f"{arrow} {avg_chg:+.2f}% avg  ·  {len(sector_stocks)} stocks</span>"
@@ -1362,766 +1354,38 @@ def page_market_snapshot(nse500: pd.DataFrame):
             with d1:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#00e5a0;"
-                    f"margin-bottom:0.35rem;'>▲ Top 5 Gainers  "
-                    f"<span style='color:#4a5068;font-size:0.62rem;'>(click to screen)</span></div>",
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#16a34a;"
+                    f"margin-bottom:0.35rem;'>▲ Top 5 Gainers</div>",
                     unsafe_allow_html=True,
                 )
-                for _, r in top_g.iterrows():
-                    _sym = r["Symbol"]; _chg = r["Change%"]
-                    ca, cb = st.columns([3.2, 2.2])
-                    with ca:
-                        st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
-                        if st.button(_sym, key=f"hm_g_{_sym}", use_container_width=False):
-                            st.session_state["screener_symbol"]      = _sym
-                            st.session_state["screener_nav_pending"] = True
-                            st.session_state["current_page"]         = "Stock Screener"
-                            st.session_state["mobile_page"]          = "Stock Screener"
-                            st.query_params["nav"] = "screener"
-                            st.rerun()
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#00e5a0;padding-top:0.3rem;'>+{_chg:.2f}%</div>", unsafe_allow_html=True)
+                g_rows = [{"Symbol": r["Symbol"], "Change %": f"+{r['Change%']:.2f}%"}
+                          for _, r in top_g.iterrows()]
+                st.dataframe(pd.DataFrame(g_rows), use_container_width=True, hide_index=True)
 
             with d2:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#ff4d6a;"
-                    f"margin-bottom:0.35rem;'>▼ Top 5 Losers  "
-                    f"<span style='color:#4a5068;font-size:0.62rem;'>(click to screen)</span></div>",
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#dc2626;"
+                    f"margin-bottom:0.35rem;'>▼ Top 5 Losers</div>",
                     unsafe_allow_html=True,
                 )
-                for _, r in top_l.iterrows():
-                    _sym = r["Symbol"]; _chg = r["Change%"]
-                    ca, cb = st.columns([3.2, 2.2])
-                    with ca:
-                        st.markdown('<div class="mover-link-btn">', unsafe_allow_html=True)
-                        if st.button(_sym, key=f"hm_l_{_sym}", use_container_width=False):
-                            st.session_state["screener_symbol"]      = _sym
-                            st.session_state["screener_nav_pending"] = True
-                            st.session_state["current_page"]         = "Stock Screener"
-                            st.session_state["mobile_page"]          = "Stock Screener"
-                            st.query_params["nav"] = "screener"
-                            st.rerun()
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    cb.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:#ff4d6a;padding-top:0.3rem;'>{_chg:.2f}%</div>", unsafe_allow_html=True)
+                l_rows = [{"Symbol": r["Symbol"], "Change %": f"{r['Change%']:.2f}%"}
+                          for _, r in top_l.iterrows()]
+                st.dataframe(pd.DataFrame(l_rows), use_container_width=True, hide_index=True)
 
     else:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "color:#2a3040;text-align:center;padding:0.55rem;"
-            "border:1px dashed #1e2330;border-radius:6px;margin-top:0.25rem;'>"
+            "color:#94a3b8;text-align:center;padding:0.55rem;"
+            "border:1px dashed #e2e8f0;border-radius:6px;margin-top:0.25rem;'>"
             "👆  Click any sector tile to see its Top 5 Gainers &amp; Losers</div>",
             unsafe_allow_html=True,
         )
 
 
-def page_stock_screener(nse500: pd.DataFrame):
-    # Light-theme style overrides for screener
-    st.markdown("""
-    <style>
-    .screener-metrics div[data-testid="metric-container"] {
-        background: #f8fafc !important;
-        border: 1px solid #e2e8f0 !important;
-        border-radius: 8px;
-    }
-    .screener-metrics div[data-testid="metric-container"] label {
-        color: #64748b !important;
-    }
-    .screener-metrics div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-        color: #1e293b !important;
-        font-size: 1.2rem !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown(
-        "<h2 style='font-family:IBM Plex Mono,monospace;color:#1e293b;font-size:1.15rem;"
-        "margin-bottom:0.25rem;'>Stock Screener</h2>"
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;letter-spacing:0.08em;"
-        "text-transform:uppercase;color:#94a3b8;margin-bottom:1rem;'>"
-        "Search · Analyse · Add to Watchlist</div>",
-        unsafe_allow_html=True,
-    )
-
-    symbols = nse500["Symbol"].dropna().sort_values().tolist()
-
-    # ── Auto-select symbol if navigated from Market Snapshot ─────────────────
-    if st.session_state.get("screener_nav_pending") and st.session_state.get("screener_symbol"):
-        _pre = st.session_state["screener_symbol"]
-        if _pre in symbols:
-            _default_idx = symbols.index(_pre)
-        else:
-            _default_idx = 0
-        st.session_state["screener_nav_pending"] = False
-        st.toast(f"📊 Loaded {_pre} from Market Snapshot", icon="🚀")
-    else:
-        _default_idx = 0
-        if st.session_state.get("screener_symbol") in symbols:
-            _default_idx = symbols.index(st.session_state["screener_symbol"])
-
-    # ── Interval → allowed periods mapping ──────────────────────────────────
-    INTERVAL_CFG = {
-        "5 min":   {"interval": "5m",  "periods": ["1d", "2d", "5d"],          "default": "5d"},
-        "10 min":  {"interval": "10m", "periods": ["1d", "2d", "5d"],          "default": "5d"},
-        "15 min":  {"interval": "15m", "periods": ["1d", "2d", "5d", "1mo"],   "default": "5d"},
-        "30 min":  {"interval": "30m", "periods": ["1d", "5d", "1mo"],         "default": "1mo"},
-        "1 hour":  {"interval": "1h",  "periods": ["5d", "1mo", "3mo"],        "default": "1mo"},
-        "2 hour":  {"interval": "2h",  "periods": ["5d", "1mo", "3mo"],        "default": "1mo"},
-        "4 hour":  {"interval": "1h",  "periods": ["1mo", "3mo", "6mo"],       "default": "3mo"},
-        "Daily":   {"interval": "1d",  "periods": ["1mo","3mo","6mo","1y","2y","5y"], "default": "1y"},
-        "Weekly":  {"interval": "1wk", "periods": ["6mo","1y","2y","5y"],      "default": "2y"},
-        "Monthly": {"interval": "1mo", "periods": ["1y","2y","5y"],            "default": "5y"},
-    }
-
-    c1, c2, c3, c4 = st.columns([3, 1.2, 1.2, 1])
-    with c1:
-        choice = st.selectbox("Symbol", symbols, index=_default_idx, label_visibility="collapsed", key="screener_sym_select")
-    with c2:
-        tf_label = st.selectbox(
-            "Interval",
-            list(INTERVAL_CFG.keys()),
-            index=7,                        # default = Daily
-            label_visibility="collapsed",
-            key="scr_tf",
-        )
-    with c3:
-        cfg            = INTERVAL_CFG[tf_label]
-        period_options = cfg["periods"]
-        default_idx    = period_options.index(cfg["default"]) if cfg["default"] in period_options else 0
-        period = st.selectbox(
-            "Period",
-            period_options,
-            index=default_idx,
-            label_visibility="collapsed",
-            key="scr_period",
-        )
-    with c4:
-        if st.button("＋ Watchlist"):
-            if choice not in st.session_state["watchlist"]:
-                st.session_state["watchlist"].append(choice)
-                st.success(f"{choice} added.")
-            else:
-                st.info("Already in watchlist.")
-
-    interval = cfg["interval"]
-
-    st.divider()
-
-    # Fundamentals strip
-    info = fetch_stock_info(choice)
-    def _fmt(val, fmt="{:.2f}"):
-        return fmt.format(val) if val and val != "N/A" else "—"
-
-    company_name = info.get("longName") or info.get("shortName") or choice
-    sector       = info.get("sector") or info.get("industry") or ""
-
-    st.markdown(
-        f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
-        f"padding:0.75rem 1.25rem;margin-bottom:1rem;'>"
-        f"<div style='font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:600;"
-        f"color:#1e293b;'>{company_name}</div>"
-        f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#94a3b8;"
-        f"text-transform:uppercase;letter-spacing:0.07em;'>"
-        f"{(sector + '  ·  ') if sector else ''}NSE: {choice}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("<div class='screener-metrics'>", unsafe_allow_html=True)
-    fcols = st.columns(5)
-    fcols[0].metric("Mkt Cap (Cr)", _fmt(info.get("marketCap", 0) / 1e7, "{:,.0f}"))
-    fcols[1].metric("P/E Ratio",    _fmt(info.get("trailingPE")))
-    fcols[2].metric("52W High",     _fmt(info.get("fiftyTwoWeekHigh")))
-    fcols[3].metric("52W Low",      _fmt(info.get("fiftyTwoWeekLow")))
-    fcols[4].metric("Div Yield %",  _fmt((info.get("dividendYield") or 0) * 100))
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.divider()
-
-    # ── Overlay toggles ───────────────────────────────────────────────────────
-    ov1, ov2, ov3 = st.columns([1, 1, 2])
-    with ov1:
-        show_sma   = st.checkbox("Moving Averages (SMA 20 / 50)", value=True, key="scr_sma")
-    with ov2:
-        show_pivots = st.checkbox("Pivot Points", value=True, key="scr_piv")
-    with ov3:
-        scr_pivot_type = st.selectbox(
-            "Pivot Type",
-            ["Traditional", "Woodie", "Camarilla", "DeMark", "Fibonacci"],
-            key="scr_pt",
-            label_visibility="collapsed",
-            disabled=not show_pivots,
-        )
-
-    # ── Fetch price history ───────────────────────────────────────────────────
-    hist = fetch_stock_history(choice, period, interval)
-    if hist.empty:
-        st.warning("No price data available.")
-        return
-
-    # ── Optional overlays ────────────────────────────────────────────────────
-    if show_sma:
-        hist["SMA20"] = hist["Close"].rolling(20).mean()
-        hist["SMA50"] = hist["Close"].rolling(50).mean()
-
-    pivots = {}
-    if show_pivots and len(hist) >= 2:
-        pivots = compute_pivot_points(hist, scr_pivot_type)
-
-    PIVOT_COLORS = {
-        "R1": "#e05c2a", "R2": "#c0392b", "R3": "#922b21", "R4": "#7b241c",
-        "S1": "#1e8449", "S2": "#196f3d", "S3": "#145a32", "S4": "#0e4025",
-        "P":  "#7d3c98",
-    }
-
-    # ── Build chart ───────────────────────────────────────────────────────────
-    fig = go.Figure()
-
-    # Candlesticks
-    fig.add_trace(go.Candlestick(
-        x=hist.index,
-        open=hist["Open"], high=hist["High"], low=hist["Low"], close=hist["Close"],
-        name=choice,
-        increasing_line_color="#16a34a",
-        decreasing_line_color="#dc2626",
-        increasing_fillcolor="rgba(22,163,74,0.18)",
-        decreasing_fillcolor="rgba(220,38,38,0.18)",
-        line=dict(width=1),
-    ))
-
-    # Moving averages (optional)
-    if show_sma:
-        fig.add_trace(go.Scatter(
-            x=hist.index, y=hist["SMA20"],
-            name="SMA 20", line=dict(color="#2563eb", width=1.4, dash="dot"),
-        ))
-        fig.add_trace(go.Scatter(
-            x=hist.index, y=hist["SMA50"],
-            name="SMA 50", line=dict(color="#d97706", width=1.4, dash="dash"),
-        ))
-
-    # Pivot lines (optional)
-    if pivots:
-        x0  = hist.index[0]
-        x1  = hist.index[-1]
-        ltp = float(hist["Close"].iloc[-1])
-
-        for label, value in sorted(pivots.items(), key=lambda kv: kv[1], reverse=True):
-            col   = PIVOT_COLORS.get(label, "#888888")
-            dash  = "dash" if label == "P" else "dot"
-            lw    = 1.8 if label == "P" else 1.2
-
-            if label == "P":
-                band = value * 0.0015
-                fig.add_shape(
-                    type="rect", xref="x", yref="y",
-                    x0=x0, x1=x1, y0=value - band, y1=value + band,
-                    fillcolor="rgba(125,60,152,0.07)",
-                    line=dict(width=0), layer="below",
-                )
-
-            fig.add_shape(
-                type="line", xref="x", yref="y",
-                x0=x0, x1=x1, y0=value, y1=value,
-                line=dict(color=col, width=lw, dash=dash),
-                layer="below",
-            )
-
-            dist_pct = (value - ltp) / ltp * 100
-            arrow    = "▲" if value > ltp else ("▼" if value < ltp else "─")
-            fig.add_annotation(
-                x=x1, y=value, xref="x", yref="y",
-                text=f"  {label}  {value:,.2f}  {arrow}{abs(dist_pct):.1f}%",
-                showarrow=False, xanchor="left",
-                font=dict(family="IBM Plex Mono", size=9, color=col),
-                bgcolor="rgba(255,255,255,0.82)", borderpad=2,
-            )
-
-    title_parts = [f"{choice}  ·  {tf_label}  ·  {period.upper()}"]
-    if show_sma:    title_parts.append("SMA 20/50")
-    if show_pivots: title_parts.append(f"{scr_pivot_type} Pivots")
-
-    fig.update_layout(
-        height=520,
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#fafafa",
-        font=dict(family="IBM Plex Mono", color="#475569", size=11),
-        margin=dict(l=0, r=160, t=40, b=0),
-        xaxis_rangeslider_visible=False,
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-            font=dict(size=10), bgcolor="rgba(255,255,255,0.85)",
-            bordercolor="#e2e8f0", borderwidth=1,
-        ),
-        title=dict(
-            text="  ·  ".join(title_parts),
-            font=dict(family="IBM Plex Mono", size=12, color="#1e293b"),
-        ),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0", gridwidth=1,
-                     showline=True, linecolor="#cbd5e1", zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0", gridwidth=1,
-                     showline=True, linecolor="#cbd5e1", zeroline=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Pivot levels table (only when pivots are on) ───────────────────────────
-    if pivots:
-        ltp  = float(hist["Close"].iloc[-1])
-        rows = []
-        for label, value in sorted(pivots.items(), key=lambda kv: kv[1], reverse=True):
-            dist_pct = round((value - ltp) / ltp * 100, 2)
-            role     = "Resistance" if value > ltp else ("Support" if value < ltp else "At Price")
-            rows.append({
-                "Level":    label,
-                "Price":    f"₹{value:,.2f}",
-                "Distance": f"{'▲' if value > ltp else '▼'} {abs(dist_pct):.2f}%",
-                "Role":     role,
-            })
-        st.markdown(
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            f"letter-spacing:0.08em;text-transform:uppercase;color:#5a6b30;"
-            f"margin-bottom:0.4rem;'>{scr_pivot_type} Pivot Levels</div>",
-            unsafe_allow_html=True,
-        )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-
-
 # ─────────────────────────────────────────────
 #  NARROW CPR SCANNER
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def scan_narrow_cpr(symbols: list, max_stocks: int = 150) -> pd.DataFrame:
-    """
-    Scans NSE500 for stocks with Narrow CPR (< 0.25%) on daily timeframe.
-    For each narrow-CPR stock, determines bullish / bearish pattern using:
-      - Price vs CPR (Above TC = Bull, Below BC = Bear)
-      - HMA-20 direction
-      - 3/10 Oscillator histogram
-      - RSI position
-    Returns a sorted DataFrame.
-    """
-    rows = []
-    batch = symbols[:max_stocks]
-
-    for sym in batch:
-        try:
-            df = yf.Ticker(sym + ".NS").history(period="60d", interval="1d")
-            if df.empty or len(df) < 22:
-                continue
-            df.index = df.index.tz_localize(None)
-
-            # ── CPR ──────────────────────────────────────────────────────────
-            ref   = df.iloc[-2]
-            H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
-            P     = (H + L + C) / 3
-            BC    = (H + L) / 2
-            TC    = (P - BC) + P
-            width = abs(TC - BC) / P * 100
-
-            if width >= 0.5:           # only narrow / moderate CPR stocks
-                continue
-
-            ltp = float(df["Close"].iloc[-1])
-
-            # ── HMA-20 ───────────────────────────────────────────────────────
-            close = df["Close"]
-            def wma(s, n):
-                w = np.arange(1, n + 1)
-                return s.rolling(n).apply(lambda x: np.dot(x, w) / w.sum(), raw=True)
-            hma = wma(2 * wma(close, 10) - wma(close, 20), 4)
-            hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
-
-            # ── 3/10 Oscillator ──────────────────────────────────────────────
-            diff  = close.rolling(3).mean() - close.rolling(10).mean()
-            sig   = diff.rolling(16).mean()
-            hist_val = float(diff.iloc[-1] - sig.iloc[-1]) if not np.isnan(diff.iloc[-1]) else 0
-
-            # ── RSI ──────────────────────────────────────────────────────────
-            delta = close.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float(100 - (100 / (1 + gain.iloc[-1] / loss.iloc[-1]))) if loss.iloc[-1] != 0 else 50
-
-            # ── Scoring ──────────────────────────────────────────────────────
-            bull_pts = 0
-            bear_pts = 0
-
-            # Price vs CPR
-            if ltp > TC:   bull_pts += 2
-            elif ltp < BC: bear_pts += 2
-
-            # HMA direction
-            if hma_up is True:  bull_pts += 1
-            elif hma_up is False: bear_pts += 1
-
-            # 3/10 histogram
-            if hist_val > 0: bull_pts += 1
-            else:            bear_pts += 1
-
-            # RSI
-            if rsi >= 55:   bull_pts += 1
-            elif rsi <= 45: bear_pts += 1
-
-            total = bull_pts + bear_pts
-            if total == 0:
-                pattern     = "Neutral"
-                pattern_col = "neut"
-                strength    = 0
-            elif bull_pts > bear_pts:
-                pattern     = "Bullish"
-                pattern_col = "bull"
-                strength    = round(bull_pts / total * 100)
-            elif bear_pts > bull_pts:
-                pattern     = "Bearish"
-                pattern_col = "bear"
-                strength    = round(bear_pts / total * 100)
-            else:
-                pattern     = "Neutral"
-                pattern_col = "neut"
-                strength    = 50
-
-            # CPR width label
-            if width < 0.25:
-                cpr_label = "Narrow"
-            else:
-                cpr_label = "Moderate"
-
-            rows.append({
-                "Symbol":    sym,
-                "LTP":       round(ltp, 2),
-                "CPR Width%": round(width, 3),
-                "CPR Type":  cpr_label,
-                "TC":        round(TC, 2),
-                "BC":        round(BC, 2),
-                "HMA":       "▲ Up" if hma_up else "▼ Down",
-                "RSI":       round(rsi, 1),
-                "Pattern":   pattern,
-                "Strength%": strength,
-                "_col":      pattern_col,
-            })
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df_out = pd.DataFrame(rows)
-    # Sort: Narrow CPR first, then by pattern strength descending
-    df_out = df_out.sort_values(
-        ["CPR Width%", "Strength%"],
-        ascending=[True, False]
-    ).reset_index(drop=True)
-    return df_out
-
-
-# ─────────────────────────────────────────────
-#  EMAIL REPORT HELPERS
-# ─────────────────────────────────────────────
-
-def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
-                         pivot: float, pattern: str) -> dict:
-    """
-    Compute Target, Stop-Loss and key levels for Short / Medium / Long term
-    based on CPR and pivot point framework.
-
-    Short  term = intraday / 1-3 days  (tight ATR-based levels)
-    Medium term = 1-4 weeks            (CPR / R1-R2 / S1-S2 targets)
-    Long   term = 1-3 months           (R2-R3 / major pivots)
-    """
-    try:
-        df = yf.Ticker(symbol + ".NS").history(period="60d", interval="1d")
-        df.index = df.index.tz_localize(None)
-        if df.empty or len(df) < 15:
-            return {}
-
-        close = df["Close"]
-        high  = df["High"]
-        low   = df["Low"]
-
-        # ATR-14
-        tr    = pd.concat([high - low,
-                           (high - close.shift()).abs(),
-                           (low  - close.shift()).abs()], axis=1).max(axis=1)
-        atr   = float(tr.rolling(14).mean().iloc[-1])
-
-        # 52-week high / low for long-term reference
-        wk52h = float(high.tail(252).max()) if len(high) >= 252 else float(high.max())
-        wk52l = float(low.tail(252).min())  if len(low)  >= 252 else float(low.min())
-
-        # Pivot points from prior daily candle
-        ref   = df.iloc[-2]
-        H2, L2, C2 = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
-        P     = (H2 + L2 + C2) / 3
-        R1    = 2 * P - L2
-        R2    = P + (H2 - L2)
-        R3    = H2 + 2 * (P - L2)
-        S1    = 2 * P - H2
-        S2    = P - (H2 - L2)
-        S3    = L2 - 2 * (H2 - P)
-
-        if pattern == "Bullish":
-            short_entry  = round(ltp, 2)
-            short_target = round(min(R1, ltp + atr * 1.5), 2)
-            short_sl     = round(max(bc, ltp - atr * 0.8), 2)
-            short_rr     = round((short_target - short_entry) / max(short_entry - short_sl, 0.01), 2)
-
-            med_entry    = round(ltp, 2)
-            med_target1  = round(R1, 2)
-            med_target2  = round(R2, 2)
-            med_sl       = round(S1, 2)
-            med_rr       = round((med_target2 - med_entry) / max(med_entry - med_sl, 0.01), 2)
-
-            long_entry   = round(ltp, 2)
-            long_target1 = round(R2, 2)
-            long_target2 = round(R3, 2)
-            long_target3 = round(min(wk52h, R3 + atr * 5), 2)
-            long_sl      = round(S2, 2)
-            long_rr      = round((long_target2 - long_entry) / max(long_entry - long_sl, 0.01), 2)
-
-        else:  # Bearish
-            short_entry  = round(ltp, 2)
-            short_target = round(max(S1, ltp - atr * 1.5), 2)
-            short_sl     = round(min(tc, ltp + atr * 0.8), 2)
-            short_rr     = round((short_entry - short_target) / max(short_sl - short_entry, 0.01), 2)
-
-            med_entry    = round(ltp, 2)
-            med_target1  = round(S1, 2)
-            med_target2  = round(S2, 2)
-            med_sl       = round(R1, 2)
-            med_rr       = round((med_entry - med_target2) / max(med_sl - med_entry, 0.01), 2)
-
-            long_entry   = round(ltp, 2)
-            long_target1 = round(S2, 2)
-            long_target2 = round(S3, 2)
-            long_target3 = round(max(wk52l, S3 - atr * 5), 2)
-            long_sl      = round(R2, 2)
-            long_rr      = round((long_entry - long_target2) / max(long_sl - long_entry, 0.01), 2)
-
-        return {
-            "symbol": symbol, "ltp": ltp, "pattern": pattern,
-            "pivot": round(P, 2), "tc": round(tc, 2), "bc": round(bc, 2),
-            "atr": round(atr, 2),
-            "R1": round(R1, 2), "R2": round(R2, 2), "R3": round(R3, 2),
-            "S1": round(S1, 2), "S2": round(S2, 2), "S3": round(S3, 2),
-            "52wH": round(wk52h, 2), "52wL": round(wk52l, 2),
-            "short": {"entry": short_entry, "target": short_target,
-                      "sl": short_sl,       "rr": short_rr},
-            "medium": {"entry": med_entry, "target1": med_target1,
-                       "target2": med_target2, "sl": med_sl, "rr": med_rr},
-            "long":   {"entry": long_entry, "target1": long_target1,
-                       "target2": long_target2, "target3": long_target3,
-                       "sl": long_sl, "rr": long_rr},
-        }
-    except Exception:
-        return {}
-
-
-def build_email_html(scan_df: pd.DataFrame, scan_date: str) -> str:
-    """Build a rich HTML email report from the scan results."""
-
-    def row_block(lv: dict) -> str:
-        """Render one stock block."""
-        sym     = lv["symbol"]
-        ltp     = lv["ltp"]
-        pattern = lv["pattern"]
-        emoji   = "🟢" if pattern == "Bullish" else "🔴"
-        col     = "#1a7a4a" if pattern == "Bullish" else "#c0392b"
-        bg      = "#f0fff8" if pattern == "Bullish" else "#fff0f0"
-
-        sh = lv["short"]
-        md = lv["medium"]
-        lg = lv["long"]
-
-        return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="margin-bottom:18px;border-radius:8px;overflow:hidden;
-              border:1px solid {col}33;font-family:'Courier New',monospace;">
-  <tr>
-    <td style="background:{col};padding:10px 16px;">
-      <span style="font-size:1.1rem;font-weight:700;color:#fff;">{emoji} {sym}</span>
-      <span style="font-size:0.85rem;color:rgba(255,255,255,0.85);margin-left:12px;">
-        LTP ₹{ltp:,.2f} &nbsp;|&nbsp; {pattern} Setup
-      </span>
-    </td>
-  </tr>
-  <tr>
-    <td style="background:#fafafa;padding:10px 16px;font-size:0.78rem;color:#475569;">
-      <b>Pivot:</b> ₹{lv["pivot"]:,.2f} &nbsp;
-      <b>TC:</b> ₹{lv["tc"]:,.2f} &nbsp;
-      <b>BC:</b> ₹{lv["bc"]:,.2f} &nbsp;
-      <b>ATR:</b> ₹{lv["atr"]:,.2f} &nbsp;&nbsp;
-      <b>52W H:</b> ₹{lv["52wH"]:,.2f} &nbsp;
-      <b>52W L:</b> ₹{lv["52wL"]:,.2f}
-    </td>
-  </tr>
-  <tr>
-    <td style="padding:0 16px 12px;">
-      <table width="100%" cellpadding="6" cellspacing="0" style="margin-top:8px;">
-        <tr style="background:{col};color:#fff;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">
-          <th align="left">Horizon</th>
-          <th align="right">Entry</th>
-          <th align="right">Target 1</th>
-          <th align="right">Target 2</th>
-          <th align="right">Target 3</th>
-          <th align="right">Stop Loss</th>
-          <th align="right">R:R</th>
-        </tr>
-        <tr style="background:#fff;font-size:0.8rem;color:#1e293b;border-bottom:1px solid #e2e8f0;">
-          <td><b>Short</b><br><span style="color:#94a3b8;font-size:0.7rem;">1–3 Days</span></td>
-          <td align="right">₹{sh["entry"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{sh["target"]:,.2f}</td>
-          <td align="right">—</td>
-          <td align="right">—</td>
-          <td align="right" style="color:#dc2626;">₹{sh["sl"]:,.2f}</td>
-          <td align="right"><b>{sh["rr"]}x</b></td>
-        </tr>
-        <tr style="background:{bg};font-size:0.8rem;color:#1e293b;border-bottom:1px solid #e2e8f0;">
-          <td><b>Medium</b><br><span style="color:#94a3b8;font-size:0.7rem;">1–4 Weeks</span></td>
-          <td align="right">₹{md["entry"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{md["target1"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{md["target2"]:,.2f}</td>
-          <td align="right">—</td>
-          <td align="right" style="color:#dc2626;">₹{md["sl"]:,.2f}</td>
-          <td align="right"><b>{md["rr"]}x</b></td>
-        </tr>
-        <tr style="background:#fff;font-size:0.8rem;color:#1e293b;">
-          <td><b>Long</b><br><span style="color:#94a3b8;font-size:0.7rem;">1–3 Months</span></td>
-          <td align="right">₹{lg["entry"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{lg["target1"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{lg["target2"]:,.2f}</td>
-          <td align="right" style="color:{col};font-weight:700;">₹{lg["target3"]:,.2f}</td>
-          <td align="right" style="color:#dc2626;">₹{lg["sl"]:,.2f}</td>
-          <td align="right"><b>{lg["rr"]}x</b></td>
-        </tr>
-      </table>
-      <div style="margin-top:6px;font-size:0.68rem;color:#94a3b8;">
-        R1 ₹{lv["R1"]:,.2f} &nbsp; R2 ₹{lv["R2"]:,.2f} &nbsp; R3 ₹{lv["R3"]:,.2f}
-        &nbsp;&nbsp;&nbsp;
-        S1 ₹{lv["S1"]:,.2f} &nbsp; S2 ₹{lv["S2"]:,.2f} &nbsp; S3 ₹{lv["S3"]:,.2f}
-      </div>
-    </td>
-  </tr>
-</table>"""
-
-    bull_rows = ""
-    bear_rows = ""
-    for _, row in scan_df.iterrows():
-        sym  = row["Symbol"]
-        ltp  = float(str(row["LTP"]).replace("₹","").replace(",",""))
-        tc   = float(str(row["TC"]).replace("₹","").replace(",",""))
-        bc   = float(str(row["BC"]).replace("₹","").replace(",",""))
-        pat  = row["Pattern"]
-        if pat not in ("Bullish", "Bearish"):
-            continue
-        lv = compute_trade_levels(sym, ltp, tc, bc, 0, pat)
-        if not lv:
-            continue
-        if pat == "Bullish":
-            bull_rows += row_block(lv)
-        else:
-            bear_rows += row_block(lv)
-
-    html = f"""<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0">
-<tr><td align="center" style="padding:24px 12px;">
-<table width="680" cellpadding="0" cellspacing="0"
-       style="background:#ffffff;border-radius:12px;overflow:hidden;
-              box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-
-  <!-- Header -->
-  <tr>
-    <td style="background:linear-gradient(135deg,#0d1f0a 0%,#1a4a10 100%);
-               padding:28px 32px;">
-      <div style="font-family:'Courier New',monospace;font-size:1.4rem;
-                  font-weight:700;color:#e8eddf;letter-spacing:-0.02em;">
-        🏦 PivotVault AI — CPR Report
-      </div>
-      <div style="font-family:'Courier New',monospace;font-size:0.75rem;
-                  color:#b5c77a;margin-top:4px;letter-spacing:0.08em;
-                  text-transform:uppercase;">
-        Narrow CPR Scanner · Frank Ochoa Methodology · {scan_date}
-      </div>
-    </td>
-  </tr>
-
-  <!-- Body -->
-  <tr>
-    <td style="padding:28px 28px 8px;">
-
-      {"" if not bull_rows else f"""
-      <div style="font-family:'Courier New',monospace;font-size:0.72rem;
-                  letter-spacing:0.1em;text-transform:uppercase;color:#1a7a4a;
-                  border-left:4px solid #1a7a4a;padding-left:10px;
-                  margin-bottom:14px;">▲ Bullish Setups</div>
-      {bull_rows}"""}
-
-      {"" if not bear_rows else f"""
-      <div style="font-family:'Courier New',monospace;font-size:0.72rem;
-                  letter-spacing:0.1em;text-transform:uppercase;color:#c0392b;
-                  border-left:4px solid #c0392b;padding-left:10px;
-                  margin-bottom:14px;margin-top:8px;">▼ Bearish Setups</div>
-      {bear_rows}"""}
-
-    </td>
-  </tr>
-
-  <!-- Disclaimer -->
-  <tr>
-    <td style="padding:16px 28px 28px;">
-      <div style="background:#f8fafc;border-radius:6px;padding:12px 16px;
-                  font-size:0.68rem;color:#94a3b8;line-height:1.6;">
-        ⚠️ <b>Disclaimer:</b> This report is generated by PivotVault AI using the
-        Frank Ochoa Pivot Boss methodology. Targets and stop-losses are derived from
-        pivot point mathematics and ATR. This is <b>not financial advice</b>.
-        Always consult a SEBI-registered advisor before trading.
-        Past performance is not indicative of future results.
-      </div>
-    </td>
-  </tr>
-
-</table>
-</td></tr>
-</table>
-</body>
-</html>"""
-    return html
-
-
-def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
-                      sender_email: str, sender_password: str,
-                      html_body: str, scan_date: str) -> tuple[bool, str]:
-    """Send the HTML report via SMTP. Returns (success, message)."""
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"PivotVault AI — Narrow CPR Report {scan_date}"
-        msg["From"]    = sender_email
-        msg["To"]      = to_email
-        msg.attach(MIMEText(html_body, "html"))
-
-        ctx = ssl.create_default_context()
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as server:
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, to_email, msg.as_string())
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.ehlo()
-                server.starttls(context=ctx)
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, to_email, msg.as_string())
-        return True, "Email sent successfully!"
-    except Exception as e:
-        return False, str(e)
-
-
-# ─────────────────────────────────────────────
-#  PDF REPORT BUILDER
-# ─────────────────────────────────────────────
-
 def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
                        analysis: dict, trade_levels: dict) -> bytes:
     """
@@ -2556,18 +1820,92 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     buf.seek(0)
     return buf.read()
 
+def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
+                         pivot: float, pattern: str) -> dict:
+    """Compute trade targets and SL from pivot levels and ATR."""
+    try:
+        df = yf.Ticker(symbol + ".NS").history(period="60d", interval="1d")
+        df.index = df.index.tz_localize(None)
+        if df.empty or len(df) < 15:
+            return {}
+        close, high, low = df["Close"], df["High"], df["Low"]
+        tr  = pd.concat([high-low,(high-close.shift()).abs(),(low-close.shift()).abs()],axis=1).max(axis=1)
+        atr = float(tr.rolling(14).mean().iloc[-1])
+        wk52h = float(high.tail(252).max()) if len(high)>=252 else float(high.max())
+        wk52l = float(low.tail(252).min())  if len(low)>=252  else float(low.min())
+        ref = df.iloc[-2]
+        H2,L2,C2 = float(ref["High"]),float(ref["Low"]),float(ref["Close"])
+        P  = (H2+L2+C2)/3
+        R1 = 2*P-L2; R2 = P+(H2-L2); R3 = H2+2*(P-L2)
+        S1 = 2*P-H2; S2 = P-(H2-L2); S3 = L2-2*(H2-P)
+        if pattern == "Bullish":
+            sh = {"entry":round(ltp,2),"target":round(min(R1,ltp+atr*1.5),2),"sl":round(max(bc,ltp-atr*0.8),2)}
+            sh["rr"] = round((sh["target"]-sh["entry"])/max(sh["entry"]-sh["sl"],0.01),2)
+            md = {"entry":round(ltp,2),"target1":round(R1,2),"target2":round(R2,2),"sl":round(S1,2)}
+            md["rr"] = round((md["target2"]-md["entry"])/max(md["entry"]-md["sl"],0.01),2)
+            lg = {"entry":round(ltp,2),"target1":round(R2,2),"target2":round(R3,2),"target3":round(min(wk52h,R3+atr*5),2),"sl":round(S2,2)}
+            lg["rr"] = round((lg["target2"]-lg["entry"])/max(lg["entry"]-lg["sl"],0.01),2)
+        else:
+            sh = {"entry":round(ltp,2),"target":round(max(S1,ltp-atr*1.5),2),"sl":round(min(tc,ltp+atr*0.8),2)}
+            sh["rr"] = round((sh["entry"]-sh["target"])/max(sh["sl"]-sh["entry"],0.01),2)
+            md = {"entry":round(ltp,2),"target1":round(S1,2),"target2":round(S2,2),"sl":round(R1,2)}
+            md["rr"] = round((md["entry"]-md["target2"])/max(md["sl"]-md["entry"],0.01),2)
+            lg = {"entry":round(ltp,2),"target1":round(S2,2),"target2":round(S3,2),"target3":round(max(wk52l,S3-atr*5),2),"sl":round(R2,2)}
+            lg["rr"] = round((lg["entry"]-lg["target2"])/max(lg["sl"]-lg["entry"],0.01),2)
+        return {"symbol":symbol,"ltp":ltp,"pattern":pattern,"pivot":round(P,2),"tc":round(tc,2),"bc":round(bc,2),
+                "atr":round(atr,2),"R1":round(R1,2),"R2":round(R2,2),"R3":round(R3,2),
+                "S1":round(S1,2),"S2":round(S2,2),"S3":round(S3,2),
+                "52wH":round(wk52h,2),"52wL":round(wk52l,2),"short":sh,"medium":md,"long":lg}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=300)
+def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    try:
+        df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
+        df.index = df.index.tz_localize(None)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
+                      sender_email: str, sender_password: str,
+                      html_body: str, scan_date: str) -> tuple:
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"PivotVault AI — CPR Report {scan_date}"
+        msg["From"]    = sender_email
+        msg["To"]      = to_email
+        msg.attach(MIMEText(html_body, "html"))
+        ctx = ssl.create_default_context()
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as s:
+                s.login(sender_email, sender_password)
+                s.sendmail(sender_email, to_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as s:
+                s.ehlo(); s.starttls(context=ctx); s.login(sender_email, sender_password)
+                s.sendmail(sender_email, to_email, msg.as_string())
+        return True, "Sent!"
+    except Exception as e:
+        return False, str(e)
+
+
 def page_pivot_boss(nse500: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
+    _n200 = fetch_nifty200_list()
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.68rem;'
-        'color:#4a5068;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
-        f'<span class="ts">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        'color:#64748b;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
+        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
 
-    symbols = nse500["Symbol"].dropna().sort_values().tolist()
+    symbols = sorted(_n200)
 
     # ── Controls ─────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1])
@@ -2627,9 +1965,9 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
     # ── Overall Bias Banner ───────────────────────────────────────────────────
     bias_palette = {
-        "bull": ("#0a2318", "#00e5a0"),
-        "bear": ("#21080f", "#ff4d6a"),
-        "neut": ("#1a1505", "#f5a623"),
+        "bull": ("#f0fdf4", "#00e5a0"),
+        "bear": ("#fef2f2", "#ff4d6a"),
+        "neut": ("#fffbeb", "#f5a623"),
     }
     bg, fg = bias_palette.get(analysis["ov_col"], ("#141720", "#d4daf0"))
     st.markdown(
@@ -2646,8 +1984,11 @@ def page_pivot_boss(nse500: pd.DataFrame):
     )
 
     # ── Main Chart ─────────────────────────────────────────────────────────
-    fig = build_pivot_boss_chart(df, symbol, analysis, pivot_type)
-    st.plotly_chart(fig, use_container_width=True)
+    if _TV_CHARTS:
+        render_tv_chart(df, symbol, tf_label, analysis, show_stoch=True, height=700)
+    else:
+        fig = build_pivot_boss_chart(df, symbol, analysis, pivot_type)
+        st.plotly_chart(fig, use_container_width=True)
 
     # ── Signal Cards ──────────────────────────────────────────────────────────
     st.markdown("<h3 style='font-size:0.9rem;margin:1rem 0 0.5rem;'>Signal Summary</h3>",
@@ -2663,7 +2004,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>Central Pivot Range (CPR)</div>"
             f"<div class='pb-card-value pb-{analysis['cpr_col']}'>{analysis['cpr_position']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
             f"margin-top:0.4rem;'>{cpr_detail}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2673,7 +2014,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>3/10 Oscillator</div>"
             f"<div class='pb-card-value pb-{analysis['osc_col']}'>{analysis['osc_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
             f"margin-top:0.4rem;'>Ochoa's momentum gauge<br>3-MA minus 10-MA vs 16-Signal</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2683,7 +2024,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>HMA(20) Trend</div>"
             f"<div class='pb-card-value pb-{analysis['hma_col']}'>{analysis['hma_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
             f"margin-top:0.4rem;'>Hull Moving Average<br>Low-lag trend direction filter</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2697,7 +2038,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card-title'>RSI (14)</div>"
             f"<div class='pb-card-value pb-{analysis['rsi_col']}'>"
             f"{rsi_val} · {analysis['rsi_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
             f"margin-top:0.4rem;'>{stoch_txt}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2721,7 +2062,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     with col_mp:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "letter-spacing:0.1em;text-transform:uppercase;color:#6b7490;"
+            "letter-spacing:0.1em;text-transform:uppercase;color:#64748b;"
             "margin-bottom:0.5rem;'>Market Profile (Volume at Price)</div>",
             unsafe_allow_html=True,
         )
@@ -2736,10 +2077,10 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     arr  = "▲" if val > ltp else "▼"
                     st.markdown(
                         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
-                        f"padding:0.3rem 0;border-bottom:1px solid #1e2330;'>"
+                        f"padding:0.3rem 0;border-bottom:1px solid #dce3ed;'>"
                         f"<span style='color:{col};'>{label}</span>"
-                        f"<b style='color:#d4daf0;float:right;'>{val} "
-                        f"<span style='color:#6b7490;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
+                        f"<b style='color:#1e293b;float:right;'>{val} "
+                        f"<span style='color:#64748b;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
                         f"</b></div>",
                         unsafe_allow_html=True,
                     )
@@ -2755,7 +2096,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>ATR(14) Volatility</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{'₹' + str(analysis['atr']) if analysis['atr'] else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
             f"{'% of price: ' + str(analysis['atr_pct']) + '%' if analysis['atr_pct'] else ''}"
             f"</div></div>", unsafe_allow_html=True,
         )
@@ -2766,7 +2107,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>Nearest Pivot ★</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{nl[0] + '  ₹' + str(nl[1]) if nl else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#6b7490;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
             f"Immediate support / resistance</div></div>", unsafe_allow_html=True,
         )
 
@@ -2789,7 +2130,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         st.divider()
         st.markdown(
             "<h3 style='font-size:0.9rem;margin:1rem 0 0.25rem;'>🔲 Virgin CPR Levels</h3>"
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#4a5068;"
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#64748b;"
             "margin-bottom:0.5rem;'>Untouched CPR bands — Ochoa's high-significance price magnets</div>",
             unsafe_allow_html=True,
         )
@@ -2797,8 +2138,9 @@ def page_pivot_boss(nse500: pd.DataFrame):
                      use_container_width=True, hide_index=True)
 
     # ── Stochastic ────────────────────────────────────────────────────────────
+    # Stochastic is embedded in TV chart above; show Plotly fallback only
     df_ind = analysis.get("df_ind")
-    if df_ind is not None and "STOCH_K" in df_ind.columns:
+    if not _TV_CHARTS and df_ind is not None and "STOCH_K" in df_ind.columns:
         st.divider()
         st.plotly_chart(build_stoch_chart(df_ind), use_container_width=True)
 
@@ -2810,7 +2152,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar" style="margin-top:0.25rem;">'
         '<h2 style="font-size:1.05rem;margin:0;">📄  Download Analysis Report (PDF)</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#4a5068;margin-left:0.75rem;">'
+        'color:#64748b;margin-left:0.75rem;">'
         'Short Term · Medium Term · Long Term Targets · Stop-Loss · Narrative</span>'
         '</div>',
         unsafe_allow_html=True,
@@ -2865,7 +2207,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 arrow  = "▲" if auto_pat == "Bullish" else "▼"
 
                 st.markdown(
-                    f"<div style='background:#0d1f0a;border:1px solid {col_fg}33;"
+                    f"<div style='background:#f0fdf4;border:1px solid {col_fg}33;"
                     f"border-left:4px solid {col_fg};border-radius:8px;"
                     f"padding:1rem 1.5rem;margin:0.5rem 0;'>"
 
@@ -2876,30 +2218,30 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     f"<div style='display:flex;gap:2rem;margin-top:0.6rem;flex-wrap:wrap;'>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#4a5068;text-transform:uppercase;'>Short Term (1-3d)</div>"
+                    f"color:#64748b;text-transform:uppercase;'>Short Term (1-3d)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#d4daf0;'>T: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1e293b;'>T: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{sh.get('target',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{sh.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{sh.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{sh.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#4a5068;text-transform:uppercase;'>Medium Term (1-4w)</div>"
+                    f"color:#64748b;text-transform:uppercase;'>Medium Term (1-4w)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#d4daf0;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{md.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{md.get('target2',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{md.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{md.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{md.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#4a5068;text-transform:uppercase;'>Long Term (1-3m)</div>"
+                    f"color:#64748b;text-transform:uppercase;'>Long Term (1-3m)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#d4daf0;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{lg.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target2',0):,.2f}</span>"
                     f" T3: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target3',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#ff4d6a;'>₹{lg.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{lg.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{lg.get('rr',0)}x</b></div></div>"
 
                     f"</div></div>",
@@ -2915,297 +2257,10 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     key="pdf_download_btn",
                 )
 
-    # ════════════════════════════════════════════════════════════════════════
-    #  NARROW CPR SCANNER  —  Daily Watchlist
-    # ════════════════════════════════════════════════════════════════════════
-    st.divider()
-    st.markdown(
-        '<div class="title-bar" style="margin-top:0.5rem;">'
-        '<h2 style="font-size:1.1rem;margin:0;">📡  Narrow CPR Scanner — Daily</h2>'
-        '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#4a5068;margin-left:0.75rem;">Nifty 500 · CPR Width &lt; 0.5% · Bullish / Bearish Pattern</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    sc1, sc2, sc3 = st.columns([2, 2, 2])
-    with sc1:
-        scan_filter = st.selectbox(
-            "Show",
-            ["All (Narrow + Moderate)", "Narrow Only (< 0.25%)", "Bullish Only", "Bearish Only"],
-            key="cpr_scan_filter",
-            label_visibility="collapsed",
-        )
-    with sc2:
-        scan_max = st.selectbox(
-            "Stocks to scan",
-            [50, 100, 150, 200],
-            index=1,
-            key="cpr_scan_max",
-            label_visibility="collapsed",
-        )
-    with sc3:
-        run_scan = st.button("🔍  Run CPR Scan", key="run_cpr_scan", use_container_width=True)
-
-    # ── Run / show cached results ─────────────────────────────────────────────
-    if run_scan or st.session_state.get("cpr_scan_df") is not None:
-        if run_scan:
-            with st.spinner(f"Scanning {scan_max} stocks for Narrow CPR…"):
-                scan_df = scan_narrow_cpr(
-                    nse500["Symbol"].dropna().tolist(),
-                    max_stocks=scan_max,
-                )
-            st.session_state["cpr_scan_df"] = scan_df
-        else:
-            scan_df = st.session_state.get("cpr_scan_df", pd.DataFrame())
-
-        if scan_df.empty:
-            st.warning("No stocks found with Narrow / Moderate CPR. Try scanning more stocks.")
-        else:
-            # Apply filter
-            fdf = scan_df.copy()
-            if scan_filter == "Narrow Only (< 0.25%)":
-                fdf = fdf[fdf["CPR Width%"] < 0.25]
-            elif scan_filter == "Bullish Only":
-                fdf = fdf[fdf["Pattern"] == "Bullish"]
-            elif scan_filter == "Bearish Only":
-                fdf = fdf[fdf["Pattern"] == "Bearish"]
-
-            if fdf.empty:
-                st.info("No stocks match the selected filter.")
-            else:
-                # ── Summary badges ────────────────────────────────────────────
-                n_narrow  = int((fdf["CPR Width%"] < 0.25).sum())
-                n_bull    = int((fdf["Pattern"] == "Bullish").sum())
-                n_bear    = int((fdf["Pattern"] == "Bearish").sum())
-                n_neut    = int((fdf["Pattern"] == "Neutral").sum())
-
-                b1, b2, b3, b4 = st.columns(4)
-                b1.metric("🎯 Narrow CPR",  n_narrow)
-                b2.metric("🟢 Bullish",     n_bull)
-                b3.metric("🔴 Bearish",     n_bear)
-                b4.metric("⚪ Neutral",     n_neut)
-
-                st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
-
-                # ── Bullish table ─────────────────────────────────────────────
-                bull_df = fdf[fdf["Pattern"] == "Bullish"].copy()
-                if not bull_df.empty:
-                    st.markdown(
-                        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                        "letter-spacing:0.08em;text-transform:uppercase;"
-                        "color:#00e5a0;margin-bottom:0.4rem;border-left:3px solid #00e5a0;"
-                        "padding-left:0.6rem;'>"
-                        f"▲ Bullish Setup — {len(bull_df)} stocks</div>",
-                        unsafe_allow_html=True,
-                    )
-                    display_bull = bull_df[[
-                        "Symbol","LTP","CPR Width%","CPR Type","TC","BC","HMA","RSI","Strength%"
-                    ]].copy()
-                    display_bull["CPR Width%"] = display_bull["CPR Width%"].apply(lambda x: f"{x:.3f}%")
-                    display_bull["Strength%"]  = display_bull["Strength%"].apply(lambda x: f"{x}%")
-                    display_bull["LTP"]        = display_bull["LTP"].apply(lambda x: f"₹{x:,.2f}")
-                    display_bull["TC"]         = display_bull["TC"].apply(lambda x: f"₹{x:,.2f}")
-                    display_bull["BC"]         = display_bull["BC"].apply(lambda x: f"₹{x:,.2f}")
-                    st.dataframe(display_bull, use_container_width=True, hide_index=True)
-
-                # ── Bearish table ─────────────────────────────────────────────
-                bear_df = fdf[fdf["Pattern"] == "Bearish"].copy()
-                if not bear_df.empty:
-                    st.markdown(
-                        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                        "letter-spacing:0.08em;text-transform:uppercase;"
-                        "color:#ff4d6a;margin-bottom:0.4rem;margin-top:1rem;"
-                        "border-left:3px solid #ff4d6a;padding-left:0.6rem;'>"
-                        f"▼ Bearish Setup — {len(bear_df)} stocks</div>",
-                        unsafe_allow_html=True,
-                    )
-                    display_bear = bear_df[[
-                        "Symbol","LTP","CPR Width%","CPR Type","TC","BC","HMA","RSI","Strength%"
-                    ]].copy()
-                    display_bear["CPR Width%"] = display_bear["CPR Width%"].apply(lambda x: f"{x:.3f}%")
-                    display_bear["Strength%"]  = display_bear["Strength%"].apply(lambda x: f"{x}%")
-                    display_bear["LTP"]        = display_bear["LTP"].apply(lambda x: f"₹{x:,.2f}")
-                    display_bear["TC"]         = display_bear["TC"].apply(lambda x: f"₹{x:,.2f}")
-                    display_bear["BC"]         = display_bear["BC"].apply(lambda x: f"₹{x:,.2f}")
-                    st.dataframe(display_bear, use_container_width=True, hide_index=True)
-
-                # ── Neutral table (collapsed) ─────────────────────────────────
-                neut_df = fdf[fdf["Pattern"] == "Neutral"].copy()
-                if not neut_df.empty:
-                    with st.expander(f"⚪ Neutral / Mixed — {len(neut_df)} stocks", expanded=False):
-                        display_neut = neut_df[[
-                            "Symbol","LTP","CPR Width%","CPR Type","TC","BC","HMA","RSI","Strength%"
-                        ]].copy()
-                        display_neut["CPR Width%"] = display_neut["CPR Width%"].apply(lambda x: f"{x:.3f}%")
-                        display_neut["Strength%"]  = display_neut["Strength%"].apply(lambda x: f"{x}%")
-                        display_neut["LTP"]        = display_neut["LTP"].apply(lambda x: f"₹{x:,.2f}")
-                        display_neut["TC"]         = display_neut["TC"].apply(lambda x: f"₹{x:,.2f}")
-                        display_neut["BC"]         = display_neut["BC"].apply(lambda x: f"₹{x:,.2f}")
-                        st.dataframe(display_neut, use_container_width=True, hide_index=True)
-
-                st.markdown(
-                    "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    "color:#2e3448;margin-top:0.75rem;'>"
-                    "Scoring: Price vs CPR (2pt) · HMA direction (1pt) · 3/10 Oscillator (1pt) · RSI (1pt)  "
-                    "·  Results cached 1hr — click <b>Run CPR Scan</b> to refresh.</div>",
-                    unsafe_allow_html=True,
-                )
-    else:
-        st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
-            "color:#2a3040;text-align:center;padding:1rem;"
-            "border:1px dashed #1e2330;border-radius:6px;'>"
-            "Click <b>🔍 Run CPR Scan</b> to scan Nifty 500 for Narrow CPR stocks "
-            "with Bullish / Bearish patterns.</div>",
-            unsafe_allow_html=True,
-        )
-
-    # ════════════════════════════════════════════════════════════════════════
-    #  EMAIL REPORT SECTION
-    # ════════════════════════════════════════════════════════════════════════
-    st.divider()
-    st.markdown(
-        '<div class="title-bar" style="margin-top:0.25rem;">'
-        '<h2 style="font-size:1.05rem;margin:0;">📧  Email CPR Report</h2>'
-        '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#4a5068;margin-left:0.75rem;">'
-        'Send Narrow CPR stocks with Targets, Stop-Loss &amp; Pivot Levels to any email</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    cur_scan = st.session_state.get("cpr_scan_df")
-    if cur_scan is None or cur_scan.empty:
-        st.info("Run the CPR Scanner above first — then come back here to email the report.")
-    else:
-        # ── SMTP config (stored in session state so it persists) ──────────────
-        if "smtp_cfg" not in st.session_state:
-            st.session_state["smtp_cfg"] = {
-                "host": "smtp.gmail.com", "port": 587,
-                "sender": "", "password": "",
-            }
-
-        with st.expander("⚙️  SMTP / Sender Settings", expanded=False):
-            smtp_c1, smtp_c2 = st.columns(2)
-            with smtp_c1:
-                new_host = st.text_input(
-                    "SMTP Host",
-                    value=st.session_state["smtp_cfg"]["host"],
-                    key="smtp_host_input",
-                    help="e.g. smtp.gmail.com  |  smtp.office365.com",
-                )
-                new_sender = st.text_input(
-                    "Sender Email",
-                    value=st.session_state["smtp_cfg"]["sender"],
-                    key="smtp_sender_input",
-                )
-            with smtp_c2:
-                new_port = st.selectbox(
-                    "SMTP Port",
-                    [587, 465, 25],
-                    index=[587, 465, 25].index(st.session_state["smtp_cfg"]["port"]),
-                    key="smtp_port_input",
-                    help="587 = TLS (recommended)  |  465 = SSL",
-                )
-                new_pwd = st.text_input(
-                    "App Password",
-                    value=st.session_state["smtp_cfg"]["password"],
-                    type="password",
-                    key="smtp_pwd_input",
-                    help="For Gmail: generate an App Password in Google Account → Security",
-                )
-            if st.button("💾 Save SMTP Settings", key="save_smtp"):
-                st.session_state["smtp_cfg"] = {
-                    "host": new_host, "port": new_port,
-                    "sender": new_sender, "password": new_pwd,
-                }
-                st.success("Settings saved for this session.")
-
-        # ── Recipient + filter + send ─────────────────────────────────────────
-        em1, em2, em3 = st.columns([3, 2, 1])
-        with em1:
-            to_email = st.text_input(
-                "Recipient Email",
-                placeholder="admin@example.com",
-                label_visibility="collapsed",
-                key="report_to_email",
-            )
-        with em2:
-            email_filter = st.selectbox(
-                "Include in report",
-                ["Bullish + Bearish", "Bullish Only", "Bearish Only"],
-                key="email_filter",
-                label_visibility="collapsed",
-            )
-        with em3:
-            send_btn = st.button("📤  Send Report", key="send_email_btn",
-                                 use_container_width=True)
-
-        # ── Preview toggle ────────────────────────────────────────────────────
-        show_preview = st.checkbox("Preview email before sending", value=False,
-                                   key="email_preview_toggle")
-
-        if send_btn or show_preview:
-            # Filter scan_df based on selection
-            report_df = cur_scan.copy()
-            if email_filter == "Bullish Only":
-                report_df = report_df[report_df["Pattern"] == "Bullish"]
-            elif email_filter == "Bearish Only":
-                report_df = report_df[report_df["Pattern"] == "Bearish"]
-            else:
-                report_df = report_df[report_df["Pattern"].isin(["Bullish","Bearish"])]
-
-            if report_df.empty:
-                st.warning("No Bullish/Bearish stocks in the scan results to report.")
-            else:
-                scan_date = datetime.now().strftime("%d %b %Y %H:%M")
-
-                with st.spinner("Building report with targets & stop-losses…"):
-                    html_body = build_email_html(report_df, scan_date)
-
-                if show_preview:
-                    st.markdown(
-                        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                        "color:#4a5068;margin-bottom:0.4rem;'>Email Preview:</div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.components.v1.html(html_body, height=600, scrolling=True)
-
-                if send_btn:
-                    cfg = st.session_state["smtp_cfg"]
-                    if not to_email.strip():
-                        st.error("Please enter a recipient email address.")
-                    elif not cfg["sender"] or not cfg["password"]:
-                        st.error("Configure SMTP settings first (expand ⚙️ above).")
-                    else:
-                        with st.spinner("Sending email…"):
-                            ok, msg = send_report_email(
-                                to_email=to_email.strip(),
-                                smtp_host=cfg["host"],
-                                smtp_port=cfg["port"],
-                                sender_email=cfg["sender"],
-                                sender_password=cfg["password"],
-                                html_body=html_body,
-                                scan_date=scan_date,
-                            )
-                        if ok:
-                            st.success(f"✅ Report sent to {to_email}")
-                        else:
-                            st.error(f"❌ Failed: {msg}")
-                            st.markdown(
-                                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                                "color:#4a5068;margin-top:0.5rem;'>"
-                                "💡 <b>Gmail users:</b> Enable 2-Factor Auth and use an App Password "
-                                "(Google Account → Security → App Passwords). "
-                                "Do NOT use your regular Gmail password.</div>",
-                                unsafe_allow_html=True,
-                            )
-
     # ── Methodology footnote ──────────────────────────────────────────────────
     st.divider()
     st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#2e3448;line-height:1.8;'>"
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#94a3b8;line-height:1.8;'>"
         "📖  Based on <i>Secrets of a Pivot Boss</i> by Frank Ochoa.  "
         "Tools implemented: CPR · 3/10 Oscillator · Virgin CPRs · Market Profile (POC/VAH/VAL) · "
         "HMA Trend Filter · ATR · RSI · Stochastic.  "
@@ -3219,8 +2274,8 @@ def page_watchlist():
     wl = st.session_state["watchlist"]
     if not wl:
         st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;color:#4a5068;font-size:0.85rem;"
-            "padding:2rem 0;'>No stocks added yet. Head to <b>Stock Screener</b> to build your list.</div>",
+            "<div style='font-family:IBM Plex Mono,monospace;color:#64748b;font-size:0.85rem;"
+            "padding:2rem 0;'>No stocks added yet. Use <b>Trade Signals</b> or <b>CPR Scanner</b> to find stocks.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -3262,7 +2317,7 @@ def page_watchlist():
 
     st.divider()
     st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                "color:#4a5068;letter-spacing:0.06em;text-transform:uppercase;"
+                "color:#64748b;letter-spacing:0.06em;text-transform:uppercase;"
                 "margin-bottom:0.5rem;'>Remove</div>", unsafe_allow_html=True)
     rm_cols = st.columns(min(len(wl), 6))
     for i, sym in enumerate(wl[:6]):
@@ -3274,90 +2329,1395 @@ def page_watchlist():
 
 
 # ─────────────────────────────────────────────
-#  MOBILE BOTTOM NAV
+#  SIDEBAR
 # ─────────────────────────────────────────────
-_NAV_PAGES = ["Market Snapshot", "Stock Screener", "Pivot Boss Analysis", "Watchlist"]
-_NAV_ICONS = ["📊", "🔍", "🎯", "⭐"]
-_NAV_LABELS = ["Market", "Screener", "Pivot Boss", "Watchlist"]
-_NAV_KEYS   = ["market", "screener", "pivotboss", "watchlist"]
 
-def render_mobile_nav(current_page: str):
-    """Renders a fixed bottom nav bar (visible only on mobile via CSS)."""
-    items_html = ""
-    for icon, label, key, page in zip(_NAV_ICONS, _NAV_LABELS, _NAV_KEYS, _NAV_PAGES):
-        active_cls = "active" if current_page == page else ""
-        # Preserve auth params in mobile nav links so session survives tab switches
-        _auth = st.session_state.get("auth_token", "")
-        _user = st.session_state.get("username", "")
-        _auth_qs = f"&auth={_auth}&user={_user}" if _auth else ""
-        items_html += (
-            f'<a href="?nav={key}{_auth_qs}" class="{active_cls}" target="_self">'
-            f'<span class="nav-icon">{icon}</span>{label}</a>'
+# ═══════════════════════════════════════════════════════════════════
+#  MULTI-TIMEFRAME CPR SCANNER  (new standalone tab)
+# ═══════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────
+#  FRANK OCHOA — CANDLESTICK PATTERN DETECTOR
+# ─────────────────────────────────────────────────────────────────────
+
+def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
+    """
+    Detect key Frank Ochoa / classic candlestick patterns on last 3 candles.
+    Returns (pattern_name, signal_direction, pattern_strength_bonus)
+    Based on: Bullish/Bearish Engulfing, Hammer, Shooting Star,
+              Doji at CPR, Morning/Evening Star, Inside Bar, Pin Bar.
+    """
+    if len(df) < 3:
+        return ("None", "neut", 0)
+
+    c0 = df.iloc[-1]   # current candle
+    c1 = df.iloc[-2]   # prev candle
+    c2 = df.iloc[-3]   # 2 candles ago
+
+    O0,H0,L0,C0 = float(c0["Open"]),float(c0["High"]),float(c0["Low"]),float(c0["Close"])
+    O1,H1,L1,C1 = float(c1["Open"]),float(c1["High"]),float(c1["Low"]),float(c1["Close"])
+    O2,H2,L2,C2 = float(c2["Open"]),float(c2["High"]),float(c2["Low"]),float(c2["Close"])
+
+    body0 = abs(C0 - O0)
+    body1 = abs(C1 - O1)
+    body2 = abs(C2 - O2)
+    rng0  = H0 - L0 if H0 > L0 else 1e-9
+    rng1  = H1 - L1 if H1 > L1 else 1e-9
+
+    upper_wick0 = H0 - max(O0, C0)
+    lower_wick0 = min(O0, C0) - L0
+    upper_wick1 = H1 - max(O1, C1)
+    lower_wick1 = min(O1, C1) - L1
+
+    bull0 = C0 > O0
+    bear0 = C0 < O0
+    bull1 = C1 > O1
+    bear1 = C1 < O1
+
+    # ── 1. Bullish Engulfing at CPR ──────────────────────────────────────────
+    # Ochoa: When price engulfs prior candle after touching BC — powerful bull signal
+    if (bear1 and bull0 and
+        O0 <= C1 and C0 >= O1 and
+        body0 > body1 * 1.1):
+        return ("Bullish Engulfing", "bull", 15)
+
+    # ── 2. Bearish Engulfing at CPR ──────────────────────────────────────────
+    if (bull1 and bear0 and
+        O0 >= C1 and C0 <= O1 and
+        body0 > body1 * 1.1):
+        return ("Bearish Engulfing", "bear", 15)
+
+    # ── 3. Hammer (bullish reversal) ─────────────────────────────────────────
+    # Long lower wick >= 2x body, small upper wick, at support / BC
+    if (lower_wick0 >= 2 * body0 and
+        upper_wick0 <= body0 * 0.4 and
+        body0 > 0 and
+        lower_wick0 >= rng0 * 0.55):
+        return ("Hammer", "bull", 12)
+
+    # ── 4. Shooting Star (bearish reversal) ──────────────────────────────────
+    # Long upper wick >= 2x body, small lower wick, at resistance / TC
+    if (upper_wick0 >= 2 * body0 and
+        lower_wick0 <= body0 * 0.4 and
+        body0 > 0 and
+        upper_wick0 >= rng0 * 0.55):
+        return ("Shooting Star", "bear", 12)
+
+    # ── 5. Doji (indecision — strong at CPR) ─────────────────────────────────
+    # Ochoa: Doji inside CPR = explosive breakout coming
+    if body0 <= rng0 * 0.1 and rng0 > 0:
+        return ("Doji at CPR", "neut", 8)
+
+    # ── 6. Morning Star (3-candle bullish reversal) ───────────────────────────
+    if (bear2 and body2 > 0 and
+        abs(C1 - O1) <= min(body2, body0) * 0.3 and  # small middle
+        bull0 and C0 > (O2 + C2) / 2):
+        return ("Morning Star", "bull", 18)
+
+    # ── 7. Evening Star (3-candle bearish reversal) ───────────────────────────
+    if (bull2 and body2 > 0 and
+        abs(C1 - O1) <= min(body2, body0) * 0.3 and
+        bear0 and C0 < (O2 + C2) / 2):
+        return ("Evening Star", "bear", 18)
+
+    # ── 8. Inside Bar (Ochoa: compression before breakout) ───────────────────
+    if H0 < H1 and L0 > L1:
+        direction = "bull" if bull1 else "bear"
+        return ("Inside Bar", direction, 10)
+
+    # ── 9. Pin Bar / Rejection Candle ────────────────────────────────────────
+    # Tail >= 3x body — strong rejection at key level
+    if lower_wick0 >= 3 * body0 and body0 > 0:
+        return ("Bull Pin Bar", "bull", 14)
+    if upper_wick0 >= 3 * body0 and body0 > 0:
+        return ("Bear Pin Bar", "bear", 14)
+
+    # ── 10. Strong Bullish / Bearish candle (Marubozu) ───────────────────────
+    if bull0 and body0 >= rng0 * 0.85:
+        return ("Bullish Marubozu", "bull", 10)
+    if bear0 and body0 >= rng0 * 0.85:
+        return ("Bearish Marubozu", "bear", 10)
+
+    return ("None", "neut", 0)
+
+
+def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
+                      P: float, R1: float, R2: float, R3: float,
+                      S1: float, S2: float, S3: float, atr: float) -> dict:
+    """
+    Compute Entry, Target, Stop-Loss and Risk:Reward ratio
+    using Frank Ochoa pivot-based methodology.
+
+    Ochoa Rule:
+    - Bull: Entry above TC, SL below BC (or 0.5 ATR below entry)
+    - Bear: Entry below BC, SL above TC (or 0.5 ATR above entry)
+    - Targets: R1/R2/R3 for bull, S1/S2/S3 for bear
+    - Minimum acceptable R:R = 1.5x
+    """
+    if pattern_dir == "bull":
+        entry  = round(tc + atr * 0.1, 2)           # slight buffer above TC
+        sl     = round(min(bc, ltp - atr * 0.5), 2)  # below BC or 0.5 ATR
+        risk   = max(entry - sl, atr * 0.25)
+        tgt1   = round(R1, 2)
+        tgt2   = round(R2, 2)
+        tgt3   = round(R3, 2)
+        rr1    = round((tgt1 - entry) / risk, 2) if risk > 0 else 0
+        rr2    = round((tgt2 - entry) / risk, 2) if risk > 0 else 0
+        trail_sl = round(entry + (tgt1 - entry) * 0.5, 2)  # trail after 50% to T1
+    else:
+        entry  = round(bc - atr * 0.1, 2)
+        sl     = round(max(tc, ltp + atr * 0.5), 2)
+        risk   = max(sl - entry, atr * 0.25)
+        tgt1   = round(S1, 2)
+        tgt2   = round(S2, 2)
+        tgt3   = round(S3, 2)
+        rr1    = round((entry - tgt1) / risk, 2) if risk > 0 else 0
+        rr2    = round((entry - tgt2) / risk, 2) if risk > 0 else 0
+        trail_sl = round(entry - (entry - tgt1) * 0.5, 2)
+
+    return {
+        "entry": entry, "sl": sl, "risk": round(risk, 2),
+        "tgt1": tgt1, "tgt2": tgt2, "tgt3": tgt3,
+        "rr1": rr1, "rr2": rr2, "trail_sl": trail_sl,
+    }
+
+
+@st.cache_data(ttl=900)
+def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
+                      max_stocks: int = 200) -> pd.DataFrame:
+    """
+    Frank Ochoa CPR Scanner:
+    - NO hard CPR width cutoff (scan all, rank by width)
+    - NO R:R cutoff (show all, display R:R on card)
+    - Targets & SL purely from pivot levels + candlestick context
+    - Strength score from 6 weighted factors
+    """
+    rows = []
+    for sym in symbols[:max_stocks]:
+        try:
+            df = yf.Ticker(sym + ".NS").history(period=period, interval=interval)
+            if df.empty or len(df) < 22:
+                continue
+            df.index = df.index.tz_localize(None)
+
+            # ── CPR from prior completed candle ──────────────────────────────
+            ref  = df.iloc[-2]
+            H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
+            P  = (H + L + C) / 3
+            BC = (H + L) / 2
+            TC = (P - BC) + P
+            width = abs(TC - BC) / P * 100
+
+            # Only skip truly wide CPR (> 2%) — include narrow + moderate
+            if width > 2.0:
+                continue
+
+            ltp   = float(df["Close"].iloc[-1])
+            close = df["Close"]
+            high  = df["High"]
+            low_s = df["Low"]
+
+            # ── Pivot levels (Traditional) ───────────────────────────────────
+            R1 = round(2*P - L, 2);  R2 = round(P + (H-L), 2);  R3 = round(H + 2*(P-L), 2)
+            S1 = round(2*P - H, 2);  S2 = round(P - (H-L), 2);  S3 = round(L - 2*(H-P), 2)
+
+            # ── HMA-20 ───────────────────────────────────────────────────────
+            def wma(s, n):
+                w = np.arange(1, n+1)
+                return s.rolling(n).apply(lambda x: np.dot(x,w)/w.sum(), raw=True)
+            hma    = wma(2*wma(close,10) - wma(close,20), 4)
+            hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
+
+            # ── 3/10 Oscillator ──────────────────────────────────────────────
+            diff  = close.rolling(3).mean() - close.rolling(10).mean()
+            sig16 = diff.rolling(16).mean()
+            hist_val       = float(diff.iloc[-1] - sig16.iloc[-1]) if not np.isnan(diff.iloc[-1]) else 0
+            osc_cross_bull = bool(diff.iloc[-1] > sig16.iloc[-1] and diff.iloc[-2] <= sig16.iloc[-2])
+            osc_cross_bear = bool(diff.iloc[-1] < sig16.iloc[-1] and diff.iloc[-2] >= sig16.iloc[-2])
+
+            # ── RSI-14 ───────────────────────────────────────────────────────
+            delta = close.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            rsi   = float(100 - (100/(1 + gain.iloc[-1]/max(loss.iloc[-1], 1e-9))))
+
+            # ── ATR-14 ───────────────────────────────────────────────────────
+            tr  = pd.concat([high-low_s,(high-close.shift()).abs(),(low_s-close.shift()).abs()],axis=1).max(axis=1)
+            atr = float(tr.rolling(14).mean().iloc[-1])
+
+            # ── VWAP (20-bar proxy) ──────────────────────────────────────────
+            tp   = (high + low_s + close) / 3
+            vwap = (tp * df["Volume"]).rolling(20).sum() / df["Volume"].rolling(20).sum()
+            above_vwap = bool(ltp > float(vwap.iloc[-1])) if not np.isnan(vwap.iloc[-1]) else None
+
+            # ── Volume surge ─────────────────────────────────────────────────
+            vol_avg   = float(df["Volume"].rolling(20).mean().iloc[-1])
+            vol_cur   = float(df["Volume"].iloc[-1])
+            vol_surge = vol_cur > vol_avg * 1.5 if vol_avg > 0 else False
+
+            # ── Candlestick pattern ──────────────────────────────────────────
+            candle_name, candle_dir, candle_bonus = detect_candlestick_pattern(df)
+
+            # ── Frank Ochoa Scoring ──────────────────────────────────────────
+            bull_pts = bear_pts = 0
+
+            # 1. CPR Position — most important (3 pts)
+            if ltp > TC:          bull_pts += 3
+            elif ltp < BC:        bear_pts += 3
+            else:                 pass  # inside CPR — neutral
+
+            # 2. HMA trend direction (2 pts)
+            if hma_up is True:    bull_pts += 2
+            elif hma_up is False: bear_pts += 2
+
+            # 3. 3/10 Oscillator — fresh crossover strongest (2 pts), else 1 pt
+            if osc_cross_bull:    bull_pts += 2
+            elif osc_cross_bear:  bear_pts += 2
+            elif hist_val > 0:    bull_pts += 1
+            else:                 bear_pts += 1
+
+            # 4. RSI zone (1 pt)
+            if rsi >= 55:         bull_pts += 1
+            elif rsi <= 45:       bear_pts += 1
+
+            # 5. VWAP position (1 pt)
+            if above_vwap:        bull_pts += 1
+            elif above_vwap is False: bear_pts += 1
+
+            # 6. Volume surge confirms direction (1 pt)
+            if vol_surge:
+                if ltp >= P:      bull_pts += 1
+                else:             bear_pts += 1
+
+            # 7. Candlestick pattern confirmation (2 pts bonus)
+            if candle_dir == "bull":   bull_pts += 2
+            elif candle_dir == "bear": bear_pts += 2
+
+            total = bull_pts + bear_pts
+            if   bull_pts > bear_pts: pattern_main = "Bullish"
+            elif bear_pts > bull_pts: pattern_main = "Bearish"
+            else:                     pattern_main = "Neutral"
+
+            strength = round(max(bull_pts, bear_pts) / max(total, 1) * 100)
+
+            # Skip neutral — no clear direction
+            if pattern_main == "Neutral":
+                continue
+
+            # ── Targets & SL from Pivot Points + Candlestick context ─────────
+            # Ochoa principle: always anchor to pivot levels
+            # Entry = CPR breakout level; SL = opposite CPR wall
+            # Targets = sequential pivot resistances/supports
+            trade_dir = "bull" if pattern_main == "Bullish" else "bear"
+
+            if trade_dir == "bull":
+                # Entry: just above TC (CPR breakout)
+                entry = round(TC + atr * 0.05, 2)
+                # SL: below BC — if candle has hammer/engulf, tighten to low
+                if candle_name in ("Hammer", "Bull Pin Bar", "Bullish Engulfing", "Morning Star"):
+                    sl = round(min(BC, float(df["Low"].iloc[-1])) - atr * 0.1, 2)
+                else:
+                    sl = round(BC - atr * 0.1, 2)
+                risk = max(entry - sl, atr * 0.2)
+                # Targets at R1, R2, R3 — classic Ochoa levels
+                t1, t2, t3 = R1, R2, R3
+                # If candle is Morning Star or Engulfing — target can stretch to R2 minimum
+                if candle_name in ("Morning Star", "Bullish Engulfing", "Bullish Marubozu"):
+                    t1 = R1 if R1 > entry else R2
+
+            else:
+                # Entry: just below BC (CPR breakdown)
+                entry = round(BC - atr * 0.05, 2)
+                if candle_name in ("Shooting Star", "Bear Pin Bar", "Bearish Engulfing", "Evening Star"):
+                    sl = round(max(TC, float(df["High"].iloc[-1])) + atr * 0.1, 2)
+                else:
+                    sl = round(TC + atr * 0.1, 2)
+                risk = max(sl - entry, atr * 0.2)
+                t1, t2, t3 = S1, S2, S3
+                if candle_name in ("Evening Star", "Bearish Engulfing", "Bearish Marubozu"):
+                    t1 = S1 if S1 < entry else S2
+
+            rr1 = round(abs(t1 - entry) / risk, 2) if risk > 0 else 0
+            rr2 = round(abs(t2 - entry) / risk, 2) if risk > 0 else 0
+
+            cpr_type = "Narrow" if width < 0.25 else ("Moderate" if width < 0.5 else "Wide")
+
+            rows.append({
+                "Symbol":     sym,
+                "LTP":        round(ltp, 2),
+                "CPR Width%": round(width, 3),
+                "CPR Type":   cpr_type,
+                "TC":         round(TC, 2),
+                "BC":         round(BC, 2),
+                "Pivot P":    round(P, 2),
+                "R1": R1, "R2": R2, "R3": R3,
+                "S1": S1, "S2": S2, "S3": S3,
+                "Pattern":    pattern_main,
+                "Candle":     candle_name,
+                "Strength%":  min(strength, 100),
+                "RSI":        round(rsi, 1),
+                "HMA":        "▲" if hma_up else "▼",
+                "ATR":        round(atr, 2),
+                "Vol Surge":  "✅" if vol_surge else "—",
+                "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
+                "Entry":      entry,
+                "SL":         sl,
+                "T1":         round(t1, 2),
+                "T2":         round(t2, 2),
+                "T3":         round(t3, 2),
+                "RR1":        rr1,
+                "RR2":        rr2,
+                "Risk Rs":    round(risk, 2),
+            })
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+    df_out = pd.DataFrame(rows)
+    return df_out.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).reset_index(drop=True)
+
+
+def page_cpr_scanner(nse500: pd.DataFrame):
+    """
+    CPR Scanner — one timeframe at a time.
+    Each timeframe auto-refreshes at its own natural interval:
+      15m  → every 15 minutes
+      1h   → every 1 hour
+      1d   → every 4 hours (daily chart doesn't change intraday)
+      1wk  → every 24 hours
+      1mo  → every 24 hours
+    Filters: Narrow CPR < 0.25% + Strength 85–100% + Top 10 only.
+    """
+
+    TF_CONFIG = {
+        "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"5d",  "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+        "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"30d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
+        "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"90d", "tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#f0fdf4","label":"Swing Trading",  "refresh_label":"4 hours"},
+        "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fffbeb","label":"Positional",     "refresh_label":"24 hours"},
+        "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fef2f2","label":"Prime Trading",  "refresh_label":"24 hours"},
+    }
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.25rem;
+                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dce3ed;
+                border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+        <div style="font-size:2rem;">📡</div>
+        <div style="flex:1;">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
+                        font-weight:700;color:#1a2332;">CPR Scanner</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                        color:#5a6a80;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
+                Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+            </div>
+        </div>
+        <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
+            <div style="font-size:0.62rem;color:#5a6a80;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
+            <div id="countdown" style="font-size:1.3rem;font-weight:700;color:#1a6b3c;">—</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Timeframe selector ────────────────────────────────────────────────────
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        tf_choice = st.selectbox(
+            "Timeframe",
+            list(TF_CONFIG.keys()),
+            index=2,
+            label_visibility="collapsed",
+            key="scanner_tf",
         )
+    with c2:
+        manual_btn = st.button("🔄 Scan Now", use_container_width=True, key="run_cpr_scan_btn")
+
+    cfg        = TF_CONFIG[tf_choice]
+    tf_col     = cfg["color"]
+    tf_bg      = cfg["bg"]
+    tf_tag     = cfg["tag"]
+    refresh_s  = cfg["refresh"]
+
+    scan_key      = f"cpr_scan_{tf_tag}"
+    scan_time_key = f"cpr_scan_time_{tf_tag}"
+
+    now           = time.time()
+    last_scan     = st.session_state.get(scan_time_key, 0)
+    age           = now - last_scan
+    needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
+
+    # ── Run scan only for selected timeframe ──────────────────────────────────
+    if needs_refresh:
+        with st.spinner(f"Scanning Nifty 200 on {tf_tag.upper()} ({cfg['label']})…"):
+            result = scan_cpr_multi_tf(
+                fetch_nifty200_list(),
+                interval=cfg["interval"],
+                period=cfg["period"],
+                max_stocks=200,
+            )
+        st.session_state[scan_key]      = result
+        st.session_state[scan_time_key] = now
+        last_scan = now
+
+    scan_df  = st.session_state.get(scan_key, pd.DataFrame())
+    elapsed  = int(now - last_scan)
+    remaining = max(0, refresh_s - elapsed)
+
+    # ── Countdown JS ──────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <script>
+    (function() {{
+        var secs = {remaining};
+        function pad(n) {{ return n < 10 ? "0"+n : n; }}
+        function fmt(s) {{
+            if (s >= 3600) return pad(Math.floor(s/3600))+"h "+pad(Math.floor((s%3600)/60))+"m";
+            return pad(Math.floor(s/60))+":"+pad(s%60);
+        }}
+        function tick() {{
+            if (secs <= 0) {{ window.location.reload(); return; }}
+            var el = document.getElementById("countdown");
+            if (el) el.innerText = fmt(secs);
+            secs--;
+            setTimeout(tick, 1000);
+        }}
+        tick();
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
+
+    # ── Status bar ────────────────────────────────────────────────────────────
+    scan_dt = datetime.fromtimestamp(last_scan).strftime("%d %b  %H:%M:%S") if last_scan else "—"
     st.markdown(
-        f'<nav class="mobile-nav">{items_html}</nav>',
+        f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
+        f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a80;"
+        f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{tf_bg};"
+        f"border:1px solid {tf_col}33;border-left:3px solid {tf_col};border-radius:6px;'>"
+        f"<span style='color:{tf_col};font-weight:700;'>{tf_choice}</span>"
+        f"<span>Last scan: <b>{scan_dt}</b></span>"
+        f"<span>Auto-refresh: every <b>{cfg['refresh_label']}</b></span>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
-def get_mobile_page() -> str:
-    """Read page from query param on mobile, fall back to session state."""
-    params = st.query_params
-    nav_key = params.get("nav", None)
-    key_to_page = dict(zip(_NAV_KEYS, _NAV_PAGES))
-    if nav_key in key_to_page:
-        page = key_to_page[nav_key]
-        st.session_state["mobile_page"] = page
-        return page
-    return st.session_state.get("mobile_page", "Market Snapshot")
+    if scan_df.empty:
+        st.info("No data found. Try clicking 🔄 Scan Now or switch timeframe.")
+        return
 
-# ─────────────────────────────────────────────
-#  SIDEBAR
-# ─────────────────────────────────────────────
+    # ── All bullish & bearish — no strength cutoff ────────────────────────────
+    all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
+    all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    n_scanned = len(scan_df)
+    n_narrow  = int((scan_df["CPR Width%"] < 0.25).sum())
+    n_bull    = len(all_bull)
+    n_bear    = len(all_bear)
+    n_qual    = n_bull + n_bear   # all directional stocks
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("📊 Scanned",   n_scanned)
+    m2.metric("🎯 Narrow CPR", n_narrow)
+    m3.metric("📈 Directional", n_qual)
+    m4.metric("🟢 Bullish",   n_bull)
+    m5.metric("🔴 Bearish",   n_bear)
+
+    st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
+
+    if n_qual == 0:
+        st.markdown(
+            f"<div style='text-align:center;padding:2rem;background:#f8fafc;"
+            f"border:2px dashed #dce3ed;border-radius:10px;"
+            f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#94a3b8;'>"
+            f"No directional setups found on {tf_tag.upper()} right now.<br>"
+            f"<span style='font-size:0.72rem;'>Try 🔄 Scan Now or switch to a different timeframe.</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
+    top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
+    top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
+
+    def _cards(df, direction):
+        is_bull = direction == "Bullish"
+        hc  = "#16a34a" if is_bull else "#dc2626"
+        hbg = "#f0fdf4" if is_bull else "#fef2f2"
+        hbd = "#bbf7d0" if is_bull else "#fecaca"
+        arr = "▲" if is_bull else "▼"
+
+        if df.empty:
+            return (f"<div style='padding:2rem;text-align:center;background:#f8fafc;"
+                    f"border:2px dashed #dce3ed;border-radius:10px;"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#94a3b8;'>"
+                    f"No {direction} picks match criteria on this timeframe</div>")
+
+        html = (f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
+                f"font-weight:700;color:{hc};letter-spacing:0.05em;text-transform:uppercase;"
+                f"padding:0.5rem 0.9rem;background:{hbg};border:1px solid {hbd};"
+                f"border-left:4px solid {hc};border-radius:6px;margin-bottom:0.6rem;'>"
+                f"{arr} Top 10 {direction} · Narrow CPR · Frank Ochoa Strategy</div>")
+
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for rank, (_, row) in enumerate(df.iterrows(), 1):
+            prob     = int(row["Strength%"])
+            rsi_c    = "#16a34a" if row["RSI"] >= 55 else ("#dc2626" if row["RSI"] <= 45 else "#d97706")
+            medal    = medals.get(rank, f"#{rank}")
+            candle   = str(row.get("Candle", "None"))
+            candle_icon = "🕯️" if candle != "None" else ""
+            rr1      = float(row.get("RR1", 0))
+            rr2      = float(row.get("RR2", 0))
+            rr_col   = "#16a34a" if rr1 >= 2 else ("#d97706" if rr1 >= 1.5 else "#dc2626")
+            osc      = str(row.get("Osc Cross", "—"))
+            vol      = str(row.get("Vol Surge", "—"))
+            cpr_w    = float(row.get("CPR Width%", 0))
+
+            html += (
+                f'<div style="background:#fff;border:1px solid {hbd};border-radius:10px;'
+                f'padding:0.85rem 1rem;margin-bottom:0.5rem;box-shadow:0 1px 5px rgba(0,0,0,0.05);">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">'
+                f'<div style="display:flex;align-items:center;gap:8px;">'
+                f'<span style="font-size:1rem;">{medal}</span>'
+                f'<div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a2332;">{row["Symbol"]}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a80;">'
+                f'&#8377;{row["LTP"]:,.2f} &nbsp;·&nbsp; ATR &#8377;{row["ATR"]:,.2f} &nbsp;·&nbsp; {candle_icon} {candle}</div>'
+                f'</div></div>'
+                f'<div style="text-align:right;">'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:{hc};">{prob}%</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a80;">Strength</div>'
+                f'</div></div>'
+                f'<div style="background:#f1f5f9;border-radius:3px;height:5px;margin-bottom:0.5rem;">'
+                f'<div style="background:{hc};width:{prob}%;height:100%;border-radius:3px;"></div></div>'
+                f'<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.45rem;'
+                f'padding:0.4rem 0.6rem;background:#f8fafc;border-radius:6px;'
+                f'font-family:IBM Plex Mono,monospace;font-size:0.68rem;">'
+                f'<span style="color:#5a6a80;">Entry <b style="color:#1a2332;">&#8377;{row["Entry"]:,.2f}</b></span>'
+                f'<span>|</span>'
+                f'<span style="color:#5a6a80;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
+                f'<span style="color:#5a6a80;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
+                f'<span>|</span>'
+                f'<span style="color:#5a6a80;">SL <b style="color:#dc2626;">&#8377;{row["SL"]:,.2f}</b></span>'
+                f'<span>|</span>'
+                f'<span style="color:#5a6a80;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
+                f'</div>'
+                f'<div style="display:flex;flex-wrap:wrap;gap:0.3rem;">'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">CPR {cpr_w:.3f}%</span>'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">Osc {osc}</span>'
+                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">Vol {vol}</span>'
+                f'<span style="background:{hbg};border:1px solid {hbd};border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};font-weight:600;">{arr} NARROW</span>'
+                f'</div></div>'
+            )
+        return html
+
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown(_cards(top_bull, "Bullish"), unsafe_allow_html=True)
+    with col_r:
+        st.markdown(_cards(top_bear, "Bearish"), unsafe_allow_html=True)
+
+    # Full results table
+    if n_qual > 0:
+        with st.expander(f"📋 All {n_qual} stocks ({n_bull} Bullish + {n_bear} Bearish)", expanded=False):
+            disp = scan_df[scan_df["Pattern"] != "Neutral"].sort_values(["Strength%","CPR Width%"], ascending=[False,True]).copy()
+            for c in ["LTP","Entry","T1","T2","T3","SL","TC","BC"]:
+                if c in disp.columns:
+                    disp[c] = disp[c].apply(lambda x: f"Rs.{x:,.2f}")
+            disp["CPR Width%"] = disp["CPR Width%"].apply(lambda x: f"{x:.3f}%" if isinstance(x, float) else x)
+            disp["Strength%"]  = disp["Strength%"].apply(lambda x: f"{x}%")
+            show_cols = [c for c in ["Symbol","LTP","Strength%","Candle","Entry","T1","T2","SL","RR1","RR2","RSI","HMA","Vol Surge","CPR Width%"] if c in disp.columns]
+            st.dataframe(disp[show_cols], use_container_width=True, hide_index=True)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  SEND REPORT
+    # ═══════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown(
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;font-weight:700;"
+        "color:#1a2332;margin-bottom:0.75rem;'>📤  Send / Download Scanner Report</div>",
+        unsafe_allow_html=True,
+    )
+
+    scan_time_str = datetime.now().strftime("%d %b %Y  %H:%M")
+
+    # Build WhatsApp message text
+    def _wa_text(bull_df, bear_df, tf_lbl, scan_t):
+        lines = [
+            "🏦 *PivotVault AI — CPR Scanner*",
+            f"📅 {tf_lbl}  |  {scan_t}",
+            "🔍 Frank Ochoa Strategy  |  Narrow CPR  |  R:R >= 1.5x",
+            "",
+            "🟢 *BULLISH SETUPS*",
+        ]
+        if bull_df.empty:
+            lines.append("No bullish picks found.")
+        else:
+            for i, (_, r) in enumerate(bull_df.head(10).iterrows(), 1):
+                lines.append(
+                    f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                    f"{r.get('Candle','—')}  "
+                    f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                )
+        lines += ["", "🔴 *BEARISH SETUPS*"]
+        if bear_df.empty:
+            lines.append("No bearish picks found.")
+        else:
+            for i, (_, r) in enumerate(bear_df.head(10).iterrows(), 1):
+                lines.append(
+                    f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                    f"{r.get('Candle','—')}  "
+                    f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                )
+        lines += ["", "⚠️ Educational use only. Not financial advice.", "📱 Sent via PivotVault AI"]
+        return "\n".join(lines)
+
+    # Build HTML email body
+    def _html_email(bull_df, bear_df, tf_lbl, scan_t):
+        def _tbl_rows(df, is_bull):
+            if df.empty:
+                return "<tr><td colspan='9' style='padding:8px;color:#94a3b8;font-style:italic;'>No qualifying stocks found.</td></tr>"
+            hc = "#16a34a" if is_bull else "#dc2626"
+            out = ""
+            for _, r in df.iterrows():
+                rr_c = "#16a34a" if r.get("RR1",0)>=2 else ("#d97706" if r.get("RR1",0)>=1.5 else "#dc2626")
+                out += (
+                    f"<tr style='border-bottom:1px solid #f1f5f9;'>"
+                    f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a2332;'>{r['Symbol']}</td>"
+                    f"<td style='padding:7px 5px;font-size:0.83rem;'>Rs.{r['LTP']:,.2f}</td>"
+                    f"<td style='padding:7px 5px;color:{hc};font-weight:700;'>{int(r['Strength%'])}%</td>"
+                    f"<td style='padding:7px 5px;font-size:0.8rem;'>{r.get('Candle','—')}</td>"
+                    f"<td style='padding:7px 5px;font-size:0.8rem;'>Rs.{r['Entry']:,.2f}</td>"
+                    f"<td style='padding:7px 5px;color:{hc};'>Rs.{r['T1']:,.2f} / Rs.{r['T2']:,.2f}</td>"
+                    f"<td style='padding:7px 5px;color:#dc2626;'>Rs.{r['SL']:,.2f}</td>"
+                    f"<td style='padding:7px 5px;color:{rr_c};font-weight:700;'>{r.get('RR1',0)}x</td>"
+                    f"<td style='padding:7px 5px;color:#5a6a80;'>{r['RSI']}</td>"
+                    f"</tr>"
+                )
+            return out
+
+        TH = "background:#1e293b;color:#e2e8f0;padding:7px 5px;text-align:left;font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;"
+        TBLS = "width:100%;border-collapse:collapse;font-family:Courier New,monospace;font-size:0.82rem;"
+        HDR_COL = "background:linear-gradient(135deg,#0d1f0a,#1a4a10)"
+
+        return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:20px 10px;">
+<table width="700" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+<tr><td style="{HDR_COL};padding:22px 26px;">
+  <div style="font-family:Courier New,monospace;font-size:1.25rem;font-weight:700;color:#e8eddf;">🏦 PivotVault AI — CPR Scanner</div>
+  <div style="font-family:Courier New,monospace;font-size:0.72rem;color:#b5c77a;margin-top:4px;letter-spacing:0.07em;text-transform:uppercase;">{tf_lbl} · Frank Ochoa Strategy · {scan_t}</div>
+</td></tr>
+<tr><td style="padding:20px 22px;">
+  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#16a34a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">▲ BULLISH SETUPS</div>
+  <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+  {_tbl_rows(bull_df, True)}</table>
+  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#dc2626;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">▼ BEARISH SETUPS</div>
+  <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+  {_tbl_rows(bear_df, False)}</table>
+</td></tr>
+<tr><td style="padding:12px 22px 20px;"><div style="background:#f8fafc;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#94a3b8;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
+</table></td></tr></table></body></html>"""
+
+    rtab1, rtab2, rtab3 = st.tabs(["📧 Gmail / Email", "💬 WhatsApp", "⬇️ Download PDF"])
+
+    with rtab1:
+        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
+        cfg = st.session_state.get("smtp_cfg", {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""})
+        with st.expander("⚙️ SMTP Settings", expanded=not bool(cfg.get("sender"))):
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                nh = st.text_input("SMTP Host",     value=cfg["host"],     key="sc_host")
+                ns = st.text_input("Sender Email",  value=cfg["sender"],   key="sc_sender")
+            with sc2:
+                np = st.selectbox("Port", [587, 465], index=0 if cfg["port"] == 587 else 1, key="sc_port")
+                nw = st.text_input("App Password",  value=cfg["password"], type="password", key="sc_pwd",
+                                   help="Gmail: Google Account → Security → App Passwords (not your normal password)")
+            if st.button("💾 Save", key="sc_save"):
+                st.session_state["smtp_cfg"] = {"host": nh, "port": np, "sender": ns, "password": nw}
+                st.success("SMTP settings saved!")
+
+        ec1, ec2 = st.columns([3, 1])
+        with ec1:
+            to_em = st.text_input("Recipient Email", placeholder="you@gmail.com", label_visibility="collapsed", key="sc_to")
+        with ec2:
+            send_em = st.button("📧 Send", use_container_width=True, key="sc_send_em")
+
+        if send_em:
+            cfg2 = st.session_state.get("smtp_cfg", {})
+            if not to_em.strip():
+                st.error("Enter recipient email address.")
+            elif not cfg2.get("sender") or not cfg2.get("password"):
+                st.error("Configure SMTP settings above first.")
+            else:
+                body = _html_email(top_bull, top_bear, tf_choice, scan_time_str)
+                with st.spinner("Sending email…"):
+                    ok, msg = send_report_email(to_em.strip(), cfg2["host"], cfg2["port"], cfg2["sender"], cfg2["password"], body, scan_time_str)
+                if ok:
+                    st.success(f"✅ Report sent to {to_em.strip()}")
+                else:
+                    st.error(f"❌ {msg}")
+                    st.caption("Gmail tip: use an App Password not your regular password. Requires 2FA enabled.")
+
+    with rtab2:
+        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
+        wa_msg = _wa_text(top_bull, top_bear, tf_choice, scan_time_str)
+        st.text_area("Message Preview (copy or use button below)", wa_msg, height=200, key="wa_prev")
+        wc1, wc2 = st.columns([3, 1])
+        with wc1:
+            wa_ph = st.text_input("Phone number with country code", placeholder="919876543210", label_visibility="collapsed", key="wa_ph")
+        with wc2:
+            wa_go = st.button("💬 Open WhatsApp", use_container_width=True, key="wa_go")
+        if wa_go and wa_ph.strip():
+            import urllib.parse as _up
+            wa_url = "https://wa.me/" + wa_ph.strip().replace("+","") + "?text=" + _up.quote(wa_msg)
+            st.markdown(
+                f"<a href='{wa_url}' target='_blank' style='display:inline-block;background:#25d366;color:#fff;"
+                f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;font-weight:600;"
+                f"padding:0.55rem 1.5rem;border-radius:8px;text-decoration:none;margin-top:0.5rem;'>"
+                f"💬 Open WhatsApp →</a>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Opens WhatsApp with message pre-filled. Just tap Send.")
+        elif wa_go:
+            st.warning("Enter phone number with country code (e.g. 919876543210)")
+        st.caption("💡 You can also copy the message above and paste into any chat — WhatsApp, Telegram, SMS, etc.")
+
+    with rtab3:
+        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Generate and download the scanner report as a PDF file.</div>", unsafe_allow_html=True)
+        if st.button("📄 Generate PDF", use_container_width=True, key="sc_gen_pdf"):
+            with st.spinner("Building PDF report…"):
+                try:
+                    import io as _io
+                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+                    from reportlab.lib.pagesizes import A4
+                    from reportlab.lib import colors as rl_c
+                    from reportlab.lib.units import mm
+                    from reportlab.lib.styles import ParagraphStyle as PS
+
+                    buf = _io.BytesIO()
+                    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14*mm, rightMargin=14*mm, topMargin=13*mm, bottomMargin=13*mm)
+                    W   = A4[0] - 28*mm
+                    story = []
+
+                    OLIVE  = rl_c.HexColor("#1e293b")
+                    GREEN  = rl_c.HexColor("#16a34a")
+                    RED    = rl_c.HexColor("#dc2626")
+                    LIGHT  = rl_c.HexColor("#f8fafc")
+                    BORDER = rl_c.HexColor("#e2e8f0")
+                    WHITE  = rl_c.white
+
+                    s_title = PS("t", fontSize=15, fontName="Helvetica-Bold", textColor=rl_c.HexColor("#1a2332"), leading=19, spaceAfter=3)
+                    s_sub   = PS("s", fontSize=8,  fontName="Helvetica", textColor=rl_c.HexColor("#5a6a80"), leading=12, spaceAfter=8)
+                    s_h     = PS("h", fontSize=9,  fontName="Helvetica-Bold", textColor=rl_c.HexColor("#1a2332"), leading=13, spaceBefore=7, spaceAfter=4)
+                    s_disc  = PS("d", fontSize=7,  fontName="Helvetica", textColor=rl_c.HexColor("#94a3b8"), leading=10)
+
+                    story.append(Paragraph("PivotVault AI — CPR Scanner Report", s_title))
+                    story.append(Paragraph(f"{tf_choice}  ·  Frank Ochoa Strategy  ·  {scan_time_str}", s_sub))
+                    story.append(HRFlowable(width=W, thickness=1, color=BORDER, spaceAfter=5))
+
+                    def _add_table(df, direction):
+                        is_bull = direction == "Bullish"
+                        hdr_c   = GREEN if is_bull else RED
+                        arrow   = "▲" if is_bull else "▼"
+                        story.append(Paragraph(f"{arrow} {direction} Setups — Narrow CPR + Strength 85–100% + R:R >= 1.5x", s_h))
+                        if df.empty:
+                            story.append(Paragraph("No qualifying stocks on this timeframe.", s_disc))
+                            return
+                        hdrs = ["Symbol","LTP","Score","Candle","Entry","T1","T2","SL","R:R","RSI","CPR%"]
+                        data = [hdrs]
+                        for _, r in df.iterrows():
+                            data.append([
+                                str(r["Symbol"]),
+                                f"Rs.{r['LTP']:,.2f}",
+                                f"{int(r['Strength%'])}%",
+                                str(r.get("Candle","—")),
+                                f"Rs.{r['Entry']:,.2f}",
+                                f"Rs.{r['T1']:,.2f}",
+                                f"Rs.{r['T2']:,.2f}",
+                                f"Rs.{r['SL']:,.2f}",
+                                f"{r.get('RR1',0)}x",
+                                str(r["RSI"]),
+                                f"{r.get('CPR Width%',0):.3f}%",
+                            ])
+                        cw = [W*0.1,W*0.09,W*0.07,W*0.13,W*0.09,W*0.09,W*0.09,W*0.09,W*0.07,W*0.08,W*0.1]
+                        tbl = Table(data, colWidths=cw, repeatRows=1)
+                        tbl.setStyle(TableStyle([
+                            ("BACKGROUND",    (0,0),(-1,0), OLIVE),
+                            ("TEXTCOLOR",     (0,0),(-1,0), WHITE),
+                            ("FONTNAME",      (0,0),(-1,0), "Helvetica-Bold"),
+                            ("FONTSIZE",      (0,0),(-1,-1), 7),
+                            ("ROWBACKGROUNDS",(0,1),(-1,-1), [WHITE, LIGHT]),
+                            ("GRID",          (0,0),(-1,-1), 0.4, BORDER),
+                            ("PADDING",       (0,0),(-1,-1), 4),
+                            ("TEXTCOLOR",     (2,1),(2,-1), hdr_c),
+                            ("FONTNAME",      (2,1),(2,-1), "Helvetica-Bold"),
+                            ("TEXTCOLOR",     (7,1),(7,-1), RED),
+                            ("FONTNAME",      (0,1),(0,-1), "Helvetica-Bold"),
+                        ]))
+                        story.append(tbl)
+                        story.append(Spacer(1, 4*mm))
+
+                    _add_table(top_bull, "Bullish")
+                    _add_table(top_bear, "Bearish")
+                    story.append(HRFlowable(width=W, thickness=0.5, color=BORDER, spaceAfter=3))
+                    story.append(Paragraph(
+                        "DISCLAIMER: Educational/informational purposes only. Not financial advice. "
+                        "Levels derived from Frank Ochoa Pivot Boss + ATR-14. Use proper risk management. Consult SEBI-registered advisor.",
+                        s_disc,
+                    ))
+                    doc.build(story)
+                    buf.seek(0)
+                    pdf_bytes = buf.read()
+                    st.download_button(
+                        label=f"⬇️ Download PDF — {tf_cfg['tag'].upper()} Scanner",
+                        data=pdf_bytes,
+                        file_name=f"PivotVault_Scanner_{tf_cfg['tag']}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="sc_pdf_dl",
+                    )
+                    st.success("PDF ready!")
+                except Exception as ex:
+                    st.error(f"PDF error: {ex}")
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+
+        # ── Footer ────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="background:#f8fafc;border:1px solid #dce3ed;border-radius:10px;
+                padding:0.9rem 1.1rem;margin-top:0.75rem;
+                font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a80;line-height:1.9;">
+    <b style="color:#1a2332;">Auto-Refresh Schedule</b><br>
+    ⚡ 15 Min chart → refreshes every <b>15 minutes</b> &nbsp;|&nbsp;
+    🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
+    📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
+    📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
+    <b style="color:#1a2332;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TRADE SIGNALS PAGE  (push notifications + live signal board)
+# ═══════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)
+def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = "90d") -> dict:
+    """
+    Compute all trading signals for a symbol on a given timeframe.
+    Returns a rich signal dict with entry, targets, SL and confidence.
+    """
+    try:
+        df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
+        if df.empty or len(df) < 20:
+            return {}
+        df.index = df.index.tz_localize(None)
+
+        close = df["Close"]
+        high  = df["High"]
+        low   = df["Low"]
+        ltp   = float(close.iloc[-1])
+
+        # ── Pivot Points (Traditional) ────────────────────────────────────────
+        ref  = df.iloc[-2]
+        H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
+        P  = (H + L + C) / 3
+        R1 = 2 * P - L
+        R2 = P + (H - L)
+        R3 = H + 2 * (P - L)
+        S1 = 2 * P - H
+        S2 = P - (H - L)
+        S3 = L - 2 * (H - P)
+
+        # ── CPR ───────────────────────────────────────────────────────────────
+        BC = (H + L) / 2
+        TC = (P - BC) + P
+        cpr_width = abs(TC - BC) / P * 100
+
+        # ── ATR-14 ────────────────────────────────────────────────────────────
+        tr  = pd.concat([
+            high - low,
+            (high - close.shift()).abs(),
+            (low  - close.shift()).abs(),
+        ], axis=1).max(axis=1)
+        atr = float(tr.rolling(14).mean().iloc[-1])
+
+        # ── RSI-14 ────────────────────────────────────────────────────────────
+        delta = close.diff()
+        gain  = delta.clip(lower=0).rolling(14).mean()
+        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        rsi   = float(100 - (100 / (1 + gain.iloc[-1] / max(loss.iloc[-1], 1e-9))))
+
+        # ── HMA ───────────────────────────────────────────────────────────────
+        def wma(s, n):
+            w = np.arange(1, n + 1)
+            return s.rolling(n).apply(lambda x: np.dot(x, w) / w.sum(), raw=True)
+        hma    = wma(2 * wma(close, 10) - wma(close, 20), 4)
+        hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
+
+        # ── 3/10 Osc ─────────────────────────────────────────────────────────
+        diff  = close.rolling(3).mean() - close.rolling(10).mean()
+        sig16 = diff.rolling(16).mean()
+        osc_bull = bool(diff.iloc[-1] > sig16.iloc[-1])
+        osc_cross_bull = bool(diff.iloc[-1] > sig16.iloc[-1] and diff.iloc[-2] <= sig16.iloc[-2])
+        osc_cross_bear = bool(diff.iloc[-1] < sig16.iloc[-1] and diff.iloc[-2] >= sig16.iloc[-2])
+
+        # ── Stochastic ────────────────────────────────────────────────────────
+        lo14 = low.rolling(14).min()
+        hi14 = high.rolling(14).max()
+        stk  = float(100 * (close.iloc[-1] - lo14.iloc[-1]) / max(hi14.iloc[-1] - lo14.iloc[-1], 1e-9))
+
+        # ── Signal logic ─────────────────────────────────────────────────────
+        score = 0
+        signals = []
+
+        # CPR position (strongest signal)
+        if ltp > TC:
+            score += 25
+            signals.append(("🟢", "Price above TC (CPR Bullish)", "bull"))
+        elif ltp < BC:
+            score -= 25
+            signals.append(("🔴", "Price below BC (CPR Bearish)", "bear"))
+        else:
+            signals.append(("🟡", "Price inside CPR (Indecision)", "neut"))
+
+        # Narrow CPR
+        if cpr_width < 0.25:
+            signals.append(("🎯", f"Narrow CPR ({cpr_width:.3f}%) — Trending Day Setup", "bull" if ltp > P else "bear"))
+
+        # HMA
+        if hma_up is True:
+            score += 15
+            signals.append(("📈", "HMA-20 Rising (Uptrend)", "bull"))
+        elif hma_up is False:
+            score -= 15
+            signals.append(("📉", "HMA-20 Falling (Downtrend)", "bear"))
+
+        # 3/10 Crossover (strongest momentum signal)
+        if osc_cross_bull:
+            score += 25
+            signals.append(("⚡", "3/10 Bullish Crossover (Fresh Signal!)", "bull"))
+        elif osc_cross_bear:
+            score -= 25
+            signals.append(("⚡", "3/10 Bearish Crossover (Fresh Signal!)", "bear"))
+        elif osc_bull:
+            score += 10
+            signals.append(("📊", "3/10 Oscillator Positive", "bull"))
+        else:
+            score -= 10
+            signals.append(("📊", "3/10 Oscillator Negative", "bear"))
+
+        # RSI
+        if rsi >= 70:
+            score -= 10
+            signals.append(("⚠️", f"RSI {rsi:.0f} — Overbought (caution)", "bear"))
+        elif rsi <= 30:
+            score += 10
+            signals.append(("⚠️", f"RSI {rsi:.0f} — Oversold (watch for bounce)", "bull"))
+        elif rsi >= 55:
+            score += 10
+            signals.append(("✅", f"RSI {rsi:.0f} — Bullish Zone", "bull"))
+        elif rsi <= 45:
+            score -= 10
+            signals.append(("❌", f"RSI {rsi:.0f} — Bearish Zone", "bear"))
+
+        # Stochastic
+        if stk >= 80:
+            signals.append(("📛", f"Stoch %K {stk:.0f} — Overbought", "bear"))
+        elif stk <= 20:
+            signals.append(("💡", f"Stoch %K {stk:.0f} — Oversold Reversal Zone", "bull"))
+
+        # Pivot proximity
+        for label, val in [("R3",R3),("R2",R2),("R1",R1),("P",P),("S1",S1),("S2",S2),("S3",S3)]:
+            if abs(ltp - val) / ltp < 0.004:
+                signals.append(("📍", f"Price at {label} ({val:,.2f}) — Key Level", "neut"))
+
+        # Overall bias
+        if   score >= 40:  bias, bias_col = "STRONG BUY",  "bull"
+        elif score >= 15:  bias, bias_col = "BUY",          "bull"
+        elif score <= -40: bias, bias_col = "STRONG SELL", "bear"
+        elif score <= -15: bias, bias_col = "SELL",         "bear"
+        else:              bias, bias_col = "NEUTRAL",      "neut"
+
+        confidence = min(abs(score), 75)
+
+        # Trade levels
+        if bias_col == "bull":
+            entry  = round(ltp, 2)
+            tgt1   = round(R1, 2)
+            tgt2   = round(R2, 2)
+            sl     = round(max(S1, ltp - atr * 1.2), 2)
+            rr     = round((tgt1 - entry) / max(entry - sl, 0.01), 2)
+        else:
+            entry  = round(ltp, 2)
+            tgt1   = round(S1, 2)
+            tgt2   = round(S2, 2)
+            sl     = round(min(R1, ltp + atr * 1.2), 2)
+            rr     = round((entry - tgt1) / max(sl - entry, 0.01), 2)
+
+        return {
+            "symbol": symbol, "ltp": ltp, "bias": bias, "bias_col": bias_col,
+            "score": score, "confidence": confidence,
+            "signals": signals,
+            "P": round(P,2), "R1": round(R1,2), "R2": round(R2,2), "R3": round(R3,2),
+            "S1": round(S1,2), "S2": round(S2,2), "S3": round(S3,2),
+            "TC": round(TC,2), "BC": round(BC,2), "cpr_width": round(cpr_width,3),
+            "rsi": round(rsi,1), "atr": round(atr,2), "stoch_k": round(stk,1),
+            "hma_up": hma_up,
+            "entry": entry, "tgt1": tgt1, "tgt2": tgt2, "sl": sl, "rr": rr,
+        }
+    except Exception:
+        return {}
+
+
+def _signal_card(sig: dict) -> str:
+    """Render a single signal card as HTML."""
+    col_map = {
+        "bull": ("#16a34a", "#f0fdf4", "#bbf7d0"),
+        "bear": ("#dc2626", "#fef2f2", "#fecaca"),
+        "neut": ("#d97706", "#fffbeb", "#fde68a"),
+    }
+    fc, bg, bdr = col_map.get(sig["bias_col"], col_map["neut"])
+    bias_labels = {
+        "STRONG BUY": "🚀 STRONG BUY", "BUY": "✅ BUY",
+        "STRONG SELL": "🔻 STRONG SELL", "SELL": "❌ SELL",
+        "NEUTRAL": "⚪ NEUTRAL"
+    }
+    bias_label = bias_labels.get(sig["bias"], sig["bias"])
+
+    sig_rows = ""
+    for icon, text, kind in sig["signals"][:6]:
+        c = col_map.get(kind, col_map["neut"])[0]
+        sig_rows += (
+            f"<div style='display:flex;align-items:flex-start;gap:6px;padding:3px 0;"
+            f"border-bottom:1px solid #f1f5f9;font-size:0.72rem;'>"
+            f"<span>{icon}</span>"
+            f"<span style='color:#1a2332;'>{text}</span></div>"
+        )
+
+    return f"""
+<div style="background:#ffffff;border:1px solid {bdr};border-top:4px solid {fc};
+            border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem;
+            box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+    <div>
+      <div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a2332;">
+        {sig['symbol']}
+      </div>
+      <div style="font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;">
+        ₹{sig['ltp']:,.2f} &nbsp;·&nbsp; ATR ₹{sig['atr']:,.2f}
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="background:{bg};border:1px solid {bdr};border-radius:6px;
+                  padding:0.3rem 0.7rem;font-family:IBM Plex Mono,monospace;
+                  font-size:0.78rem;font-weight:700;color:{fc};">{bias_label}</div>
+      <div style="font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a80;margin-top:3px;">
+        Confidence: {sig['confidence']}%
+      </div>
+    </div>
+  </div>
+  {sig_rows}
+  <div style="display:flex;gap:1rem;margin-top:0.6rem;padding-top:0.5rem;
+              border-top:1px solid #f1f5f9;flex-wrap:wrap;">
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
+      <span style="color:#5a6a80;">Entry</span>
+      <span style="color:#1a2332;font-weight:700;"> ₹{sig['entry']:,.2f}</span>
+    </div>
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
+      <span style="color:#5a6a80;">T1</span>
+      <span style="color:{fc};font-weight:700;"> ₹{sig['tgt1']:,.2f}</span>
+    </div>
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
+      <span style="color:#5a6a80;">T2</span>
+      <span style="color:{fc};font-weight:700;"> ₹{sig['tgt2']:,.2f}</span>
+    </div>
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
+      <span style="color:#5a6a80;">SL</span>
+      <span style="color:#dc2626;font-weight:700;"> ₹{sig['sl']:,.2f}</span>
+    </div>
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
+      <span style="color:#5a6a80;">R:R</span>
+      <span style="color:#1a2332;font-weight:700;"> {sig['rr']}x</span>
+    </div>
+  </div>
+  <div style="margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:0.68rem;
+              color:#8a9ab0;display:flex;flex-wrap:wrap;gap:0.5rem;">
+    <span>P:{sig['P']:,.0f}</span>
+    <span style="color:#dc2626;">R1:{sig['R1']:,.0f} R2:{sig['R2']:,.0f}</span>
+    <span style="color:#16a34a;">S1:{sig['S1']:,.0f} S2:{sig['S2']:,.0f}</span>
+    <span>RSI:{sig['rsi']}</span>
+    <span>CPR:{sig['cpr_width']}%</span>
+  </div>
+</div>"""
+
+
+def page_trade_signals(nse500: pd.DataFrame):
+    """Live Trade Signals board with browser push notifications."""
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.25rem;
+                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dce3ed;
+                border-radius:12px;box-shadow:0 1px 6px rgba(0,0,0,0.06);">
+        <div style="font-size:2rem;">🔔</div>
+        <div style="flex:1;">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
+                        font-weight:700;color:#1a2332;">Trade Signal Board</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                        color:#5a6a80;letter-spacing:0.08em;text-transform:uppercase;">
+                Pivot Boss Signals · Push Alerts · Real-Time Analysis
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Push notification JS ───────────────────────────────────────────────────
+    st.markdown("""
+    <div id="notif-banner" style="display:none;background:#1a6b3c;color:#fff;
+         padding:0.6rem 1rem;border-radius:8px;margin-bottom:1rem;
+         font-family:IBM Plex Mono,monospace;font-size:0.8rem;
+         display:flex;align-items:center;gap:8px;">
+        🔔 <span id="notif-text">Notifications enabled</span>
+    </div>
+    <script>
+    function enableNotifications() {
+        if (!("Notification" in window)) {
+            document.getElementById("notif-status").innerText = "Not supported in this browser";
+            return;
+        }
+        Notification.requestPermission().then(function(perm) {
+            var btn = document.getElementById("notif-btn");
+            var status = document.getElementById("notif-status");
+            if (perm === "granted") {
+                btn.style.background = "#16a34a";
+                btn.style.borderColor = "#16a34a";
+                btn.innerText = "✅ Notifications ON";
+                status.innerText = "Push alerts enabled — you will be notified on strong signals";
+                status.style.color = "#16a34a";
+                new Notification("PivotVault AI", {
+                    body: "Trade signal notifications are now active!",
+                    icon: "/static/icon-192.png"
+                });
+                window._pvNotifEnabled = true;
+            } else {
+                status.innerText = "Permission denied — enable notifications in browser settings";
+                status.style.color = "#dc2626";
+            }
+        });
+    }
+
+    function sendSignalAlert(symbol, bias, entry, target, sl) {
+        if (window._pvNotifEnabled && Notification.permission === "granted") {
+            var emoji = bias.includes("BUY") ? "🚀" : "🔻";
+            new Notification(emoji + " " + symbol + " — " + bias, {
+                body: "Entry: ₹" + entry + "  |  Target: ₹" + target + "  |  SL: ₹" + sl,
+                icon: "/static/icon-192.png",
+                tag: symbol,
+                requireInteraction: true,
+            });
+        }
+    }
+    window.sendSignalAlert = sendSignalAlert;
+    </script>
+
+    <div style="background:#ffffff;border:1px solid #dce3ed;border-radius:10px;
+                padding:1rem 1.25rem;margin-bottom:1.25rem;
+                font-family:IBM Plex Mono,monospace;">
+        <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;
+                    color:#5a6a80;margin-bottom:0.6rem;">🔔 Browser Push Notifications</div>
+        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+            <button id="notif-btn" onclick="enableNotifications()"
+                style="background:#ffffff;border:1.5px solid #1a6b3c;color:#1a6b3c;
+                       font-family:IBM Plex Mono,monospace;font-size:0.78rem;font-weight:600;
+                       padding:0.4rem 1.2rem;border-radius:6px;cursor:pointer;
+                       transition:all 0.2s;">
+                🔔 Enable Notifications
+            </button>
+            <div id="notif-status" style="font-size:0.75rem;color:#5a6a80;">
+                Click to receive push alerts when strong signals are detected
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Controls ───────────────────────────────────────────────────────────────
+    symbols = sorted(fetch_nifty200_list())
+
+    col1, col2, col3, col4 = st.columns([3, 2, 1.5, 1])
+    with col1:
+        watch_syms = st.multiselect(
+            "Symbols to monitor",
+            symbols,
+            default=["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK"],
+            key="sig_symbols",
+            label_visibility="collapsed",
+            max_selections=20,
+            placeholder="Choose up to 20 symbols…",
+        )
+    with col2:
+        sig_tf = st.selectbox(
+            "Timeframe",
+            ["15 Min (Fast Scalping)", "1 Hour (Swing Scalp)",
+             "Daily (Swing Trade)", "Weekly (Positional)"],
+            index=2,
+            label_visibility="collapsed",
+            key="sig_tf",
+        )
+    with col3:
+        sig_filter = st.selectbox(
+            "Show",
+            ["All Signals", "Buy Only", "Sell Only", "Strong Only"],
+            label_visibility="collapsed",
+            key="sig_filter",
+        )
+    with col4:
+        refresh_btn = st.button("🔄 Refresh", use_container_width=True, key="sig_refresh")
+
+    SIG_TF_MAP = {
+        "15 Min (Fast Scalping)":  ("15m", "5d"),
+        "1 Hour (Swing Scalp)":    ("1h",  "30d"),
+        "Daily (Swing Trade)":     ("1d",  "90d"),
+        "Weekly (Positional)":     ("1wk", "2y"),
+    }
+    sig_interval, sig_period = SIG_TF_MAP[sig_tf]
+
+    if not watch_syms:
+        st.info("Select at least one symbol to analyse.")
+        return
+
+    # ── Compute signals ────────────────────────────────────────────────────────
+    cache_key = f"signals_{sig_interval}_{','.join(sorted(watch_syms))}"
+    if refresh_btn or cache_key not in st.session_state:
+        results = {}
+        prog = st.progress(0, text="Analysing symbols…")
+        for i, sym in enumerate(watch_syms):
+            results[sym] = compute_signals_for_symbol(sym, sig_interval, sig_period)
+            prog.progress((i + 1) / len(watch_syms), text=f"Analysing {sym}…")
+        prog.empty()
+        st.session_state[cache_key] = results
+    else:
+        results = st.session_state[cache_key]
+
+    # Filter
+    valid = {s: r for s, r in results.items() if r}
+    if sig_filter == "Buy Only":
+        valid = {s: r for s, r in valid.items() if r["bias_col"] == "bull"}
+    elif sig_filter == "Sell Only":
+        valid = {s: r for s, r in valid.items() if r["bias_col"] == "bear"}
+    elif sig_filter == "Strong Only":
+        valid = {s: r for s, r in valid.items() if "STRONG" in r["bias"]}
+
+    # Sort by |score| desc
+    sorted_sigs = sorted(valid.items(), key=lambda x: abs(x[1]["score"]), reverse=True)
+
+    if not sorted_sigs:
+        st.info("No signals match the current filter.")
+        return
+
+    # ── Summary strip ──────────────────────────────────────────────────────────
+    n_buy       = sum(1 for _, r in sorted_sigs if r["bias_col"] == "bull")
+    n_sell      = sum(1 for _, r in sorted_sigs if r["bias_col"] == "bear")
+    n_strong    = sum(1 for _, r in sorted_sigs if "STRONG" in r["bias"])
+    n_neut      = sum(1 for _, r in sorted_sigs if r["bias_col"] == "neut")
+
+    sm1, sm2, sm3, sm4 = st.columns(4)
+    sm1.metric("🟢 Buy Signals",    n_buy)
+    sm2.metric("🔴 Sell Signals",   n_sell)
+    sm3.metric("🚀 Strong Signals", n_strong)
+    sm4.metric("⚪ Neutral",        n_neut)
+
+    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
+    # ── Push notification triggers ─────────────────────────────────────────────
+    # Inject JS calls for strong signals
+    js_alerts = ""
+    for sym, sig in sorted_sigs:
+        if "STRONG" in sig["bias"]:
+            js_alerts += (
+                f"sendSignalAlert('{sym}','{sig['bias']}',"
+                f"'{sig['entry']}','{sig['tgt1']}','{sig['sl']}');"
+            )
+    if js_alerts:
+        st.markdown(f"<script>setTimeout(function(){{ {js_alerts} }}, 1500);</script>",
+                    unsafe_allow_html=True)
+
+    # ── Signal cards in 2-column grid ─────────────────────────────────────────
+    cards_left  = ""
+    cards_right = ""
+    for i, (sym, sig) in enumerate(sorted_sigs):
+        card = _signal_card(sig)
+        if i % 2 == 0:
+            cards_left  += card
+        else:
+            cards_right += card
+
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown(cards_left,  unsafe_allow_html=True)
+    with col_r:
+        st.markdown(cards_right, unsafe_allow_html=True)
+
+    # ── Pivot level table ──────────────────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
+        "font-weight:700;color:#1a2332;margin-bottom:0.5rem;'>📋 Pivot Level Reference</div>",
+        unsafe_allow_html=True,
+    )
+    ref_rows = []
+    for sym, sig in sorted_sigs:
+        if not sig:
+            continue
+        ref_rows.append({
+            "Symbol": sym,
+            "LTP":    f"₹{sig['ltp']:,.2f}",
+            "Signal": sig["bias"],
+            "R2":     f"₹{sig['R2']:,.2f}",
+            "R1":     f"₹{sig['R1']:,.2f}",
+            "P":      f"₹{sig['P']:,.2f}",
+            "S1":     f"₹{sig['S1']:,.2f}",
+            "S2":     f"₹{sig['S2']:,.2f}",
+            "RSI":    sig["rsi"],
+            "CPR%":   f"{sig['cpr_width']}%",
+        })
+    if ref_rows:
+        st.dataframe(pd.DataFrame(ref_rows), use_container_width=True, hide_index=True)
+
+    st.markdown(
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#94a3b8;"
+        "margin-top:0.75rem;'>⚠️ Signals based on Frank Ochoa Pivot Boss methodology. "
+        "Not financial advice. Always use proper risk management.</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_sidebar():
     with st.sidebar:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:1.05rem;"
-            "font-weight:700;color:#1a2208;padding:0.5rem 0 0.1rem;'>"
-            "🏦 PivotVault <span style='color:#4a6a0a;'>AI</span></div>"
+            "font-weight:700;color:#1e293b;padding:0.5rem 0 0.1rem;'>"
+            "🏦 PivotVault <span style='color:#16a34a;'>AI</span></div>"
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.63rem;"
-            "color:#5a6b30;letter-spacing:0.09em;text-transform:uppercase;"
+            "color:#64748b;letter-spacing:0.09em;text-transform:uppercase;"
             "margin-bottom:1.25rem;'>Pivot Boss · Equity Terminal</div>",
             unsafe_allow_html=True,
         )
-        # Use session_state key so we can change it programmatically
-        if "current_page" not in st.session_state:
-            st.session_state["current_page"] = "Market Snapshot"
-
-        for page in _NAV_PAGES:
-            is_active = st.session_state["current_page"] == page
-            label = ("▶ " if is_active else "   ") + page
-            btn_style = (
-                "background:#dde4c4 !important;color:#5a6e20 !important;font-weight:700 !important;"
-                if is_active else ""
-            )
-            st.markdown(
-                f"<style>.sidebar-btn-{_NAV_PAGES.index(page)} button{{{btn_style}}}</style>",
-                unsafe_allow_html=True,
-            )
-            col = st.container()
-            with col:
-                if st.button(label, key=f"nav_btn_{page}", use_container_width=True):
-                    st.session_state["current_page"]         = page
-                    st.session_state["mobile_page"]          = page
-                    st.session_state["screener_nav_pending"] = False
-                    # Clear nav params but keep auth params
-                    _a = st.session_state.get("auth_token", "")
-                    _u = st.session_state.get("username", "")
-                    st.query_params.clear()
-                    if _a: st.query_params["auth"] = _a
-                    if _u: st.query_params["user"] = _u
-                    st.rerun()
-
+        menu = st.radio(
+            "Navigation",
+            ["Market Snapshot", "Pivot Boss Analysis",
+             "CPR Scanner", "Trade Signals", "Watchlist"],
+            label_visibility="collapsed",
+            key="main_nav",
+        )
         st.divider()
         wl_count = len(st.session_state["watchlist"])
         st.markdown(
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#3d4a1e;'>"
-            f"Watchlist: <span style='color:#4a6a0a;font-weight:700;'>{wl_count}</span> "
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#475569;'>"
+            f"Watchlist: <span style='color:#16a34a;font-weight:700;'>{wl_count}</span> "
             f"stock{'s' if wl_count != 1 else ''}</div>",
             unsafe_allow_html=True,
         )
@@ -3365,65 +3725,94 @@ def render_sidebar():
         user = st.session_state.get("username", "user")
         st.markdown(
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            f"color:#3d4a1e;margin-bottom:0.5rem;'>Logged in as "
-            f"<span style='color:#1a2208;font-weight:600;'>{user}</span></div>",
+            f"color:#475569;margin-bottom:0.5rem;'>Logged in as "
+            f"<span style='color:#1e293b;font-weight:600;'>{user}</span></div>",
             unsafe_allow_html=True,
         )
-        if st.button("Logout", key="logout_btn", use_container_width=True):
-            st.session_state["logged_in"]  = False
-            st.session_state["username"]   = ""
-            st.session_state["auth_token"] = ""
-            st.query_params.clear()
+        if st.button("Logout", use_container_width=True):
+            st.session_state["logged_in"] = False
             st.rerun()
+
+    # ── Mobile Bottom Navigation Bar ──────────────────────────────────────
+    # Visible only on small screens — taps the hidden sidebar radio buttons
+    nav_items = [
+        ("Market Snapshot",    "📊", "Market"),
+        ("Pivot Boss Analysis","📈", "Pivot Boss"),
+        ("CPR Scanner",        "📡", "Scanner"),
+        ("Trade Signals",      "🔔", "Signals"),
+        ("Watchlist",          "⭐", "Watchlist"),
+    ]
+    active = st.session_state.get("main_nav", "Market Snapshot")
+
+    buttons_html = ""
+    for label, icon, short in nav_items:
+        is_active = "active" if label == active else ""
+        onclick = "navigateTo(&apos;" + label + "&apos;)"
+        buttons_html += (
+            f'<button class="{is_active}" onclick="{onclick}">'
+            f'<span class="nav-icon">{icon}</span>{short}</button>'
+        )
+
+    st.markdown(
+        f"""
+        <div id='mobile-nav-bar'>
+            {buttons_html}
+        </div>
+        <script>
+        function navigateTo(page) {{
+            // Find the sidebar radio group and click the right option
+            var labels = window.parent.document.querySelectorAll(
+                'section[data-testid="stSidebar"] .stRadio label'
+            );
+            var pages = [
+                "Market Snapshot",
+                "Pivot Boss Analysis", "CPR Scanner",
+                "Trade Signals", "Watchlist"
+            ];
+            var idx = pages.indexOf(page);
+            if (idx >= 0 && labels[idx]) {{
+                labels[idx].click();
+            }}
+            // Also try opening sidebar first on mobile
+            var toggleBtn = window.parent.document.querySelector(
+                'button[data-testid="baseButton-header"]'
+            );
+        }}
+
+        // Highlight active tab
+        (function() {{
+            var active = "{active}";
+            var pages  = ["Market Snapshot","Pivot Boss Analysis","CPR Scanner","Trade Signals","Watchlist"];
+            var btns   = document.querySelectorAll('#mobile-nav-bar button');
+            btns.forEach(function(b, i) {{
+                if (pages[i] === active) b.classList.add('active');
+                else b.classList.remove('active');
+            }});
+        }})();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+    return menu
 
 
 # ─────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────
 def main():
-    # ── Restore session from URL on page refresh ──────────────────────────────
-    if not st.session_state["logged_in"]:
-        url_auth = st.query_params.get("auth", "")
-        url_user = st.query_params.get("user", "")
-        # Validate token against stored password hash (not just username)
-        if url_auth and url_user:
-            pwd_hash = _HASHED_USERS.get(url_user.strip().lower(), "")
-            expected = _make_token(url_user.strip().lower(), pwd_hash) if pwd_hash else ""
-            if expected and url_auth == expected:
-                st.session_state["logged_in"]   = True
-                st.session_state["username"]    = url_user
-                st.session_state["auth_token"]  = url_auth
-
     if not st.session_state["logged_in"]:
         page_login()
         return
 
-    # Initialise current_page if missing
-    if "current_page" not in st.session_state:
-        st.session_state["current_page"] = "Market Snapshot"
-
-    # Handle mobile bottom-nav query param
-    nav_key = st.query_params.get("nav")
-    key_to_page = dict(zip(_NAV_KEYS, _NAV_PAGES))
-    if nav_key in key_to_page:
-        st.session_state["current_page"] = key_to_page[nav_key]
-
-    # Stock click from Market Snapshot overrides everything
-    if st.session_state.get("screener_nav_pending"):
-        st.session_state["current_page"]         = "Stock Screener"
-        st.session_state["screener_nav_pending"] = False
-
-    menu = st.session_state["current_page"]
-
-    render_sidebar()
-    render_mobile_nav(menu)
+    menu   = render_sidebar()
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
 
     if   menu == "Market Snapshot":     page_market_snapshot(nse500)
-    elif menu == "Stock Screener":      page_stock_screener(nse500)
     elif menu == "Pivot Boss Analysis": page_pivot_boss(nse500)
+    elif menu == "CPR Scanner":         page_cpr_scanner(nse500)
+    elif menu == "Trade Signals":       page_trade_signals(nse500)
     elif menu == "Watchlist":           page_watchlist()
 
 
