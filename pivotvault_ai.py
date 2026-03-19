@@ -3308,9 +3308,9 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                 try:
                     pdf_bytes = build_scanner_pdf(top_bull, top_bear, tf_choice, scan_time_str)
                     st.download_button(
-                        label=f"⬇️ Download PDF — {cfg['tag'].upper()} Scanner",
+                        label=f"⬇️ Download PDF — {tf_tag.upper()} Scanner",
                         data=pdf_bytes,
-                        file_name=f"PivotVault_Scanner_{cfg['tag']}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        file_name=f"PivotVault_Scanner_{tf_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
                         use_container_width=True,
                         key="sc_pdf_dl",
