@@ -3962,102 +3962,70 @@ def page_trade_signals(nse500: pd.DataFrame):
 
 
 def render_sidebar():
-    PAGES = ["Market Snapshot","Pivot Boss Analysis","CPR Scanner","Trade Signals","Watchlist"]
-    ICONS = ["📊","📈","📡","🔔","⭐"]
-    SHORT = ["Market","Pivot","Scanner","Signals","Watch"]
+    PAGES = [
+        "Market Snapshot",
+        "Pivot Boss Analysis",
+        "CPR Scanner",
+        "Trade Signals",
+        "Watchlist",
+    ]
 
-    # ── Read page from query params (set by mobile nav buttons) ──────────
-    # Use a SEPARATE session state key for mobile nav — never touch widget key directly
-    qp = st.query_params.get("page", "")
-    if qp in PAGES:
-        st.session_state["_mobile_nav"] = qp
-
-    # Determine which page to show — mobile nav takes priority if set
-    mobile_choice = st.session_state.get("_mobile_nav", "")
-    cur_idx = PAGES.index(mobile_choice) if mobile_choice in PAGES else 0
-
-    # ── Sidebar (desktop) ─────────────────────────────────────────────────
+    # ── Desktop sidebar ───────────────────────────────────────────────────
     with st.sidebar:
         st.markdown(
-            "<div style='padding:0.75rem 0.5rem 0.25rem;'>"
-            "<span style='font-family:IBM Plex Mono,monospace;font-size:1.1rem;"
-            "font-weight:700;color:#f1f5f9;'>🏦 PivotVault</span>"
-            "<span style='font-family:IBM Plex Mono,monospace;font-size:1.1rem;"
-            "font-weight:700;color:#16a34a;'> AI</span><br>"
-            "<span style='font-family:IBM Plex Mono,monospace;font-size:0.6rem;"
-            "color:#475569;letter-spacing:0.1em;text-transform:uppercase;'>"
-            "Pivot Boss · Equity Terminal</span></div>",
+            "<div style='padding:0.5rem 0 1rem;font-family:IBM Plex Mono,monospace;'>"
+            "<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;'>🏦 PivotVault <span style='color:#16a34a;'>AI</span></div>"
+            "<div style='font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-top:2px;'>Pivot Boss · Equity Terminal</div>"
+            "</div>",
             unsafe_allow_html=True,
         )
-        st.divider()
-        menu = st.radio(
-            "Navigation", PAGES,
-            index=cur_idx,
+        menu_sidebar = st.radio(
+            "nav", PAGES,
             label_visibility="collapsed",
-            key="main_nav",
+            key="sidebar_nav",
         )
         st.divider()
-        wl_count = len(st.session_state.get("watchlist", []))
-        st.caption(f"👤 {st.session_state.get('username','user')}  |  ⭐ {wl_count}")
-        if st.button("🚪 Logout", use_container_width=True):
+        wl = len(st.session_state.get("watchlist", []))
+        st.caption(f"👤 {st.session_state.get('username','user')}  |  ⭐ {wl} stocks")
+        if st.button("🚪 Logout", use_container_width=True, key="sidebar_logout"):
             st.session_state["logged_in"] = False
-            st.query_params.clear()
             st.rerun()
 
-    # Sync URL to current selection
-    st.query_params["page"] = menu
-
-    # ── Mobile bottom nav ─────────────────────────────────────────────────
+    # ── Mobile top selectbox nav (always visible, always works) ──────────
     st.markdown("""
     <style>
-    .pv-mobile-nav { display: none !important; }
+    /* Hide mobile nav on desktop */
+    .mobile-nav-box { display: none; }
     @media (max-width: 768px) {
-        .pv-mobile-nav {
-            display: flex !important;
-            position: fixed;
-            bottom: 0; left: 0; right: 0;
-            height: 60px;
-            background: #1e293b;
-            border-top: 2px solid #334155;
-            z-index: 99999;
-            padding-bottom: env(safe-area-inset-bottom, 0);
-        }
-        .block-container { padding-bottom: 72px !important; }
+        /* Show mobile nav on mobile */
+        .mobile-nav-box { display: block !important; }
+        /* Hide desktop sidebar on mobile */
         section[data-testid="stSidebar"],
         [data-testid="collapsedControl"],
-        button[data-testid="baseButton-header"] { display: none !important; }
-        /* Make mobile nav buttons look right */
-        .pv-mobile-nav .stButton { flex: 1 !important; }
-        .pv-mobile-nav .stButton > div { height: 100% !important; }
-        .pv-mobile-nav .stButton > div > button {
-            background: transparent !important;
-            border: none !important;
-            border-top: 3px solid transparent !important;
-            box-shadow: none !important;
-            border-radius: 0 !important;
-            color: #64748b !important;
-            font-size: 0.95rem !important;
-            height: 60px !important;
-            width: 100% !important;
-            padding: 4px 0 0 0 !important;
+        button[data-testid="baseButton-header"] {
+            display: none !important;
         }
     }
     </style>
+    <div class="mobile-nav-box"></div>
     """, unsafe_allow_html=True)
 
-    with st.container():
-        st.markdown('<div class="pv-mobile-nav">', unsafe_allow_html=True)
-        cols = st.columns(len(PAGES))
-        for i, (page, icon, short) in enumerate(zip(PAGES, ICONS, SHORT)):
-            is_active = (menu == page)
-            with cols[i]:
-                # Show emoji icon only — clean mobile look
-                if st.button(icon, key=f"nav_m_{i}", use_container_width=True, help=page):
-                    # Set the non-widget state key — safe to modify
-                    st.session_state["_mobile_nav"] = page
-                    st.query_params["page"] = page
-                    st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+    # The selectbox always renders but is only visible on mobile via CSS
+    menu_mobile = st.selectbox(
+        "📱 Navigate",
+        PAGES,
+        index=PAGES.index(st.session_state.get("sidebar_nav", PAGES[0]))
+              if st.session_state.get("sidebar_nav") in PAGES else 0,
+        key="mobile_nav_select",
+        label_visibility="visible",
+    )
+
+    # Determine which menu to use based on last interaction
+    # If mobile selectbox changed, use that; otherwise use sidebar
+    if st.session_state.get("mobile_nav_select") != st.session_state.get("sidebar_nav"):
+        menu = st.session_state.get("mobile_nav_select", PAGES[0])
+    else:
+        menu = menu_sidebar
 
     return menu
 
