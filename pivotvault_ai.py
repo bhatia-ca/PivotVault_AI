@@ -98,35 +98,59 @@ p, span, label, li {
 #MainMenu { visibility: hidden !important; }
 footer    { visibility: hidden !important; }
 
-/* 5. SIDEBAR — dark navy (trading terminal style) */
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div,
-section[data-testid="stSidebar"] > div > div {
-    background: #1e2d3d !important;
+/* 5. SIDEBAR */
+section[data-testid="stSidebar"] {
+    background: #1e293b !important;
+    min-width: 220px !important;
 }
-section[data-testid="stSidebar"] *      { color: #c8d8e8 !important; }
-section[data-testid="stSidebar"] hr     { border-color: #2d4a60 !important; }
-section[data-testid="stSidebar"] .stRadio label {
+section[data-testid="stSidebar"] > div {
+    background: #1e293b !important;
+    padding-top: 1rem !important;
+}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div {
+    color: #cbd5e1 !important;
     font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.85rem !important;
-    color: #a0b8cc !important;
-    padding: 0.55rem 0.8rem !important;
-    border-radius: 6px !important;
+}
+section[data-testid="stSidebar"] hr {
+    border-color: #334155 !important;
+}
+/* Radio nav items */
+section[data-testid="stSidebar"] .stRadio > div {
+    gap: 4px !important;
+}
+section[data-testid="stSidebar"] .stRadio label {
+    background: transparent !important;
+    border-radius: 8px !important;
+    padding: 0.6rem 0.9rem !important;
+    font-size: 0.88rem !important;
+    font-weight: 500 !important;
+    color: #94a3b8 !important;
     cursor: pointer !important;
-    display: block !important;
+    width: 100% !important;
     transition: background 0.15s !important;
 }
 section[data-testid="stSidebar"] .stRadio label:hover {
-    background: #2d4a60 !important;
-    color: #e8f4ff !important;
+    background: #334155 !important;
+    color: #e2e8f0 !important;
 }
-section[data-testid="stSidebar"] .stButton > button {
-    background: #2d4a60 !important;
-    border: 1px solid #3d6080 !important;
-    color: #c8d8e8 !important;
+/* Selected radio item */
+section[data-testid="stSidebar"] .stRadio label[data-baseweb="radio"]:has(input:checked),
+section[data-testid="stSidebar"] .stRadio [aria-checked="true"] ~ label {
+    background: #1a6b3c !important;
+    color: #ffffff !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #3d6080 !important;
+/* Logout button */
+section[data-testid="stSidebar"] .stButton > div > button {
+    background: #334155 !important;
+    border: 1px solid #475569 !important;
+    color: #cbd5e1 !important;
+    width: 100% !important;
+}
+section[data-testid="stSidebar"] .stButton > div > button:hover {
+    background: #475569 !important;
     color: #ffffff !important;
 }
 
@@ -315,26 +339,7 @@ hr { border-color: #dce3ed !important; margin: 1rem 0 !important; }
     section[data-testid="stSidebar"] { min-width: 80vw !important; max-width: 85vw !important; }
     section[data-testid="stSidebar"] .stRadio label { min-height: 48px !important; font-size: 0.95rem !important; }
 }
-#mobile-nav-bar { display: none; }
-@media (max-width: 768px) {
-    #mobile-nav-bar {
-        display: flex !important; position: fixed; bottom: 0; left: 0; right: 0;
-        height: 60px; background: #1e2d3d; border-top: 1px solid #2d4a60;
-        z-index: 999998; align-items: center; justify-content: space-around;
-        padding: 0 8px; padding-bottom: env(safe-area-inset-bottom, 0);
-    }
-    #mobile-nav-bar button {
-        flex: 1; height: 52px; background: transparent; border: none;
-        color: #5a7a90; font-size: 0.6rem; font-family: 'IBM Plex Mono', monospace;
-        letter-spacing: 0.04em; text-transform: uppercase;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center; gap: 3px; cursor: pointer; border-radius: 8px;
-        -webkit-tap-highlight-color: transparent;
-    }
-    #mobile-nav-bar button:active { background: #2d4a60; color: #22c55e; }
-    #mobile-nav-bar button.active { color: #22c55e; }
-    #mobile-nav-bar button .nav-icon { font-size: 1.3rem; line-height: 1; }
-}
+/* Mobile nav handled inline in render_sidebar */
 </style>
 """, unsafe_allow_html=True)
 
@@ -3832,103 +3837,146 @@ def page_trade_signals(nse500: pd.DataFrame):
 
 
 def render_sidebar():
+    PAGES = [
+        "Market Snapshot",
+        "Pivot Boss Analysis",
+        "CPR Scanner",
+        "Trade Signals",
+        "Watchlist",
+    ]
+
     with st.sidebar:
+        # Logo
         st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:1.05rem;"
-            "font-weight:700;color:#1e293b;padding:0.5rem 0 0.1rem;'>"
-            "🏦 PivotVault <span style='color:#16a34a;'>AI</span></div>"
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.63rem;"
-            "color:#64748b;letter-spacing:0.09em;text-transform:uppercase;"
-            "margin-bottom:1.25rem;'>Pivot Boss · Equity Terminal</div>",
+            "<div style='padding:0.75rem 0.5rem 0.25rem;'>"
+            "<span style='font-family:IBM Plex Mono,monospace;font-size:1.1rem;"
+            "font-weight:700;color:#f1f5f9;'>🏦 PivotVault</span>"
+            "<span style='font-family:IBM Plex Mono,monospace;font-size:1.1rem;"
+            "font-weight:700;color:#16a34a;'> AI</span><br>"
+            "<span style='font-family:IBM Plex Mono,monospace;font-size:0.6rem;"
+            "color:#475569;letter-spacing:0.1em;text-transform:uppercase;'>"
+            "Pivot Boss · Equity Terminal</span></div>",
             unsafe_allow_html=True,
         )
+        st.divider()
+
         menu = st.radio(
             "Navigation",
-            ["Market Snapshot", "Pivot Boss Analysis",
-             "CPR Scanner", "Trade Signals", "Watchlist"],
+            PAGES,
             label_visibility="collapsed",
             key="main_nav",
         )
+
         st.divider()
-        wl_count = len(st.session_state["watchlist"])
-        st.markdown(
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#475569;'>"
-            f"Watchlist: <span style='color:#16a34a;font-weight:700;'>{wl_count}</span> "
-            f"stock{'s' if wl_count != 1 else ''}</div>",
-            unsafe_allow_html=True,
-        )
-        st.divider()
-        user = st.session_state.get("username", "user")
-        st.markdown(
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            f"color:#475569;margin-bottom:0.5rem;'>Logged in as "
-            f"<span style='color:#1e293b;font-weight:600;'>{user}</span></div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Logout", use_container_width=True):
+
+        wl_count = len(st.session_state.get("watchlist", []))
+        user     = st.session_state.get("username", "user")
+        st.caption(f"👤 {user}  |  ⭐ {wl_count} stocks")
+
+        if st.button("🚪 Logout", use_container_width=True):
             st.session_state["logged_in"] = False
             st.rerun()
 
-    # ── Mobile Bottom Navigation Bar ──────────────────────────────────────
-    # Visible only on small screens — taps the hidden sidebar radio buttons
-    nav_items = [
-        ("Market Snapshot",    "📊", "Market"),
-        ("Pivot Boss Analysis","📈", "Pivot Boss"),
-        ("CPR Scanner",        "📡", "Scanner"),
-        ("Trade Signals",      "🔔", "Signals"),
-        ("Watchlist",          "⭐", "Watchlist"),
-    ]
+    # ── Mobile bottom nav — uses st.query_params for reliable navigation ──
     active = st.session_state.get("main_nav", "Market Snapshot")
+    ICONS  = ["📊","📈","📡","🔔","⭐"]
+    SHORT  = ["Market","Pivot Boss","Scanner","Signals","Watch"]
 
-    buttons_html = ""
-    for label, icon, short in nav_items:
-        is_active = "active" if label == active else ""
-        onclick = "navigateTo(&apos;" + label + "&apos;)"
-        buttons_html += (
-            f'<button class="{is_active}" onclick="{onclick}">'
-            f'<span class="nav-icon">{icon}</span>{short}</button>'
+    nav_btns = ""
+    for i, (page, icon, short) in enumerate(zip(PAGES, ICONS, SHORT)):
+        active_cls = "pv-nav-active" if page == active else ""
+        nav_btns += (
+            f'<button class="pv-nav-btn {active_cls}" '
+            f'onclick="pvNav({i})">'
+            f'<span style="font-size:1.2rem;">{icon}</span>'
+            f'<span>{short}</span></button>'
         )
 
     st.markdown(
         f"""
-        <div id='mobile-nav-bar'>
-            {buttons_html}
+        <style>
+        .pv-bottom-nav {{
+            display: none;
+        }}
+        @media (max-width: 768px) {{
+            .pv-bottom-nav {{
+                display: flex !important;
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                height: 58px;
+                background: #1e293b;
+                border-top: 2px solid #334155;
+                z-index: 99999;
+                align-items: stretch;
+                justify-content: space-around;
+                padding: 0;
+                padding-bottom: env(safe-area-inset-bottom, 0);
+            }}
+            .pv-nav-btn {{
+                flex: 1;
+                background: transparent;
+                border: none;
+                border-top: 3px solid transparent;
+                color: #475569;
+                font-family: IBM Plex Mono, monospace;
+                font-size: 0.58rem;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 2px;
+                cursor: pointer;
+                -webkit-tap-highlight-color: transparent;
+                transition: color 0.15s, border-color 0.15s;
+            }}
+            .pv-nav-btn.pv-nav-active {{
+                color: #16a34a !important;
+                border-top-color: #16a34a !important;
+            }}
+            /* Push content up so bottom nav doesn't overlap */
+            .block-container {{
+                padding-bottom: 68px !important;
+            }}
+        }}
+        </style>
+        <div class="pv-bottom-nav">
+            {nav_btns}
         </div>
         <script>
-        function navigateTo(page) {{
-            // Find the sidebar radio group and click the right option
-            var labels = window.parent.document.querySelectorAll(
+        var PV_PAGES = {str(PAGES).replace("'", '"')};
+        function pvNav(idx) {{
+            // Method 1: click the radio label directly
+            var doc = window.parent ? window.parent.document : document;
+            var labels = doc.querySelectorAll(
                 'section[data-testid="stSidebar"] .stRadio label'
             );
-            var pages = [
-                "Market Snapshot",
-                "Pivot Boss Analysis", "CPR Scanner",
-                "Trade Signals", "Watchlist"
-            ];
-            var idx = pages.indexOf(page);
-            if (idx >= 0 && labels[idx]) {{
+            if (labels && labels.length > idx) {{
                 labels[idx].click();
+                return;
             }}
-            // Also try opening sidebar first on mobile
-            var toggleBtn = window.parent.document.querySelector(
-                'button[data-testid="baseButton-header"]'
+            // Method 2: click the radio input
+            var inputs = doc.querySelectorAll(
+                'section[data-testid="stSidebar"] .stRadio input[type="radio"]'
             );
-        }}
-
-        // Highlight active tab
-        (function() {{
-            var active = "{active}";
-            var pages  = ["Market Snapshot","Pivot Boss Analysis","CPR Scanner","Trade Signals","Watchlist"];
-            var btns   = document.querySelectorAll('#mobile-nav-bar button');
-            btns.forEach(function(b, i) {{
-                if (pages[i] === active) b.classList.add('active');
-                else b.classList.remove('active');
+            if (inputs && inputs.length > idx) {{
+                inputs[idx].click();
+                return;
+            }}
+            // Method 3: find by text content
+            var allLabels = doc.querySelectorAll(
+                'section[data-testid="stSidebar"] label'
+            );
+            allLabels.forEach(function(l) {{
+                if (l.innerText.trim() === PV_PAGES[idx]) l.click();
             }});
-        }})();
+        }}
         </script>
         """,
         unsafe_allow_html=True,
     )
+
     return menu
 
 
