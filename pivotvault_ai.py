@@ -3966,10 +3966,15 @@ def render_sidebar():
     ICONS = ["📊","📈","📡","🔔","⭐"]
     SHORT = ["Market","Pivot","Scanner","Signals","Watch"]
 
-    # ── Read page from query params (mobile nav sets this) ────────────────
+    # ── Read page from query params (set by mobile nav buttons) ──────────
+    # Use a SEPARATE session state key for mobile nav — never touch widget key directly
     qp = st.query_params.get("page", "")
-    if qp in PAGES and qp != st.session_state.get("main_nav"):
-        st.session_state["main_nav"] = qp
+    if qp in PAGES:
+        st.session_state["_mobile_nav"] = qp
+
+    # Determine which page to show — mobile nav takes priority if set
+    mobile_choice = st.session_state.get("_mobile_nav", "")
+    cur_idx = PAGES.index(mobile_choice) if mobile_choice in PAGES else 0
 
     # ── Sidebar (desktop) ─────────────────────────────────────────────────
     with st.sidebar:
@@ -3985,9 +3990,12 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
         st.divider()
-        cur_idx = PAGES.index(st.session_state.get("main_nav", PAGES[0])) if st.session_state.get("main_nav") in PAGES else 0
-        menu = st.radio("Navigation", PAGES, index=cur_idx,
-                        label_visibility="collapsed", key="main_nav")
+        menu = st.radio(
+            "Navigation", PAGES,
+            index=cur_idx,
+            label_visibility="collapsed",
+            key="main_nav",
+        )
         st.divider()
         wl_count = len(st.session_state.get("watchlist", []))
         st.caption(f"👤 {st.session_state.get('username','user')}  |  ⭐ {wl_count}")
@@ -3996,12 +4004,10 @@ def render_sidebar():
             st.query_params.clear()
             st.rerun()
 
-    # Sync to URL
+    # Sync URL to current selection
     st.query_params["page"] = menu
 
-    # ── Mobile bottom nav (st.button — no JS DOM manipulation) ───────────
-    active = st.session_state.get("main_nav", PAGES[0])
-
+    # ── Mobile bottom nav ─────────────────────────────────────────────────
     st.markdown("""
     <style>
     .pv-mobile-nav { display: none !important; }
@@ -4020,23 +4026,21 @@ def render_sidebar():
         section[data-testid="stSidebar"],
         [data-testid="collapsedControl"],
         button[data-testid="baseButton-header"] { display: none !important; }
-    }
-    /* Override st.button inside mobile nav */
-    .pv-mobile-nav .stButton > div > button {
-        background: transparent !important;
-        border: none !important;
-        border-top: 3px solid transparent !important;
-        box-shadow: none !important;
-        border-radius: 0 !important;
-        color: #475569 !important;
-        font-size: 0.58rem !important;
-        letter-spacing: 0.03em !important;
-        text-transform: uppercase !important;
-        height: 60px !important;
-        width: 100% !important;
-        flex-direction: column !important;
-        padding: 2px 0 0 0 !important;
-        line-height: 1.3 !important;
+        /* Make mobile nav buttons look right */
+        .pv-mobile-nav .stButton { flex: 1 !important; }
+        .pv-mobile-nav .stButton > div { height: 100% !important; }
+        .pv-mobile-nav .stButton > div > button {
+            background: transparent !important;
+            border: none !important;
+            border-top: 3px solid transparent !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            color: #64748b !important;
+            font-size: 0.95rem !important;
+            height: 60px !important;
+            width: 100% !important;
+            padding: 4px 0 0 0 !important;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -4045,10 +4049,12 @@ def render_sidebar():
         st.markdown('<div class="pv-mobile-nav">', unsafe_allow_html=True)
         cols = st.columns(len(PAGES))
         for i, (page, icon, short) in enumerate(zip(PAGES, ICONS, SHORT)):
+            is_active = (menu == page)
             with cols[i]:
-                label = f"{icon}\n{short}" if False else icon + " " + short
-                if st.button(label, key=f"nav_m_{i}", use_container_width=True):
-                    st.session_state["main_nav"] = page
+                # Show emoji icon only — clean mobile look
+                if st.button(icon, key=f"nav_m_{i}", use_container_width=True, help=page):
+                    # Set the non-widget state key — safe to modify
+                    st.session_state["_mobile_nav"] = page
                     st.query_params["page"] = page
                     st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
