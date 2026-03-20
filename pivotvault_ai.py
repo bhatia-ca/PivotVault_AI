@@ -1,5 +1,10 @@
 import streamlit as st
 import pandas as pd
+try:
+    from streamlit_autorefresh import st_autorefresh
+    _HAS_AUTOREFRESH = True
+except ImportError:
+    _HAS_AUTOREFRESH = False
 import numpy as np
 import yfinance as yf
 import plotly.express as px
@@ -520,18 +525,72 @@ def get_market_movers():
         return pd.DataFrame(), pd.DataFrame()
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=15)
 def fetch_index_data(ticker: str) -> dict:
+    """
+    Fetch live index price.
+    Priority: NSE API → yfinance fast_info → yfinance history (fallback)
+    """
+    # NSE API mapping
+    NSE_MAP = {
+        "^NSEI":    "NIFTY 50",
+        "^BSESN":   None,          # BSE handled separately
+        "^NSEBANK": "NIFTY BANK",
+    }
+
+    # ── Method 1: NSE India API (most accurate, real-time) ───────────────
     try:
-        hist = yf.Ticker(ticker).history(period="5d")
-        if len(hist) < 2:
-            return {"ltp": None, "change": None}
-        ltp  = round(hist["Close"].iloc[-1], 2)
-        prev = round(hist["Close"].iloc[-2], 2)
-        chg  = round(((ltp - prev) / prev) * 100, 2)
-        return {"ltp": ltp, "change": chg}
+        nse_name = NSE_MAP.get(ticker)
+        if nse_name:
+            session = requests.Session()
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 Chrome/122 Safari/537.36",
+                "Accept": "application/json",
+                "Referer": "https://www.nseindia.com/",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            # Set cookie first
+            session.get("https://www.nseindia.com", headers=headers, timeout=5)
+            r = session.get(
+                f"https://www.nseindia.com/api/allIndices",
+                headers=headers, timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json().get("data", [])
+                for item in data:
+                    if item.get("index") == nse_name:
+                        ltp  = round(float(item["last"]), 2)
+                        prev = round(float(item["previousClose"]), 2)
+                        chg  = round(float(item["percentChange"]), 2)
+                        return {"ltp": ltp, "change": chg, "prev": prev,
+                                "high": round(float(item.get("high", ltp)), 2),
+                                "low":  round(float(item.get("low",  ltp)), 2)}
     except Exception:
-        return {"ltp": None, "change": None}
+        pass
+
+    # ── Method 2: yfinance fast_info (near real-time) ─────────────────────
+    try:
+        fi  = yf.Ticker(ticker).fast_info
+        ltp = round(float(fi.last_price), 2)
+        prev = round(float(fi.previous_close), 2)
+        chg  = round((ltp - prev) / prev * 100, 2) if prev else 0
+        return {"ltp": ltp, "change": chg, "prev": prev}
+    except Exception:
+        pass
+
+    # ── Method 3: yfinance history (delayed ~15 min, last resort) ────────
+    try:
+        hist = yf.Ticker(ticker).history(period="5d", interval="1m")
+        if len(hist) >= 2:
+            ltp  = round(float(hist["Close"].iloc[-1]), 2)
+            prev = round(float(hist["Close"].iloc[-2]), 2)
+            chg  = round((ltp - prev) / prev * 100, 2)
+            return {"ltp": ltp, "change": chg}
+    except Exception:
+        pass
+
+    return {"ltp": None, "change": None}
 
 
 def refresh_watchlist_prices(symbols: list) -> dict:
@@ -1048,14 +1107,80 @@ def sig_badge(label: str, kind: str) -> str:
     return f'<span class="signal-badge {css}">{label}</span>'
 
 
+def is_market_open() -> bool:
+    """Check if NSE market is currently open (Mon-Fri 9:15-15:30 IST)."""
+    from datetime import timezone
+    IST   = timezone(timedelta(hours=5, minutes=30))
+    now   = datetime.now(IST)
+    if now.weekday() >= 5:          # Saturday / Sunday
+        return False
+    market_open  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
 def render_market_header():
+    from datetime import timezone
+    IST    = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    open_  = is_market_open()
+
+    # Market status pill + refresh button
+    status_col, refresh_col = st.columns([6, 1])
+    with status_col:
+        dot_color = "#16a34a" if open_ else "#dc2626"
+        status    = "LIVE · NSE Open" if open_ else "Market Closed"
+        next_info = ""
+        if not open_:
+            if now_ist.weekday() >= 5:
+                next_info = " · Opens Monday 9:15 AM IST"
+            elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
+                next_info = f" · Opens at 9:15 AM IST"
+            else:
+                next_info = " · Opens tomorrow 9:15 AM IST"
+
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
+            f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;'>"
+            f"<span style='width:8px;height:8px;border-radius:50%;background:{dot_color};"
+            f"display:inline-block;{'animation:pulse 1.5s infinite;' if open_ else ''}'></span>"
+            f"<span style='color:{dot_color};font-weight:600;'>{status}</span>"
+            f"<span style='color:#94a3b8;'>{next_info}</span>"
+            f"<span style='color:#94a3b8;margin-left:auto;'>"
+            f"{now_ist.strftime('%d %b %Y  %H:%M:%S IST')}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with refresh_col:
+        if st.button("🔄 Refresh", use_container_width=True, key="global_refresh"):
+            # Clear all data caches so everything reloads fresh
+            st.cache_data.clear()
+            st.rerun()
+
+    # Auto-refresh using streamlit-autorefresh (reliable on Streamlit Cloud)
+    if open_ and _HAS_AUTOREFRESH:
+        # 30s during market hours
+        st_autorefresh(interval=30_000, limit=None, key="mkt_autorefresh")
+    elif open_ and not _HAS_AUTOREFRESH:
+        st.caption("💡 Install streamlit-autorefresh for live auto-refresh")
+
+    # Index metrics
     indices = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "NIFTY BANK": "^NSEBANK"}
     cols = st.columns(len(indices))
     for col, (name, ticker) in zip(cols, indices.items()):
         d = fetch_index_data(ticker)
-        ltp, chg = d["ltp"], d["change"]
+        ltp, chg = d.get("ltp"), d.get("change")
         if ltp is not None:
-            col.metric(name, f"{ltp:,.2f}", f"{'+' if chg >= 0 else ''}{chg}%")
+            hi  = d.get("high")
+            lo  = d.get("low")
+            sub = f"H:{hi:,.0f}  L:{lo:,.0f}" if hi and lo else ""
+            col.metric(
+                name,
+                f"{ltp:,.2f}",
+                f"{'+' if chg and chg >= 0 else ''}{chg}%" if chg is not None else "—",
+            )
+            if sub:
+                col.caption(sub)
         else:
             col.metric(name, "—", "—")
 
@@ -1072,7 +1197,7 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=180)
 def fetch_heatmap_performance(symbols: list, max_stocks: int = 120) -> pd.DataFrame:
     """
     Batch-fetch 1-day % change for up to `max_stocks` NSE symbols using
@@ -1867,7 +1992,7 @@ def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
         return {}
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     try:
         df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
@@ -3345,7 +3470,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 #  TRADE SIGNALS PAGE  (push notifications + live signal board)
 # ═══════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = "90d") -> dict:
     """
     Compute all trading signals for a symbol on a given timeframe.
@@ -3992,6 +4117,8 @@ def main():
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
+
+
 
     if   menu == "Market Snapshot":     page_market_snapshot(nse500)
     elif menu == "Pivot Boss Analysis": page_pivot_boss(nse500)
