@@ -6,6 +6,8 @@ try:
 except ImportError:
     _HAS_AUTOREFRESH = False
 import numpy as np
+import secrets
+import re
 import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
@@ -33,11 +35,7 @@ from reportlab.platypus import PageBreak
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-try:
-    from tv_chart import render_tv_chart, render_tv_screener_chart
-    _TV_CHARTS = True
-except ImportError:
-    _TV_CHARTS = False
+import streamlit.components.v1 as _stc
 
 # ─────────────────────────────────────────────
 #  CONFIGURATION
@@ -58,294 +56,598 @@ if _MOBILE_PATCH:
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
 
-/* 1. Root variables */
+/* ═══════════════════════════════════════════════════════════
+   PIVOTVAULT AI — OLIVE TERMINAL THEME
+   Refined · Professional · Olive Green · Mobile-First
+   ═══════════════════════════════════════════════════════════ */
+
 :root {
-    --bg:       #f0f4f8;
-    --surface:  #ffffff;
-    --border:   #dce3ed;
-    --accent:   #1a6b3c;
-    --danger:   #dc2626;
-    --warn:     #d97706;
-    --text:     #1a2332;
-    --dim:      #5a6a80;
+    /* Olive palette */
+    --olive-900: #1a1f0e;
+    --olive-800: #2a3318;
+    --olive-700: #3a4a22;
+    --olive-600: #4e6130;
+    --olive-500: #617a3d;
+    --olive-400: #7a9651;
+    --olive-300: #9db46a;
+    --olive-200: #c4d49a;
+    --olive-100: #e8eddf;
+    --olive-50:  #f4f7ec;
+    /* Surfaces */
+    --bg:        #f2f5ec;
+    --surface:   #ffffff;
+    --surface2:  #f7f9f2;
+    --border:    #dae0cb;
+    --border2:   #c8d4b4;
+    /* Text */
+    --text:      #1a1f0e;
+    --text-dim:  #5a6a48;
+    --text-muted:#8a9a78;
+    /* Accents */
+    --bull:      #2d7a3a;
+    --bull-bg:   #edf7ee;
+    --bull-bdr:  #b8dfc0;
+    --bear:      #c0392b;
+    --bear-bg:   #fdf0ee;
+    --bear-bdr:  #f0c0b8;
+    --warn:      #b8860b;
+    --warn-bg:   #fdf9ec;
+    /* Shadows */
+    --shadow-sm: 0 1px 3px rgba(50,70,20,0.08);
+    --shadow-md: 0 4px 12px rgba(50,70,20,0.10);
+    --shadow-lg: 0 8px 24px rgba(50,70,20,0.12);
+    /* Radius */
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 16px;
 }
 
-/* 2. Nuke ALL dark backgrounds Streamlit injects */
-html, body { background: #f0f4f8 !important; }
-
-.stApp                                          { background: #f0f4f8 !important; }
-.stApp > div                                    { background: #f0f4f8 !important; }
-.stApp [data-testid="stAppViewContainer"]       { background: #f0f4f8 !important; }
-.stApp [data-testid="stMain"]                   { background: #f0f4f8 !important; }
-.stApp [data-testid="stMainBlockContainer"]     { background: #f0f4f8 !important; }
-.stApp [data-testid="stVerticalBlockBorderWrapper"]  { background: #f0f4f8 !important; }
-[data-testid="stVerticalBlock"]                 { background: transparent !important; }
-.block-container                                { background: #f0f4f8 !important; padding: 1.5rem 2rem 2rem; max-width: 1500px; }
-
-/* Emotion cache class sweep (Streamlit changes these but !important overrides) */
-[class^="css-"], [class*=" css-"] { background-color: inherit; }
-
-/* 3. Global font & text */
-html, body, .stApp, .stMarkdown, .stText,
-p, span, label, li {
-    font-family: 'IBM Plex Sans', sans-serif !important;
-    color: #1a2332 !important;
+/* ── GLOBAL ────────────────────────────────────────────────── */
+html, body {
+    background: var(--bg) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    color: var(--text) !important;
+    -webkit-font-smoothing: antialiased;
 }
-/* Set div font/color without overriding button internals */
-.stMarkdown div, .stText div, [data-testid="stVerticalBlock"] > div {
-    font-family: 'IBM Plex Sans', sans-serif;
-    color: #1a2332;
+.stApp, .stApp > div,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
+    background: var(--bg) !important;
 }
-
-/* 4. Hide only chrome decorations — never touch sidebar */
-#MainMenu { visibility: hidden !important; }
-footer    { visibility: hidden !important; }
-
-/* 5. SIDEBAR */
-section[data-testid="stSidebar"] {
-    background: #1e293b !important;
-    min-width: 220px !important;
+[data-testid="stVerticalBlock"] { background: transparent !important; }
+.block-container {
+    background: var(--bg) !important;
+    padding: 1.25rem 1.75rem 2rem !important;
+    max-width: 1440px !important;
 }
-section[data-testid="stSidebar"] > div {
-    background: #1e293b !important;
-    padding-top: 1rem !important;
-}
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] div {
-    color: #cbd5e1 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-section[data-testid="stSidebar"] hr {
-    border-color: #334155 !important;
-}
-/* Radio nav items */
-section[data-testid="stSidebar"] .stRadio > div {
-    gap: 4px !important;
-}
-section[data-testid="stSidebar"] .stRadio label {
+#MainMenu, footer { visibility: hidden !important; }
+header[data-testid="stHeader"] {
     background: transparent !important;
-    border-radius: 8px !important;
-    padding: 0.6rem 0.9rem !important;
-    font-size: 0.88rem !important;
+    border-bottom: none !important;
+}
+
+/* ── TYPOGRAPHY ────────────────────────────────────────────── */
+h1, h2, h3, h4 {
+    font-family: 'DM Sans', sans-serif !important;
+    color: var(--text) !important;
+    letter-spacing: -0.02em !important;
+    font-weight: 700 !important;
+}
+p, span, label, div, li, td, th {
+    font-family: 'DM Sans', sans-serif !important;
+}
+code, pre, .stCode,
+[class*="mono"] {
+    font-family: 'DM Mono', monospace !important;
+}
+
+/* ── SIDEBAR ───────────────────────────────────────────────── */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div {
+    background: linear-gradient(180deg, var(--olive-900) 0%, var(--olive-800) 100%) !important;
+    border-right: 1px solid var(--olive-700) !important;
+    box-shadow: 2px 0 16px rgba(0,0,0,0.15) !important;
+}
+section[data-testid="stSidebar"] * { color: var(--olive-100) !important; }
+section[data-testid="stSidebar"] hr { border-color: var(--olive-700) !important; }
+section[data-testid="stSidebar"] .stCaption,
+section[data-testid="stSidebar"] .stCaption p {
+    color: var(--olive-400) !important;
+    font-size: 0.72rem !important;
+    font-family: 'DM Mono', monospace !important;
+}
+/* Radio nav */
+section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
+section[data-testid="stSidebar"] .stRadio label {
+    border-radius: var(--r-sm) !important;
+    padding: 0.6rem 0.85rem !important;
+    font-size: 0.87rem !important;
     font-weight: 500 !important;
-    color: #94a3b8 !important;
+    color: var(--olive-200) !important;
+    transition: all 0.18s ease !important;
     cursor: pointer !important;
-    width: 100% !important;
-    transition: background 0.15s !important;
+    border-left: 3px solid transparent !important;
 }
 section[data-testid="stSidebar"] .stRadio label:hover {
-    background: #334155 !important;
-    color: #e2e8f0 !important;
+    background: rgba(255,255,255,0.07) !important;
+    color: var(--olive-50) !important;
+    border-left-color: var(--olive-400) !important;
 }
-/* Selected radio item */
-section[data-testid="stSidebar"] .stRadio label[data-baseweb="radio"]:has(input:checked),
-section[data-testid="stSidebar"] .stRadio [aria-checked="true"] ~ label {
-    background: #1a6b3c !important;
-    color: #ffffff !important;
-}
-/* Logout button */
+/* Sidebar buttons */
 section[data-testid="stSidebar"] .stButton > div > button {
-    background: #334155 !important;
-    border: 1px solid #475569 !important;
-    color: #cbd5e1 !important;
-    width: 100% !important;
-}
-section[data-testid="stSidebar"] .stButton > div > button:hover {
-    background: #475569 !important;
-    color: #ffffff !important;
-}
-
-/* 6. METRIC CARDS */
-div[data-testid="metric-container"] {
-    background: #ffffff !important;
-    border: 1px solid #dce3ed !important;
-    border-radius: 10px !important;
-    padding: 1rem 1.25rem !important;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
-}
-div[data-testid="metric-container"] label  { color: #5a6a80 !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 0.72rem !important; letter-spacing: 0.08em !important; text-transform: uppercase !important; }
-div[data-testid="metric-container"] [data-testid="stMetricValue"] { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 1.4rem !important; font-weight: 600 !important; }
-div[data-testid="metric-container"] [data-testid="stMetricDelta"] { font-family: 'IBM Plex Mono', monospace !important; font-size: 0.78rem !important; }
-
-/* 7. BUTTONS — suppress ALL wrapper styles that cause double-button appearance */
-/* Kill the wrapper div completely */
-.stButton { background: transparent !important; border: none !important; padding: 0 !important; }
-.stButton > div,
-.stButton [data-testid="baseButton-secondary"],
-.stButton [data-testid="baseButton-primary"] {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-}
-/* Style only the actual <button> element */
-.stButton > button,
-.stButton > div > button,
-button[kind="secondary"],
-button[kind="primary"] {
-    background: #ffffff !important;
-    border: 1.5px solid #1a6b3c !important;
-    color: #1a6b3c !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.78rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.06em !important;
-    border-radius: 6px !important;
-    padding: 0.4rem 1rem !important;
-    transition: background 0.2s, color 0.2s !important;
-    outline: none !important;
-    box-shadow: none !important;
-    cursor: pointer !important;
-    width: 100% !important;
-}
-.stButton > button:hover,
-.stButton > div > button:hover {
-    background: #1a6b3c !important;
-    color: #ffffff !important;
-    border-color: #1a6b3c !important;
-    outline: none !important;
-    box-shadow: none !important;
-}
-.stButton > button:focus,
-.stButton > div > button:focus {
-    outline: none !important;
-    box-shadow: 0 0 0 3px rgba(26,107,60,0.15) !important;
-}
-.stButton > button:active,
-.stButton > div > button:active {
-    transform: scale(0.98) !important;
-}
-/* Sidebar buttons override */
-section[data-testid="stSidebar"] .stButton > button,
-section[data-testid="stSidebar"] .stButton > div > button {
-    background: #2d4a60 !important;
-    border: 1px solid #3d6080 !important;
-    color: #c8d8e8 !important;
-}
-section[data-testid="stSidebar"] .stButton > button:hover,
-section[data-testid="stSidebar"] .stButton > div > button:hover {
-    background: #3d6080 !important;
-    color: #ffffff !important;
-}
-
-/* 8. SELECTBOXES */
-div[data-baseweb="select"] > div {
-    background: #ffffff !important;
-    border: 1.5px solid #c8d4e0 !important;
-    border-radius: 6px !important;
-    color: #1a2332 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-div[data-baseweb="select"] span,
-div[data-baseweb="select"] div { color: #1a2332 !important; background: transparent !important; }
-ul[data-baseweb="menu"] li,
-div[data-baseweb="popover"] li {
-    background: #ffffff !important;
-    color: #1a2332 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid var(--olive-700) !important;
+    color: var(--olive-200) !important;
+    border-radius: var(--r-sm) !important;
     font-size: 0.82rem !important;
 }
-ul[data-baseweb="menu"] li:hover  { background: #f0fdf4 !important; color: #1a6b3c !important; }
+section[data-testid="stSidebar"] .stButton > div > button:hover {
+    background: rgba(255,255,255,0.12) !important;
+    border-color: var(--olive-400) !important;
+    color: var(--olive-50) !important;
+}
+
+/* ── METRIC CARDS ─────────────────────────────────────────── */
+div[data-testid="metric-container"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--r-md) !important;
+    padding: 1rem 1.25rem !important;
+    box-shadow: var(--shadow-sm) !important;
+    transition: box-shadow 0.2s, transform 0.2s !important;
+    border-top: 3px solid var(--olive-400) !important;
+}
+div[data-testid="metric-container"]:hover {
+    box-shadow: var(--shadow-md) !important;
+    transform: translateY(-1px) !important;
+}
+div[data-testid="metric-container"] label {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.7rem !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    color: var(--text-muted) !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 1.5rem !important;
+    font-weight: 600 !important;
+    color: var(--text) !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+}
+
+/* ── BUTTONS ──────────────────────────────────────────────── */
+.stButton > div > button {
+    background: var(--olive-700) !important;
+    border: none !important;
+    color: var(--olive-50) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 0.82rem !important;
+    font-weight: 600 !important;
+    border-radius: var(--r-sm) !important;
+    padding: 0.5rem 1.1rem !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 2px 4px rgba(50,70,20,0.2) !important;
+    letter-spacing: 0.02em !important;
+    cursor: pointer !important;
+}
+.stButton > div > button:hover {
+    background: var(--olive-600) !important;
+    box-shadow: 0 4px 12px rgba(50,70,20,0.25) !important;
+    transform: translateY(-1px) !important;
+}
+.stButton > div > button:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 1px 2px rgba(50,70,20,0.2) !important;
+}
+
+/* ── SELECTBOXES ──────────────────────────────────────────── */
+div[data-baseweb="select"] > div {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--r-sm) !important;
+    color: var(--text) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    transition: border-color 0.18s !important;
+}
+div[data-baseweb="select"] > div:focus-within {
+    border-color: var(--olive-500) !important;
+    box-shadow: 0 0 0 3px rgba(97,122,61,0.15) !important;
+}
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] div { color: var(--text) !important; background: transparent !important; }
 ul[data-baseweb="menu"],
 div[data-baseweb="popover"] > div {
-    background: #ffffff !important;
-    border: 1.5px solid #c8d4e0 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.1) !important;
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--r-md) !important;
+    box-shadow: var(--shadow-lg) !important;
+    overflow: hidden !important;
 }
-
-/* 9. TEXT INPUTS */
-input[type="text"], input[type="password"],
-.stTextInput input {
-    background: #ffffff !important;
-    border: 1.5px solid #c8d4e0 !important;
-    border-radius: 6px !important;
-    color: #1a2332 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
+li[role="option"] {
+    background: transparent !important;
+    color: var(--text) !important;
+    font-family: 'DM Sans', sans-serif !important;
     font-size: 0.85rem !important;
+    padding: 0.5rem 0.9rem !important;
+    transition: background 0.12s !important;
 }
-input::placeholder { color: #8a9ab0 !important; }
+li[role="option"]:hover { background: var(--olive-50) !important; color: var(--olive-700) !important; }
+li[aria-selected="true"] { background: var(--olive-100) !important; color: var(--olive-800) !important; font-weight: 600 !important; }
+
+/* ── TEXT INPUTS ──────────────────────────────────────────── */
+input[type="text"], input[type="password"], .stTextInput input {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--r-sm) !important;
+    color: var(--text) !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.87rem !important;
+    transition: border-color 0.18s, box-shadow 0.18s !important;
+}
 input:focus {
-    border-color: #1a6b3c !important;
-    box-shadow: 0 0 0 3px rgba(26,107,60,0.15) !important;
+    border-color: var(--olive-500) !important;
+    box-shadow: 0 0 0 3px rgba(97,122,61,0.15) !important;
     outline: none !important;
 }
+input::placeholder { color: var(--text-muted) !important; }
 
-/* 10. DATAFRAMES */
-.stDataFrame { font-family: 'IBM Plex Mono', monospace !important; font-size: 0.8rem !important; }
-[data-testid="stDataFrameContainer"]  { background: #ffffff !important; border: 1px solid #dce3ed !important; border-radius: 8px !important; }
+/* ── DATAFRAMES ───────────────────────────────────────────── */
+.stDataFrame {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.8rem !important;
+    border-radius: var(--r-md) !important;
+    overflow: hidden !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+[data-testid="stDataFrameContainer"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--r-md) !important;
+}
 
-/* 11. EXPANDER */
-[data-testid="stExpander"] { background: #ffffff !important; border: 1px solid #dce3ed !important; border-radius: 8px !important; }
-[data-testid="stExpander"] summary { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; }
-[data-testid="stExpander"] > div    { background: #ffffff !important; }
+/* ── EXPANDER ─────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--r-md) !important;
+    box-shadow: var(--shadow-sm) !important;
+    overflow: hidden !important;
+}
+[data-testid="stExpander"] > div:first-child {
+    border-radius: var(--r-md) !important;
+}
+[data-testid="stExpander"] summary {
+    color: var(--text) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 600 !important;
+    padding: 0.75rem 1rem !important;
+}
 
-/* 12. CHECKBOX & RADIO */
-.stCheckbox label, .stRadio label { color: #1a2332 !important; font-family: 'IBM Plex Mono', monospace !important; }
+/* ── TABS ─────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: var(--surface2) !important;
+    border-bottom: 2px solid var(--border) !important;
+    gap: 0 !important;
+    padding: 0 0.5rem !important;
+    border-radius: var(--r-md) var(--r-md) 0 0 !important;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-dim) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 0.84rem !important;
+    font-weight: 500 !important;
+    padding: 0.65rem 1.1rem !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -2px !important;
+    transition: all 0.18s !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--olive-600) !important;
+    background: rgba(97,122,61,0.06) !important;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--olive-700) !important;
+    border-bottom-color: var(--olive-500) !important;
+    font-weight: 700 !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-top: none !important;
+    border-radius: 0 0 var(--r-md) var(--r-md) !important;
+    padding: 1rem !important;
+}
 
-/* 13. ALERT / INFO / CAPTION */
-.stCaption p, .stCaption { color: #5a6a80 !important; font-family: 'IBM Plex Mono', monospace !important; }
-[data-testid="stInfo"]    { background: #eff6ff !important; color: #1e40af !important; border-left: 4px solid #3b82f6 !important; }
-[data-testid="stWarning"] { background: #fffbeb !important; color: #92400e !important; border-left: 4px solid #f59e0b !important; }
-[data-testid="stSuccess"] { background: #f0fdf4 !important; color: #166534 !important; border-left: 4px solid #22c55e !important; }
-[data-testid="stError"]   { background: #fef2f2 !important; color: #991b1b !important; border-left: 4px solid #ef4444 !important; }
+/* ── CHECKBOXES & RADIO ───────────────────────────────────── */
+.stCheckbox label, .stRadio label {
+    color: var(--text) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 0.87rem !important;
+}
 
-/* 14. DIVIDERS & HEADINGS */
-h1, h2, h3 { font-family: 'IBM Plex Mono', monospace !important; letter-spacing: -0.02em !important; color: #1a2332 !important; }
-hr { border-color: #dce3ed !important; margin: 1rem 0 !important; }
+/* ── ALERTS ───────────────────────────────────────────────── */
+[data-testid="stInfo"]    { background: #eef6f0 !important; border-left: 4px solid var(--olive-400) !important; border-radius: var(--r-sm) !important; }
+[data-testid="stSuccess"] { background: var(--bull-bg) !important; border-left: 4px solid var(--bull) !important; border-radius: var(--r-sm) !important; }
+[data-testid="stWarning"] { background: var(--warn-bg) !important; border-left: 4px solid var(--warn) !important; border-radius: var(--r-sm) !important; }
+[data-testid="stError"]   { background: var(--bear-bg) !important; border-left: 4px solid var(--bear) !important; border-radius: var(--r-sm) !important; }
+.stCaption, .stCaption p  { color: var(--text-muted) !important; font-family: 'DM Mono', monospace !important; font-size: 0.75rem !important; }
 
-/* 15. COMPONENT CLASSES */
+/* ── DIVIDERS ─────────────────────────────────────────────── */
+hr { border-color: var(--border) !important; margin: 0.75rem 0 !important; }
+
+/* ── COMPONENT CLASSES ────────────────────────────────────── */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+@keyframes slideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+
+.live-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: var(--bull);
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: pulse 1.8s ease-in-out infinite;
+    box-shadow: 0 0 6px rgba(45,122,58,0.5);
+}
+.title-bar {
+    display: flex; align-items: center; gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    animation: slideIn 0.3s ease;
+}
+.title-bar h1 {
+    margin: 0 !important; font-size: 1.4rem !important;
+    color: var(--text) !important; font-weight: 700 !important;
+}
+.title-bar .ts {
+    margin-left: auto;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem; color: var(--text-muted);
+}
+
+/* Card components */
+.pb-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.2s, transform 0.2s;
+    animation: slideIn 0.25s ease;
+}
+.pb-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+.pb-card-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+}
+.pb-card-value { font-family: 'DM Mono', monospace; font-size: 1.05rem; font-weight: 600; }
+.pb-bull { color: var(--bull) !important; }
+.pb-bear { color: var(--bear) !important; }
+.pb-neut { color: var(--warn) !important; }
+
+/* Signal badges */
+.signal-badge {
+    display: inline-block;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0.22rem 0.7rem;
+    border-radius: 4px; margin: 0.12rem 0.08rem;
+    transition: transform 0.15s;
+}
+.signal-badge:hover { transform: scale(1.04); }
+.sig-bull { background: var(--bull-bg); color: var(--bull); border: 1px solid var(--bull-bdr); }
+.sig-bear { background: var(--bear-bg); color: var(--bear); border: 1px solid var(--bear-bdr); }
+.sig-neut { background: var(--warn-bg); color: var(--warn); border: 1px solid #f0d898; }
+
+/* Watchlist pills */
 .wl-pill {
     display: inline-block;
-    background: #f0fdf4; border: 1px solid #bbf7d0;
-    color: #1a6b3c; font-family: 'IBM Plex Mono', monospace;
+    background: var(--olive-100);
+    border: 1px solid var(--olive-200);
+    color: var(--olive-800);
+    font-family: 'DM Mono', monospace;
     font-size: 0.78rem; font-weight: 600;
-    padding: 0.2rem 0.65rem; border-radius: 20px; margin: 0.2rem;
+    padding: 0.2rem 0.65rem;
+    border-radius: 20px; margin: 0.2rem;
+    transition: all 0.15s;
 }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-.live-dot {
-    display: inline-block; width: 8px; height: 8px;
-    background: #16a34a; border-radius: 50%;
-    margin-right: 6px; animation: pulse 1.6s ease-in-out infinite;
+.wl-pill:hover {
+    background: var(--olive-200);
+    box-shadow: var(--shadow-sm);
 }
-.title-bar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
-.title-bar h1 { margin: 0 !important; font-size: 1.4rem !important; color: #1a2332 !important; }
-.title-bar .ts { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem; color: #5a6a80; }
 
-.pb-card {
-    background: #ffffff !important;
-    border: 1px solid #dce3ed; border-radius: 10px;
-    padding: 1rem 1.25rem; margin-bottom: 0.75rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-}
-.pb-card-title { font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #5a6a80; margin-bottom: 0.5rem; }
-.pb-card-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.1rem; font-weight: 600; }
-.pb-bull { color: #16a34a !important; }
-.pb-bear { color: #dc2626 !important; }
-.pb-neut { color: #d97706 !important; }
+/* Scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--surface2); }
+::-webkit-scrollbar-thumb { background: var(--olive-300); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--olive-400); }
 
-.signal-badge {
-    display: inline-block; font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 0.25rem 0.75rem;
-    border-radius: 4px; margin: 0.15rem 0.1rem;
-}
-.sig-bull { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
-.sig-bear { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-.sig-neut { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
-
-/* 16. MOBILE */
+/* ── MOBILE ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-    .block-container { padding: 0.75rem !important; padding-bottom: 4rem !important; max-width: 100vw !important; }
-    section[data-testid="stSidebar"] { min-width: 80vw !important; max-width: 85vw !important; }
-    section[data-testid="stSidebar"] .stRadio label { min-height: 48px !important; font-size: 0.95rem !important; }
+    .block-container {
+        padding: 0.75rem 0.75rem 1rem !important;
+        max-width: 100vw !important;
+    }
+    /* Sidebar on mobile */
+    section[data-testid="stSidebar"] {
+        min-width: 78vw !important;
+        max-width: 84vw !important;
+    }
+    section[data-testid="stSidebar"] .stRadio label {
+        min-height: 50px !important;
+        font-size: 0.95rem !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    /* Touch targets */
+    .stButton > div > button { min-height: 44px !important; font-size: 0.85rem !important; }
+    div[data-baseweb="select"] > div { min-height: 44px !important; }
+    input { font-size: 16px !important; min-height: 44px !important; }
+    * { touch-action: manipulation; }
+    body { overscroll-behavior-y: none; }
 }
-/* Mobile nav handled inline in render_sidebar */
+
+/* ── DESKTOP REFINEMENTS ───────────────────────────────────── */
+@media (min-width: 769px) {
+    .block-container { padding: 1.5rem 2rem 2rem !important; }
+}
+
+/* ── PROGRESS BAR ─────────────────────────────────────────── */
+.stProgress > div > div > div {
+    background: linear-gradient(90deg, var(--olive-500), var(--olive-300)) !important;
+    border-radius: 4px !important;
+}
+
+/* ── MULTISELECT ──────────────────────────────────────────── */
+[data-baseweb="tag"] {
+    background: var(--olive-100) !important;
+    border-radius: 4px !important;
+    color: var(--olive-800) !important;
+}
+[data-baseweb="tag"] span { color: var(--olive-700) !important; font-family: 'DM Sans', sans-serif !important; }
+
+/* Mobile nav selectbox styling */
+.mob-nav .stSelectbox > div > div {
+    background: var(--olive-800) !important;
+    border: 1px solid var(--olive-600) !important;
+    color: var(--olive-50) !important;
+    font-size: 0.9rem !important;
+    min-height: 46px !important;
+}
+.mob-nav { display: none; }
+@media (max-width: 768px) {
+    .mob-nav { display: block !important; }
+    section[data-testid="stSidebar"]  { display: none !important; }
+    [data-testid="collapsedControl"]   { display: none !important; }
+}
 </style>
+""", unsafe_allow_html=True)
+
+# ── Global notification bootstrap (injected once per page load) ───────────
+# Must use window.parent to escape Streamlit's iframe sandbox
+st.markdown("""
+<script>
+(function() {
+    // Always work on the TOP window, not the iframe
+    var win = window.parent || window;
+
+    // Expose helper functions on parent window so any iframe can call them
+    win._pvNotify = function(title, body, tag) {
+        if (!("Notification" in win)) return;
+        if (win.Notification.permission === "granted") {
+            var n = new win.Notification(title, {
+                body: body,
+                icon: "/static/icon-192.png",
+                tag:  tag || "pivotvault",
+                requireInteraction: false,
+                silent: false,
+            });
+            n.onclick = function() { win.focus(); n.close(); };
+        }
+    };
+
+    win._pvRequestNotif = function(cb) {
+        if (!("Notification" in win)) {
+            if (cb) cb(false);
+            return;
+        }
+        if (win.Notification.permission === "granted") {
+            if (cb) cb(true);
+            return;
+        }
+        win.Notification.requestPermission().then(function(p) {
+            if (cb) cb(p === "granted");
+        });
+    };
+
+    // Store permission state on parent
+    win._pvNotifEnabled = (
+        "Notification" in win &&
+        win.Notification.permission === "granted"
+    );
+
+    // Auto-request permission after 2s if not yet decided
+    if ("Notification" in win && win.Notification.permission === "default") {
+        setTimeout(function() {
+            win.Notification.requestPermission().then(function(p) {
+                win._pvNotifEnabled = (p === "granted");
+                if (p === "granted") {
+                    new win.Notification("🏦 PivotVault AI", {
+                        body: "Trade signal notifications enabled!",
+                        icon: "/static/icon-192.png",
+                        tag:  "pv-welcome",
+                    });
+                }
+            });
+        }, 2000);
+    }
+})();
+</script>
+""", unsafe_allow_html=True)
+
+# ── Global notification permission manager ────────────────────────────────
+# Injected on every page load — uses window.parent to escape Streamlit iframe
+st.markdown("""
+<script>
+(function initPVNotif() {
+    // Must use window.parent to escape Streamlit iframe
+    var w = window.parent || window;
+
+    // Store permission state globally
+    w._pvNotifReady = false;
+
+    function checkAndRequest() {
+        if (!("Notification" in w)) return;
+        if (w.Notification.permission === "granted") {
+            w._pvNotifReady = true;
+            return;
+        }
+        if (w.Notification.permission === "default") {
+            // Auto-request after 1s — browser requires user gesture
+            // so we store a flag and show a button instead
+            w._pvNeedPermission = true;
+        }
+    }
+
+    // Global function to fire a notification from anywhere in the app
+    w.pvNotify = function(title, body, tag) {
+        if (!("Notification" in w)) return;
+        if (w.Notification.permission === "granted") {
+            try {
+                var n = new w.Notification(title, {
+                    body: body,
+                    icon: "/static/icon-192.png",
+                    tag:  tag || "pivotvault",
+                    requireInteraction: true,
+                    silent: false,
+                });
+                n.onclick = function() { w.focus(); n.close(); };
+            } catch(e) { console.log("Notif error:", e); }
+        }
+    };
+
+    checkAndRequest();
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -355,6 +657,25 @@ hr { border-color: #dce3ed !important; margin: 1rem 0 !important; }
 defaults = {
     'watchlist': [],
     'cpr_scan_df':  None,
+    'user_id':      None,
+    'user_email':   '',
+    'user_phone':   '',
+    'auth_mode':    'login',
+    'otp_code':     '',
+    'otp_target':   '',
+    # Broker config
+    'broker':           'none',   # none | zerodha | upstox | groww
+    'zerodha_api_key':  '',
+    'zerodha_api_secret':'',
+    'zerodha_access_token':'',
+    'upstox_api_key':   '',
+    'upstox_api_secret':'',
+    'upstox_access_token':'',
+    'broker_connected': False,
+    # Paper trading
+    'paper_trades':     [],
+    'paper_balance':    100000.0,  # Rs 1 lakh starting capital
+    'paper_positions':  {},
     'cpr_scan_15m': None,
     'cpr_scan_1h':  None,
     'cpr_scan_1d':  None,
@@ -364,8 +685,6 @@ defaults = {
     'wl_data':      {},
     'wl_last_refresh': None,
     'smtp_cfg': {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""},
-    'auto_email_enabled': False,
-    'auto_email_to': "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -1102,6 +1421,294 @@ def build_stoch_chart(df_ind: pd.DataFrame) -> go.Figure:
 # ─────────────────────────────────────────────
 #  UI HELPERS
 # ─────────────────────────────────────────────
+
+def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
+                    pivot_type: str, height: int = 660):
+    """
+    TradingView Lightweight Charts v4.1.1 (free, open-source — unpkg CDN).
+    Renders a professional candlestick chart with:
+    - Live OHLCV data from yfinance
+    - CPR band (TC/P/BC) as horizontal lines
+    - All pivot levels (R1/R2/R3/S1/S2/S3)
+    - Market Profile (POC/VAH/VAL)
+    - Volume bars
+    - Overall bias header
+    """
+    import json
+
+    # ── Get price data ────────────────────────────────────────────────────
+    TF_MAP = {
+        "5 Min":   ("5d",  "5m"),
+        "15 Min":  ("10d", "15m"),
+        "30 Min":  ("20d", "30m"),
+        "1 Hour":  ("60d", "1h"),
+        "4 Hour":  ("90d", "1h"),
+        "Daily":   ("1y",  "1d"),
+        "Weekly":  ("5y",  "1wk"),
+        "Monthly": ("10y", "1mo"),
+    }
+    period, interval = TF_MAP.get(tf_label, ("1y","1d"))
+
+    try:
+        df_raw = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
+        df_raw.index = df_raw.index.tz_localize(None)
+        if df_raw.empty or len(df_raw) < 5:
+            st.warning("No price data available.")
+            return
+    except Exception as e:
+        st.error(f"Data error: {e}")
+        return
+
+    # ── Build candlestick data (LW Charts format) ─────────────────────────
+    candles = []
+    volumes = []
+    for ts, row in df_raw.iterrows():
+        t = int(ts.timestamp())
+        candles.append({
+            "time": t,
+            "open":  round(float(row["Open"]),  2),
+            "high":  round(float(row["High"]),  2),
+            "low":   round(float(row["Low"]),   2),
+            "close": round(float(row["Close"]), 2),
+        })
+        volumes.append({
+            "time":  t,
+            "value": int(row["Volume"]),
+            "color": "#16a34a44" if float(row["Close"]) >= float(row["Open"]) else "#dc262644",
+        })
+
+    # ── Pivot & CPR levels ────────────────────────────────────────────────
+    cpr     = analysis.get("cpr", {})
+    pivots  = analysis.get("pivots", {})
+    mp      = analysis.get("market_profile", {})
+    ltp     = analysis.get("ltp", 0)
+    overall = analysis.get("overall", "NEUTRAL")
+    ov_col  = analysis.get("ov_col", "neut")
+    bias_color = {"bull":"#16a34a","bear":"#dc2626","neut":"#d97706"}.get(ov_col,"#888")
+
+    # Build price lines config for LW Charts
+    price_lines = []
+
+    PIVOT_COLORS = {
+        "R3":"#ff2222","R2":"#ff5555","R1":"#ff9999",
+        "P":"#888888",
+        "S1":"#99ff99","S2":"#55ff55","S3":"#22ff22",
+        "R4":"#cc0000","S4":"#00cc00",
+    }
+
+    for k, v in pivots.items():
+        price_lines.append({
+            "price": v, "color": PIVOT_COLORS.get(k,"#888888"),
+            "lineWidth": 1, "lineStyle": 1,
+            "axisLabelVisible": True,
+            "title": k,
+        })
+
+    if cpr:
+        price_lines.append({"price": cpr.get("TC",0),    "color":"#4d7cfe","lineWidth":2,"lineStyle":0,"axisLabelVisible":True,"title":"TC"})
+        price_lines.append({"price": cpr.get("Pivot",0), "color":"#8899bb","lineWidth":1,"lineStyle":1,"axisLabelVisible":True,"title":"P"})
+        price_lines.append({"price": cpr.get("BC",0),    "color":"#4d7cfe","lineWidth":2,"lineStyle":0,"axisLabelVisible":True,"title":"BC"})
+
+    if mp:
+        price_lines.append({"price": mp.get("POC",0), "color":"#f5a623","lineWidth":2,"lineStyle":2,"axisLabelVisible":True,"title":"POC"})
+        price_lines.append({"price": mp.get("VAH",0), "color":"#94a3b8","lineWidth":1,"lineStyle":2,"axisLabelVisible":True,"title":"VAH"})
+        price_lines.append({"price": mp.get("VAL",0), "color":"#94a3b8","lineWidth":1,"lineStyle":2,"axisLabelVisible":True,"title":"VAL"})
+
+    # ── Serialize to JSON ─────────────────────────────────────────────────
+    candles_json     = json.dumps(candles)
+    volumes_json     = json.dumps(volumes)
+    price_lines_json = json.dumps(price_lines)
+
+    # CPR band fill
+    tc_val = cpr.get("TC", 0)
+    bc_val = cpr.get("BC", 0)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:#f7f9f2; font-family:'IBM Plex Mono',monospace; }}
+
+.hdr {{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 14px; background:#ffffff;
+    border-bottom:1px solid #dce3ed;
+}}
+.hdr-left {{ display:flex; align-items:baseline; gap:10px; }}
+.sym {{ font-size:1rem; font-weight:700; color:#1a1f0e; }}
+.tf  {{ font-size:0.72rem; color:#5a6a48; }}
+.ltp {{ font-size:0.9rem; font-weight:600; color:#1a1f0e; }}
+.bias {{
+    background:{bias_color}18; color:{bias_color};
+    border:1px solid {bias_color}44;
+    border-radius:4px; padding:3px 10px;
+    font-size:0.7rem; font-weight:700; letter-spacing:0.06em;
+}}
+
+.legend {{
+    display:flex; flex-wrap:wrap; gap:8px;
+    padding:5px 14px; background:#ffffff;
+    border-bottom:1px solid #eef0f4;
+    font-size:0.65rem;
+}}
+.leg-item {{ display:flex; align-items:center; gap:4px; color:#5a6a48; }}
+.leg-dot  {{ width:10px; height:3px; border-radius:2px; flex-shrink:0; }}
+
+#chart {{ width:100%; height:{height}px; }}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-left">
+    <span class="sym">{symbol}</span>
+    <span class="tf">{tf_label} · {pivot_type}</span>
+    <span class="ltp">₹{ltp:,.2f}</span>
+  </div>
+  <span class="bias">{overall}</span>
+</div>
+
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:#4d7cfe;height:2px;"></div>CPR Band</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#ff5555;"></div>Resistance</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#55ff55;"></div>Support</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#f5a623;"></div>POC</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#94a3b8;"></div>Value Area</div>
+</div>
+
+<div id="chart"></div>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+    width:  document.getElementById('chart').clientWidth,
+    height: {height},
+    layout: {{
+        background:  {{ type: 'solid', color: '#ffffff' }},
+        textColor:   '#5a6a80',
+        fontSize:    11,
+        fontFamily:  "'IBM Plex Mono', monospace",
+    }},
+    grid: {{
+        vertLines:  {{ color: '#f0f2f5', style: 1 }},
+        horzLines:  {{ color: '#f0f2f5', style: 1 }},
+    }},
+    crosshair: {{
+        mode: LightweightCharts.CrosshairMode.Normal,
+        vertLine:  {{ color: '#1a6b3c44', width: 1, style: 1, labelBackgroundColor: '#1a6b3c' }},
+        horzLine:  {{ color: '#1a6b3c44', width: 1, style: 1, labelBackgroundColor: '#1a6b3c' }},
+    }},
+    rightPriceScale: {{
+        borderColor: '#dce3ed',
+        scaleMargins: {{ top: 0.05, bottom: 0.25 }},
+    }},
+    timeScale: {{
+        borderColor:     '#dce3ed',
+        timeVisible:     true,
+        secondsVisible:  false,
+        barSpacing:      8,
+    }},
+    localization: {{
+        priceFormatter: p => '\u20b9' + p.toFixed(2),
+    }},
+}});
+
+// ── Candlestick series ─────────────────────────────────────────────
+const candleSeries = chart.addCandlestickSeries({{
+    upColor:           '#16a34a',
+    downColor:         '#dc2626',
+    borderUpColor:     '#16a34a',
+    borderDownColor:   '#dc2626',
+    wickUpColor:       '#16a34a',
+    wickDownColor:     '#dc2626',
+}});
+candleSeries.setData({candles_json});
+
+// ── Add pivot + CPR price lines ────────────────────────────────────
+const priceLines = {price_lines_json};
+priceLines.forEach(function(pl) {{
+    if (pl.price && pl.price > 0) {{
+        candleSeries.createPriceLine(pl);
+    }}
+}});
+
+// ── CPR band shading ───────────────────────────────────────────────
+// Draw as a band between TC and BC using two area series
+const tcVal = {tc_val};
+const bcVal = {bc_val};
+if (tcVal > 0 && bcVal > 0) {{
+    const cprBandUpper = chart.addLineSeries({{
+        color: 'rgba(77,124,254,0.5)',
+        lineWidth: 2,
+        lineStyle: 0,
+        priceLineVisible: false,
+        lastValueVisible: false,
+    }});
+    const cprBandLower = chart.addLineSeries({{
+        color: 'rgba(77,124,254,0.5)',
+        lineWidth: 2,
+        lineStyle: 0,
+        priceLineVisible: false,
+        lastValueVisible: false,
+    }});
+    const allTimes = {candles_json}.map(c => c.time);
+    cprBandUpper.setData(allTimes.map(t => ({{ time: t, value: tcVal }})));
+    cprBandLower.setData(allTimes.map(t => ({{ time: t, value: bcVal }})));
+}}
+
+// ── Volume series (bottom pane) ────────────────────────────────────
+const volSeries = chart.addHistogramSeries({{
+    priceFormat:      {{ type: 'volume' }},
+    priceScaleId:     'volume',
+    scaleMargins:     {{ top: 0.8, bottom: 0 }},
+}});
+volSeries.priceScale().applyOptions({{
+    scaleMargins: {{ top: 0.8, bottom: 0 }},
+}});
+volSeries.setData({volumes_json});
+
+// ── Responsive resize ──────────────────────────────────────────────
+new ResizeObserver(entries => {{
+    for (const entry of entries) {{
+        const {{ width, height }} = entry.contentRect;
+        chart.applyOptions({{ width, height }});
+    }}
+}}).observe(document.getElementById('chart'));
+
+// Fit content on load
+chart.timeScale().fitContent();
+
+// ── Crosshair tooltip ─────────────────────────────────────────────
+const tooltip = document.createElement('div');
+tooltip.style.cssText = 'position:absolute;top:50px;left:14px;z-index:99;background:#1e293b;color:#e2e8f0;padding:6px 10px;border-radius:6px;font-size:0.7rem;pointer-events:none;line-height:1.6;display:none;';
+document.body.appendChild(tooltip);
+
+chart.subscribeCrosshairMove(param => {{
+    if (!param.time || !param.seriesData.has(candleSeries)) {{
+        tooltip.style.display = 'none';
+        return;
+    }}
+    const d = param.seriesData.get(candleSeries);
+    const chg = d.close - d.open;
+    const pct  = ((chg / d.open) * 100).toFixed(2);
+    const col  = chg >= 0 ? '#16a34a' : '#dc2626';
+    tooltip.style.display = 'block';
+    tooltip.innerHTML =
+        '<span style="color:#8a9a78;">O</span> ₹' + d.open.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">H</span> ₹' + d.high.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">L</span> ₹' + d.low.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">C</span> <b style="color:' + col + ';">₹' + d.close.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + '</b>' +
+        ' <span style="color:' + col + ';">(' + (chg >= 0 ? '+' : '') + pct + '%)</span>';
+}});
+</script>
+</body>
+</html>"""
+
+    _stc.html(html, height=height + 75, scrolling=False)
+
+
 def sig_badge(label: str, kind: str) -> str:
     css = {"bull": "sig-bull", "bear": "sig-bear", "neut": "sig-neut"}.get(kind, "sig-neut")
     return f'<span class="signal-badge {css}">{label}</span>'
@@ -1145,8 +1752,8 @@ def render_market_header():
             f"<span style='width:8px;height:8px;border-radius:50%;background:{dot_color};"
             f"display:inline-block;{'animation:pulse 1.5s infinite;' if open_ else ''}'></span>"
             f"<span style='color:{dot_color};font-weight:600;'>{status}</span>"
-            f"<span style='color:#94a3b8;'>{next_info}</span>"
-            f"<span style='color:#94a3b8;margin-left:auto;'>"
+            f"<span style='color:#8a9a78;'>{next_info}</span>"
+            f"<span style='color:#8a9a78;margin-left:auto;'>"
             f"{now_ist.strftime('%d %b %Y  %H:%M:%S IST')}</span>"
             f"</div>",
             unsafe_allow_html=True,
@@ -1326,37 +1933,219 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
 # ─────────────────────────────────────────────
 #  PAGES
 # ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  TEST USERS (5 demo accounts — replace with real DB later)
+# ══════════════════════════════════════════════════════════════
+
+TEST_USERS = {
+    "admin@pivotvault.ai":   {"pin": "1234", "name": "Admin User",    "phone": "9876543210"},
+    "trader@pivotvault.ai":  {"pin": "2345", "name": "Rahul Sharma",  "phone": "9123456780"},
+    "analyst@pivotvault.ai": {"pin": "3456", "name": "Priya Patel",   "phone": "9234567891"},
+    "demo@pivotvault.ai":    {"pin": "4567", "name": "Demo Account",  "phone": "9345678902"},
+    "test@pivotvault.ai":    {"pin": "5678", "name": "Test User",     "phone": "9456789013"},
+}
+# Also allow login by phone number
+_PHONE_TO_EMAIL = {v["phone"]: k for k, v in TEST_USERS.items()}
+
+
+def hash_pin(pin: str) -> str:
+        return hashlib.sha256(pin.strip().encode()).hexdigest()
+
+
+def generate_otp() -> str:
+    import secrets
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def verify_login(identifier: str, pin: str) -> tuple:
+    idf = identifier.strip().lower()
+    # Allow login by email or phone
+    if idf in _PHONE_TO_EMAIL:
+        idf = _PHONE_TO_EMAIL[idf]
+    user = TEST_USERS.get(idf)
+    if user and user["pin"] == pin.strip():
+        return True, {"id": idf, "name": user["name"],
+                      "email": idf, "phone": user["phone"]}
+    return False, {}
+
+
+def get_user_by_email(email: str) -> dict:
+    user = TEST_USERS.get(email.lower().strip(), {})
+    if user:
+        return {"id": email, "name": user["name"],
+                "email": email, "phone": user["phone"]}
+    return {}
+
+
+def create_user(name, email, phone, pin, google_id=None) -> tuple:
+    # Registration disabled in demo mode
+    return False, "Registration disabled in demo mode. Use one of the test accounts below."
+
+
+def reset_pin(email: str, new_pin: str) -> tuple:
+    return False, "PIN reset disabled in demo mode."
+
+
+# ══════════════════════════════════════════════════════════════
+#  AUTH PAGE — Login · Sign Up · Forgot · OTP · PIN
+# ══════════════════════════════════════════════════════════════
+
 def page_login():
+    """Auth page — Login with test accounts."""
+
+    # ── Branding ─────────────────────────────────────────────
     st.markdown("""
-    <div style="display:flex;flex-direction:column;align-items:center;
-                justify-content:center;min-height:70vh;gap:1rem;">
-        <div style="font-family:'IBM Plex Mono',monospace;font-size:2.8rem;
-                    font-weight:600;letter-spacing:-0.03em;color:#1e293b;">
-            🏦 PivotVault <span style="color:#16a34a;">AI</span>
+    <div style="text-align:center;padding:2.5rem 1rem 1.5rem;">
+        <div style="font-size:3rem;margin-bottom:0.5rem;">🏦</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:2.2rem;
+                    font-weight:800;color:#1a1f0e;letter-spacing:-0.03em;">
+            PivotVault <span style="color:#4e6130;">AI</span>
         </div>
-        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.82rem;
-                    color:#64748b;letter-spacing:0.1em;text-transform:uppercase;">
-            Indian Equity Intelligence Terminal · Pivot Boss Methodology
+        <div style="font-family:'DM Mono',monospace;font-size:0.72rem;
+                    color:#8a9a78;letter-spacing:0.12em;text-transform:uppercase;margin-top:6px;">
+            Indian Equity Intelligence · Pivot Boss Methodology
         </div>
-    </div>""", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([2, 1, 2])
-    with c2:
-        username = st.text_input("Username", placeholder="demo", label_visibility="collapsed")
-        password = st.text_input("Password", type="password", placeholder="password",
-                                 label_visibility="collapsed")
-        if st.button("→  Enter Terminal", use_container_width=True):
-            if username.strip() and password.strip():
-                st.session_state["logged_in"] = True
-                st.session_state["username"]  = username.strip()
-                st.rerun()
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Centered card ─────────────────────────────────────────
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+
+        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Test Accounts"])
+
+        # ════════════════════════════
+        #  LOGIN TAB
+        # ════════════════════════════
+        with tab_login:
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
+            mode = st.session_state.get("auth_mode", "pin")
+
+            # Toggle: PIN or OTP
+            auth_method = st.radio(
+                "Login method",
+                ["🔢 PIN Login", "📱 OTP Login"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="auth_method_radio",
+            )
+
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
+            if "PIN" in auth_method:
+                # ── PIN Login ─────────────────────────────────
+                identifier = st.text_input(
+                    "Email or Phone",
+                    placeholder="demo@pivotvault.ai  or  9876543210",
+                    key="login_id",
+                )
+                pin = st.text_input(
+                    "4-Digit PIN",
+                    type="password",
+                    max_chars=4,
+                    placeholder="Enter your 4-digit PIN",
+                    key="login_pin",
+                )
+                if st.button("🔓 Sign In", use_container_width=True, key="btn_pin_login"):
+                    if not identifier or not pin:
+                        st.error("Please enter email/phone and PIN.")
+                    else:
+                        ok, user = verify_login(identifier, pin)
+                        if ok:
+                            st.session_state["logged_in"] = True
+                            st.session_state["username"]  = user["name"]
+                            st.session_state["user_email"]= user["email"]
+                            st.session_state["user_phone"]= user.get("phone","")
+                            st.success(f"Welcome, {user['name']}! 🎉")
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid email/phone or PIN. Check the Test Accounts tab.")
+
             else:
-                st.error("Enter username and password.")
+                # ── OTP Login ─────────────────────────────────
+                if not st.session_state.get("otp_code"):
+                    otp_id = st.text_input(
+                        "Email or Phone",
+                        placeholder="demo@pivotvault.ai  or  9876543210",
+                        key="otp_id_input",
+                    )
+                    if st.button("📨 Send OTP", use_container_width=True, key="btn_send_otp"):
+                        idf = otp_id.strip().lower()
+                        if idf in _PHONE_TO_EMAIL:
+                            idf = _PHONE_TO_EMAIL[idf]
+                        if idf in TEST_USERS:
+                            otp = generate_otp()
+                            st.session_state["otp_code"]   = otp
+                            st.session_state["otp_target"] = otp_id.strip()
+                            st.session_state["otp_email"]  = idf
+                            st.success(f"OTP sent! (Demo mode — OTP is: **{otp}**)")
+                            st.rerun()
+                        else:
+                            st.error("Email/Phone not found in test accounts.")
+                else:
+                    st.info(f"OTP sent to: **{st.session_state.get('otp_target','')}**")
+                    entered = st.text_input("Enter 6-digit OTP", max_chars=6,
+                                            placeholder="______", key="otp_input")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Verify", use_container_width=True, key="btn_verify_otp"):
+                            if entered.strip() == st.session_state["otp_code"]:
+                                em   = st.session_state["otp_email"]
+                                user = get_user_by_email(em)
+                                st.session_state["logged_in"] = True
+                                st.session_state["username"]  = user["name"]
+                                st.session_state["user_email"]= user["email"]
+                                st.session_state["user_phone"]= user.get("phone","")
+                                st.session_state["otp_code"]  = ""
+                                st.rerun()
+                            else:
+                                st.error("Wrong OTP.")
+                    with c2:
+                        if st.button("🔄 Resend", use_container_width=True, key="btn_resend"):
+                            st.session_state["otp_code"] = ""
+                            st.rerun()
+
+        # ════════════════════════════
+        #  TEST ACCOUNTS TAB
+        # ════════════════════════════
+        with tab_accounts:
+            st.markdown("""
+            <div style="font-family:'DM Mono',monospace;font-size:0.75rem;
+                        color:#5a6a48;margin:0.5rem 0 1rem;">
+            Use any of these accounts to log in:
+            </div>
+            """, unsafe_allow_html=True)
+
+            for email, u in TEST_USERS.items():
+                st.markdown(
+                    f"<div style='background:#f7f9f2;border:1px solid #dae0cb;"
+                    f"border-left:4px solid #4e6130;border-radius:8px;"
+                    f"padding:0.65rem 1rem;margin-bottom:0.5rem;"
+                    f"font-family:DM Mono,monospace;font-size:0.78rem;'>"
+                    f"<b style='color:#1a1f0e;font-size:0.85rem;'>{u['name']}</b><br>"
+                    f"<span style='color:#5a6a48;'>📧 {email}</span><br>"
+                    f"<span style='color:#5a6a48;'>📱 {u['phone']}</span>"
+                    f"&nbsp;&nbsp;"
+                    f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
+                    f"padding:2px 8px;font-weight:700;'>PIN: {u['pin']}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("""
+            <div style="font-family:'DM Mono',monospace;font-size:0.7rem;
+                        color:#8a9a78;margin-top:0.75rem;padding:0.6rem;
+                        background:#fff8e8;border-radius:6px;border:1px solid #f0d898;">
+            💡 Copy any email + PIN above → paste in Sign In tab → click Sign In
+            </div>
+            """, unsafe_allow_html=True)
 
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
-        '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1e293b;">Market Snapshot</h1>'
-        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1a1f0e;">Market Snapshot</h1>'
+        f'<span class="ts" style="color:#5a6a48;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
     gainers, losers = get_market_movers()
@@ -1370,7 +2159,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with hm_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "letter-spacing:0.08em;text-transform:uppercase;color:#64748b;"
+            "letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
             "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
@@ -1379,8 +2168,8 @@ def page_market_snapshot(nse500: pd.DataFrame):
     with legend_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "color:#64748b;padding-top:0.1rem;line-height:1.9;'>"
-            "<span style='color:#16a34a;'>■</span> Strong Gain<br>"
+            "color:#5a6a48;padding-top:0.1rem;line-height:1.9;'>"
+            "<span style='color:#2d7a3a;'>■</span> Strong Gain<br>"
             "<span style='color:#27ae60;'>■</span> Gain<br>"
             "<span style='color:#e2e8f0;border:1px solid #333;'>■</span> Flat<br>"
             "<span style='color:#e74c3c;'>■</span> Loss<br>"
@@ -1470,7 +2259,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;padding:0.5rem 0;"
                     f"border-bottom:1px solid #dce3ed;margin-bottom:0.6rem;'>"
-                    f"<span style='font-size:1rem;font-weight:700;color:#1e293b;'>"
+                    f"<span style='font-size:1rem;font-weight:700;color:#1a1f0e;'>"
                     f"{clicked_sector}</span>"
                     f"<span style='font-size:0.8rem;color:{col_fg};margin-left:1rem;'>"
                     f"{arrow} {avg_chg:+.2f}% avg  ·  {len(sector_stocks)} stocks</span>"
@@ -1486,7 +2275,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             with d1:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#16a34a;"
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#2d7a3a;"
                     f"margin-bottom:0.35rem;'>▲ Top 5 Gainers</div>",
                     unsafe_allow_html=True,
                 )
@@ -1497,7 +2286,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             with d2:
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
-                    f"letter-spacing:0.08em;text-transform:uppercase;color:#dc2626;"
+                    f"letter-spacing:0.08em;text-transform:uppercase;color:#c0392b;"
                     f"margin-bottom:0.35rem;'>▼ Top 5 Losers</div>",
                     unsafe_allow_html=True,
                 )
@@ -1508,7 +2297,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
     else:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-            "color:#94a3b8;text-align:center;padding:0.55rem;"
+            "color:#8a9a78;text-align:center;padding:0.55rem;"
             "border:1px dashed #e2e8f0;border-radius:6px;margin-top:0.25rem;'>"
             "👆  Click any sector tile to see its Top 5 Gainers &amp; Losers</div>",
             unsafe_allow_html=True,
@@ -2032,8 +2821,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.68rem;'
-        'color:#64748b;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
-        f'<span class="ts" style="color:#64748b;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
+        'color:#5a6a48;margin-left:0.5rem;">Frank Ochoa Methodology</span>'
+        f'<span class="ts" style="color:#5a6a48;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -2097,9 +2886,9 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
     # ── Overall Bias Banner ───────────────────────────────────────────────────
     bias_palette = {
-        "bull": ("#f0fdf4", "#00e5a0"),
-        "bear": ("#fef2f2", "#ff4d6a"),
-        "neut": ("#fffbeb", "#f5a623"),
+        "bull": ("#edf7ee", "#00e5a0"),
+        "bear": ("#fdf0ee", "#ff4d6a"),
+        "neut": ("#fdf9ec", "#f5a623"),
     }
     bg, fg = bias_palette.get(analysis["ov_col"], ("#141720", "#d4daf0"))
     st.markdown(
@@ -2116,9 +2905,10 @@ def page_pivot_boss(nse500: pd.DataFrame):
     )
 
     # ── Main Chart ─────────────────────────────────────────────────────────
-    if _TV_CHARTS:
-        render_tv_chart(df, symbol, tf_label, analysis, show_stoch=True, height=700)
-    else:
+    chart_tab1, chart_tab2 = st.tabs(["📊 LW Chart + Pivots", "📈 Multi-Panel (Oscillators)"])
+    with chart_tab1:
+        render_lw_chart(symbol, tf_label, analysis, pivot_type, height=650)
+    with chart_tab2:
         fig = build_pivot_boss_chart(df, symbol, analysis, pivot_type)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -2136,7 +2926,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>Central Pivot Range (CPR)</div>"
             f"<div class='pb-card-value pb-{analysis['cpr_col']}'>{analysis['cpr_position']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
             f"margin-top:0.4rem;'>{cpr_detail}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2146,7 +2936,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>3/10 Oscillator</div>"
             f"<div class='pb-card-value pb-{analysis['osc_col']}'>{analysis['osc_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
             f"margin-top:0.4rem;'>Ochoa's momentum gauge<br>3-MA minus 10-MA vs 16-Signal</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2156,7 +2946,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>HMA(20) Trend</div>"
             f"<div class='pb-card-value pb-{analysis['hma_col']}'>{analysis['hma_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
             f"margin-top:0.4rem;'>Hull Moving Average<br>Low-lag trend direction filter</div>"
             f"</div>", unsafe_allow_html=True,
         )
@@ -2170,7 +2960,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card-title'>RSI (14)</div>"
             f"<div class='pb-card-value pb-{analysis['rsi_col']}'>"
             f"{rsi_val} · {analysis['rsi_sig']}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
             f"margin-top:0.4rem;'>{stoch_txt}</div></div>",
             unsafe_allow_html=True,
         )
@@ -2194,7 +2984,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     with col_mp:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-            "letter-spacing:0.1em;text-transform:uppercase;color:#64748b;"
+            "letter-spacing:0.1em;text-transform:uppercase;color:#5a6a48;"
             "margin-bottom:0.5rem;'>Market Profile (Volume at Price)</div>",
             unsafe_allow_html=True,
         )
@@ -2211,8 +3001,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
                         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
                         f"padding:0.3rem 0;border-bottom:1px solid #dce3ed;'>"
                         f"<span style='color:{col};'>{label}</span>"
-                        f"<b style='color:#1e293b;float:right;'>{val} "
-                        f"<span style='color:#64748b;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
+                        f"<b style='color:#1a1f0e;float:right;'>{val} "
+                        f"<span style='color:#5a6a48;font-size:0.7rem;'>{arr}{abs(dist)}%</span>"
                         f"</b></div>",
                         unsafe_allow_html=True,
                     )
@@ -2228,7 +3018,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>ATR(14) Volatility</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{'₹' + str(analysis['atr']) if analysis['atr'] else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;margin-top:0.4rem;'>"
             f"{'% of price: ' + str(analysis['atr_pct']) + '%' if analysis['atr_pct'] else ''}"
             f"</div></div>", unsafe_allow_html=True,
         )
@@ -2239,7 +3029,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             f"<div class='pb-card'><div class='pb-card-title'>Nearest Pivot ★</div>"
             f"<div class='pb-card-value pb-neut'>"
             f"{nl[0] + '  ₹' + str(nl[1]) if nl else '—'}</div>"
-            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#64748b;margin-top:0.4rem;'>"
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;margin-top:0.4rem;'>"
             f"Immediate support / resistance</div></div>", unsafe_allow_html=True,
         )
 
@@ -2262,7 +3052,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         st.divider()
         st.markdown(
             "<h3 style='font-size:0.9rem;margin:1rem 0 0.25rem;'>🔲 Virgin CPR Levels</h3>"
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#64748b;"
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "margin-bottom:0.5rem;'>Untouched CPR bands — Ochoa's high-significance price magnets</div>",
             unsafe_allow_html=True,
         )
@@ -2284,7 +3074,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         '<div class="title-bar" style="margin-top:0.25rem;">'
         '<h2 style="font-size:1.05rem;margin:0;">📄  Download Analysis Report (PDF)</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-        'color:#64748b;margin-left:0.75rem;">'
+        'color:#5a6a48;margin-left:0.75rem;">'
         'Short Term · Medium Term · Long Term Targets · Stop-Loss · Narrative</span>'
         '</div>',
         unsafe_allow_html=True,
@@ -2339,7 +3129,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 arrow  = "▲" if auto_pat == "Bullish" else "▼"
 
                 st.markdown(
-                    f"<div style='background:#f0fdf4;border:1px solid {col_fg}33;"
+                    f"<div style='background:#edf7ee;border:1px solid {col_fg}33;"
                     f"border-left:4px solid {col_fg};border-radius:8px;"
                     f"padding:1rem 1.5rem;margin:0.5rem 0;'>"
 
@@ -2350,30 +3140,30 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     f"<div style='display:flex;gap:2rem;margin-top:0.6rem;flex-wrap:wrap;'>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Short Term (1-3d)</div>"
+                    f"color:#5a6a48;text-transform:uppercase;'>Short Term (1-3d)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1a1f0e;'>T: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{sh.get('target',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{sh.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{sh.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{sh.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Medium Term (1-4w)</div>"
+                    f"color:#5a6a48;text-transform:uppercase;'>Medium Term (1-4w)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1a1f0e;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{md.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{md.get('target2',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{md.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{md.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{md.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                    f"color:#64748b;text-transform:uppercase;'>Long Term (1-3m)</div>"
+                    f"color:#5a6a48;text-transform:uppercase;'>Long Term (1-3m)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
-                    f"color:#1e293b;'>T1: <span style='color:{col_fg};font-weight:700;'>"
+                    f"color:#1a1f0e;'>T1: <span style='color:{col_fg};font-weight:700;'>"
                     f"₹{lg.get('target1',0):,.2f}</span>"
                     f" T2: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target2',0):,.2f}</span>"
                     f" T3: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target3',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#dc2626;'>₹{lg.get('sl',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{lg.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{lg.get('rr',0)}x</b></div></div>"
 
                     f"</div></div>",
@@ -2392,7 +3182,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     # ── Methodology footnote ──────────────────────────────────────────────────
     st.divider()
     st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#94a3b8;line-height:1.8;'>"
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#8a9a78;line-height:1.8;'>"
         "📖  Based on <i>Secrets of a Pivot Boss</i> by Frank Ochoa.  "
         "Tools implemented: CPR · 3/10 Oscillator · Virgin CPRs · Market Profile (POC/VAH/VAL) · "
         "HMA Trend Filter · ATR · RSI · Stochastic.  "
@@ -2402,62 +3192,231 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
 
 def page_watchlist():
-    st.markdown("<h2 style='margin-bottom:1rem;'>Watchlist</h2>", unsafe_allow_html=True)
-    wl = st.session_state["watchlist"]
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">⭐</span>
+        <h1 style="color:#1a1f0e;">Watchlist</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+    nifty200 = sorted(fetch_nifty200_list())
+    wl       = st.session_state.get("watchlist", [])
+
+    # ── Always-visible stock selector ────────────────────────────────────
+    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 200</div>", unsafe_allow_html=True)
+    selected = st.multiselect(
+        "wl_stocks",
+        options=nifty200,
+        default=[s for s in wl if s in nifty200],
+        placeholder="Search — RELIANCE, TCS, INFY…",
+        label_visibility="collapsed",
+        key="wl_multiselect",
+    )
+    ac1, ac2, ac3, ac4 = st.columns([2, 1.5, 1.5, 1.5])
+    with ac1:
+        if st.button("Save Watchlist", use_container_width=True, key="wl_save"):
+            st.session_state["watchlist"] = list(selected)
+            st.session_state["wl_data"]   = {}
+            st.rerun()
+    with ac2:
+        if st.button("Refresh Prices", use_container_width=True, key="wl_refresh"):
+            with st.spinner("Fetching…"):
+                st.session_state["wl_data"]         = refresh_watchlist_prices(selected)
+                st.session_state["wl_last_refresh"] = datetime.now()
+            st.rerun()
+    with ac3:
+        if st.button("Clear All", use_container_width=True, key="wl_clear"):
+            st.session_state["watchlist"] = []
+            st.session_state["wl_data"]   = {}
+            st.rerun()
+    with ac4:
+        last = st.session_state.get("wl_last_refresh")
+        if last:
+            st.caption(f"Updated {last.strftime('%H:%M:%S')}")
+
+    # Reload wl after possible save
+    wl = st.session_state.get("watchlist", [])
+
     if not wl:
         st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;color:#64748b;font-size:0.85rem;"
-            "padding:2rem 0;'>No stocks added yet. Use <b>Trade Signals</b> or <b>CPR Scanner</b> to find stocks.</div>",
+            "<div style='text-align:center;padding:3rem 1rem;margin-top:1rem;"
+            "background:#f7f9f2;border:2px dashed #dae0cb;border-radius:12px;"
+            "font-family:DM Mono,monospace;'>"
+            "<div style='font-size:2rem;'>⭐</div>"
+            "<div style='font-size:0.95rem;font-weight:700;color:#1a1f0e;margin-top:0.5rem;'>Watchlist is empty</div>"
+            "<div style='font-size:0.8rem;color:#5a6a48;margin-top:0.4rem;'>"
+            "Select stocks above and click Save Watchlist</div></div>",
             unsafe_allow_html=True,
         )
         return
 
-    st.markdown("".join(f'<span class="wl-pill">{s}</span>' for s in wl), unsafe_allow_html=True)
-    st.divider()
+    # ── Build active signals map (15m + 1h only) ─────────────────────────
+    active_signals = {}
+    for tf_key, tf_label, tf_col in [("cpr_scan_15m","15Min","#e67e22"),("cpr_scan_1h","1Hour","#2980b9")]:
+        raw = st.session_state.get(tf_key)
+        df  = raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
+        if df.empty: continue
+        for _, r in df.iterrows():
+            sym = r["Symbol"]
+            if sym not in active_signals: active_signals[sym] = []
+            active_signals[sym].append({
+                "tf": tf_label, "tf_col": tf_col,
+                "side": "BUY" if r["Pattern"]=="Bullish" else "SELL",
+                "entry": r["Entry"], "t1": r["T1"], "t2": r.get("T2",r["T1"]),
+                "sl": r["SL"], "rr1": r["RR1"], "rr": r["RR1"],
+                "strength": int(r["Strength%"]), "candle": r.get("Candle","—"),
+            })
 
-    c1, c2, _ = st.columns([1, 1, 6])
-    with c1:
-        if st.button("⟳ Refresh"):
+    # Auto-fetch prices
+    if not st.session_state.get("wl_data") and wl:
+        with st.spinner("Fetching live prices…"):
             st.session_state["wl_data"]         = refresh_watchlist_prices(wl)
             st.session_state["wl_last_refresh"] = datetime.now()
-    with c2:
-        if st.button("✕ Clear All"):
-            st.session_state["watchlist"] = []
-            st.session_state["wl_data"]   = {}
+    data = st.session_state.get("wl_data", {})
+
+    live_count = sum(1 for s in wl if s in active_signals)
+
+    st.divider()
+
+    # Summary metrics
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Watchlist",    f"{len(wl)} stocks")
+    m2.metric("Live Signals", f"{live_count} stocks")
+    m3.metric("Watching",     f"{len(wl)-live_count} stocks")
+
+    # Signal alert banner
+    if live_count:
+        st.markdown(
+            f"<div style='background:#edf7ee;border:1px solid #b8dfc0;"
+            f"border-left:4px solid #2d7a3a;border-radius:8px;"
+            f"padding:0.6rem 1rem;margin:0.5rem 0;font-family:DM Mono,monospace;"
+            f"font-size:0.78rem;display:flex;align-items:center;gap:10px;'>"
+            f"<span class='live-dot'></span>"
+            f"<b style='color:#2d7a3a;'>{live_count} stock(s) have LIVE signals now!</b></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No watchlist stocks have active signals. Run CPR Scanner (15Min/1Hour) to generate signals.")
+        if st.button("Go to CPR Scanner", key="wl_go_scanner"):
+            st.session_state["current_page"] = "CPR Scanner"
             st.rerun()
 
-    if not st.session_state["wl_data"] and wl:
-        with st.spinner("Fetching prices…"):
-            st.session_state["wl_data"]         = refresh_watchlist_prices(wl)
-            st.session_state["wl_last_refresh"] = datetime.now()
+    st.divider()
 
-    data = st.session_state["wl_data"]
-    if st.session_state["wl_last_refresh"]:
-        st.caption(f"Last updated: {st.session_state['wl_last_refresh'].strftime('%H:%M:%S')}")
+    # ── Stocks WITH live signals ──────────────────────────────────────────
+    wl_live  = [s for s in wl if s in active_signals]
+    wl_quiet = [s for s in wl if s not in active_signals]
 
-    rows = []
-    for sym in wl:
-        d   = data.get(sym, {})
-        ltp = d.get("ltp")
-        chg = d.get("change")
-        rows.append({
-            "Symbol": sym,
-            "LTP":    f"{ltp:,.2f}" if ltp else "—",
-            "Chg %":  f"{'+' if chg and chg >= 0 else ''}{chg:.2f}%" if chg is not None else "—",
-        })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    if wl_live:
+        st.markdown(
+            "<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+            "color:#2d7a3a;font-weight:700;letter-spacing:0.08em;"
+            "text-transform:uppercase;margin-bottom:0.75rem;'>"
+            "🔔 LIVE SIGNALS</div>",
+            unsafe_allow_html=True,
+        )
+        for sym in wl_live:
+            d       = data.get(sym, {})
+            ltp     = d.get("ltp")
+            chg     = d.get("change")
+            sigs    = active_signals[sym]
+            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "—"
+            chg_col = "#2d7a3a" if chg and chg >= 0 else "#c0392b"
+            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "—"
+
+            # Signal detail per timeframe
+            sig_info = ""
+            for sg in sigs:
+                bull  = sg["side"]=="BUY"
+                ac    = "#2d7a3a" if bull else "#c0392b"
+                tc    = sg["tf_col"]
+                rc    = "#2d7a3a" if sg["rr1"]>=2 else ("#b8860b" if sg["rr1"]>=1.5 else "#c0392b")
+                sig_info += (
+                    f"<div style='display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;'>"
+                    f"<span style='background:{tc}18;color:{tc};border:1px solid {tc}44;"
+                    f"border-radius:12px;padding:1px 8px;font-size:0.65rem;font-weight:700;'>{sg['tf']}</span>"
+                    f"<span style='background:{'#edf7ee' if bull else '#fdf0ee'};"
+                    f"color:{ac};border:1px solid {'#b8dfc0' if bull else '#f0c0b8'};"
+                    f"border-radius:20px;padding:1px 8px;font-size:0.65rem;font-weight:700;'>"
+                    f"{'▲ BUY' if bull else '▼ SELL'}</span>"
+                    f"<span style='font-size:0.67rem;color:#5a6a48;background:#f7f9f2;"
+                    f"border:1px solid #dae0cb;border-radius:5px;padding:2px 7px;'>"
+                    f"Entry {sg['entry']}</span>"
+                    f"<span style='font-size:0.67rem;color:#2d7a3a;background:#edf7ee;"
+                    f"border:1px solid #b8dfc0;border-radius:5px;padding:2px 7px;'>T1 {sg['t1']}</span>"
+                    f"<span style='font-size:0.67rem;color:#c0392b;background:#fdf0ee;"
+                    f"border:1px solid #f0c0b8;border-radius:5px;padding:2px 7px;'>SL {sg['sl']}</span>"
+                    f"<span style='font-size:0.67rem;color:{rc};background:{rc}12;"
+                    f"border:1px solid {rc}33;border-radius:5px;padding:2px 7px;font-weight:700;'>"
+                    f"R:R {sg['rr1']}x</span>"
+                    f"<span style='font-size:0.67rem;color:#5a6a48;background:#f7f9f2;"
+                    f"border:1px solid #dae0cb;border-radius:5px;padding:2px 7px;'>"
+                    f"{sg['strength']}% {sg['candle']}</span>"
+                    f"</div>"
+                )
+
+            st.markdown(
+                f"<div style='background:#ffffff;border:1px solid #b8dfc0;"
+                f"border-left:4px solid #2d7a3a;border-radius:10px;"
+                f"padding:0.85rem 1rem;margin-bottom:0.4rem;"
+                f"box-shadow:0 2px 8px rgba(45,122,58,0.08);'>"
+                f"<div style='display:flex;align-items:center;flex-wrap:wrap;"
+                f"gap:8px;font-family:DM Mono,monospace;'>"
+                f"<span style='font-size:1rem;font-weight:900;color:#1a1f0e;'>{sym}</span>"
+                f"<span style='font-size:0.92rem;font-weight:700;color:#1a1f0e;'>{ltp_str}</span>"
+                f"<span style='font-size:0.82rem;font-weight:600;color:{chg_col};'>{chg_str}</span>"
+                f"</div>{sig_info}</div>",
+                unsafe_allow_html=True,
+            )
+            for sg in sigs:
+                _trade_buttons({**sg, "symbol": sym,
+                                "t2": sg.get("t2", sg["t1"]),
+                                "t3": sg.get("t1"), "rr1": sg["rr1"]})
+
+    # ── Stocks WITHOUT signals ─────────────────────────────────────────────
+    if wl_quiet:
+        if wl_live: st.divider()
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+            f"color:#8a9a78;letter-spacing:0.08em;text-transform:uppercase;"
+            f"margin-bottom:0.6rem;'>Watching — No Signal ({len(wl_quiet)})</div>",
+            unsafe_allow_html=True,
+        )
+        cols = st.columns(2)
+        for i, sym in enumerate(wl_quiet):
+            d       = data.get(sym, {})
+            ltp     = d.get("ltp")
+            chg     = d.get("change")
+            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "—"
+            chg_col = "#2d7a3a" if chg and chg >= 0 else "#c0392b"
+            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "—"
+            with cols[i % 2]:
+                st.markdown(
+                    f"<div style='background:#ffffff;border:1px solid #dae0cb;"
+                    f"border-left:3px solid #dae0cb;border-radius:8px;"
+                    f"padding:0.6rem 0.9rem;margin-bottom:0.4rem;"
+                    f"font-family:DM Mono,monospace;"
+                    f"display:flex;align-items:center;justify-content:space-between;'>"
+                    f"<b style='font-size:0.9rem;color:#1a1f0e;'>{sym}</b>"
+                    f"<span style='font-size:0.85rem;font-weight:700;color:#1a1f0e;'>{ltp_str}</span>"
+                    f"<span style='font-size:0.78rem;font-weight:600;color:{chg_col};'>{chg_str}</span>"
+                    f"<span style='font-size:0.6rem;color:#8a9a78;'>watching</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
     st.divider()
-    st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                "color:#64748b;letter-spacing:0.06em;text-transform:uppercase;"
-                "margin-bottom:0.5rem;'>Remove</div>", unsafe_allow_html=True)
-    rm_cols = st.columns(min(len(wl), 6))
-    for i, sym in enumerate(wl[:6]):
-        with rm_cols[i]:
-            if st.button(f"✕ {sym}", key=f"rm_{sym}"):
-                st.session_state["watchlist"].remove(sym)
-                st.session_state["wl_data"].pop(sym, None)
-                st.rerun()
+    with st.expander("Remove stocks from watchlist", expanded=False):
+        if wl:
+            rcols = st.columns(min(len(wl), 5))
+            for i, sym in enumerate(wl):
+                with rcols[i % 5]:
+                    if st.button(f"x {sym}", key=f"rm_{sym}", use_container_width=True):
+                        st.session_state["watchlist"].remove(sym)
+                        if isinstance(st.session_state.get("wl_data"), dict):
+                            st.session_state["wl_data"].pop(sym, None)
+                        st.rerun()
+
 
 
 # ─────────────────────────────────────────────
@@ -2924,12 +3883,12 @@ def send_scanner_pdf_email(pdf_bytes: bytes, to_email: str, tf_label: str,
 
         body = MIMEText(
             f"<html><body style='font-family:monospace;'>"
-            f"<h2 style='color:#1a2332;'>PivotVault AI — CPR Scanner Auto-Report</h2>"
-            f"<p style='color:#5a6a80;'>{tf_label} &nbsp;|&nbsp; {scan_time}</p>"
+            f"<h2 style='color:#1a1f0e;'>PivotVault AI — CPR Scanner Auto-Report</h2>"
+            f"<p style='color:#5a6a48;'>{tf_label} &nbsp;|&nbsp; {scan_time}</p>"
             f"<p>Please find the latest CPR Scanner report attached as PDF.</p>"
-            f"<p style='color:#16a34a;'>Scan completed automatically. Top 10 Bullish + Top 10 Bearish stocks.</p>"
+            f"<p style='color:#2d7a3a;'>Scan completed automatically. Top 10 Bullish + Top 10 Bearish stocks.</p>"
             f"<hr/>"
-            f"<p style='color:#94a3b8;font-size:0.8em;'>For educational purposes only. Not financial advice.</p>"
+            f"<p style='color:#8a9a78;font-size:0.8em;'>For educational purposes only. Not financial advice.</p>"
             f"</body></html>",
             "html"
         )
@@ -2958,6 +3917,306 @@ def send_scanner_pdf_email(pdf_bytes: bytes, to_email: str, tf_label: str,
         return False, str(e)
 
 
+# ══════════════════════════════════════════════════════════════
+#  BROKER INTEGRATION — Zerodha Kite · Upstox · Groww
+# ══════════════════════════════════════════════════════════════
+
+def _zerodha_place_order(symbol: str, side: str, qty: int,
+                          order_type: str = "MARKET") -> tuple:
+    """Place order via Zerodha Kite API. Returns (success, order_id/error)."""
+    try:
+        from kiteconnect import KiteConnect
+        api_key      = st.session_state.get("zerodha_api_key", "")
+        access_token = st.session_state.get("zerodha_access_token", "")
+        if not api_key or not access_token:
+            return False, "Zerodha not configured. Add API key & access token in ⚙️ Broker Settings."
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+        tx = kite.TRANSACTION_TYPE_BUY if side == "BUY" else kite.TRANSACTION_TYPE_SELL
+        order_id = kite.place_order(
+            tradingsymbol   = symbol,
+            exchange        = kite.EXCHANGE_NSE,
+            transaction_type= tx,
+            quantity        = qty,
+            order_type      = kite.ORDER_TYPE_MARKET,
+            product         = kite.PRODUCT_MIS,
+            variety         = kite.VARIETY_REGULAR,
+        )
+        return True, str(order_id)
+    except ImportError:
+        return False, "kiteconnect not installed. Run: pip install kiteconnect"
+    except Exception as e:
+        return False, str(e)
+
+
+def _upstox_place_order(symbol: str, side: str, qty: int) -> tuple:
+    """Place order via Upstox API v2. Returns (success, order_id/error)."""
+    try:
+        import upstox_client
+        access_token = st.session_state.get("upstox_access_token", "")
+        if not access_token:
+            return False, "Upstox not configured. Add access token in ⚙️ Broker Settings."
+        config = upstox_client.Configuration()
+        config.access_token = access_token
+        api = upstox_client.OrderApi(upstox_client.ApiClient(config))
+        req = upstox_client.PlaceOrderRequest(
+            quantity        = qty,
+            product         = "I",
+            validity        = "DAY",
+            price           = 0,
+            tag             = "PivotVault",
+            instrument_token= f"NSE_EQ|{symbol}",
+            order_type      = "MARKET",
+            transaction_type= side,
+            disclosed_quantity = 0,
+            trigger_price   = 0,
+            is_amo          = False,
+        )
+        res = api.place_order(req, "2.0")
+        return True, str(res.data.order_id)
+    except ImportError:
+        return False, "upstox-python-sdk not installed. Run: pip install upstox-python-sdk"
+    except Exception as e:
+        return False, str(e)
+
+
+def _render_groww_signals(signals: list):
+    """
+    Show trade signal popup cards with:
+    - Desktop browser notification
+    - Groww deep link
+    - Zerodha one-click order
+    - Upstox one-click order
+    - Paper trade button
+    """
+    import json
+    broker      = st.session_state.get("broker", "none")
+    signals_json = json.dumps(signals)
+
+    groww_html = f"""
+<style>
+@keyframes slideDown {{
+    from {{ opacity:0; transform:translateY(-30px) scale(0.96); }}
+    to   {{ opacity:1; transform:translateY(0) scale(1); }}
+}}
+@keyframes glow {{
+    0%,100% {{ box-shadow: 0 0 0 0 rgba(78,97,48,0.4); }}
+    50%      {{ box-shadow: 0 0 0 8px rgba(78,97,48,0); }}
+}}
+.pv-signal-popup {{
+    position: fixed; top: 16px; right: 16px;
+    z-index: 999999;
+    display: flex; flex-direction: column; gap: 10px;
+    max-width: 360px; width: 92vw;
+}}
+.pv-signal-card {{
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px 15px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.18);
+    animation: slideDown 0.3s cubic-bezier(.2,.8,.3,1);
+    border-top: 4px solid #4e6130;
+    font-family: DM Sans, sans-serif;
+    position: relative;
+}}
+.pv-signal-card.bear {{ border-top-color: #c0392b; }}
+.pv-sc-head {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }}
+.pv-sc-sym {{ font-size:1.05rem; font-weight:800; color:#1a1f0e; }}
+.pv-sc-badge {{
+    border-radius:20px; padding:2px 10px;
+    font-size:0.7rem; font-weight:700; letter-spacing:0.06em;
+}}
+.bull-badge {{ background:#edf7ee; color:#2d7a3a; border:1px solid #b8dfc0; }}
+.bear-badge {{ background:#fdf0ee; color:#c0392b; border:1px solid #f0c0b8; }}
+.pv-sc-levels {{
+    display:grid; grid-template-columns:1fr 1fr 1fr;
+    gap:5px; margin-bottom:8px;
+}}
+.pv-sc-lev {{
+    background:#f7f9f2; border-radius:7px;
+    padding:5px 3px; text-align:center;
+}}
+.pv-sc-ll {{ font-size:0.58rem; color:#8a9a78; text-transform:uppercase; letter-spacing:0.07em; font-family:DM Mono,monospace; }}
+.pv-sc-lv {{ font-size:0.82rem; font-weight:700; color:#1a1f0e; font-family:DM Mono,monospace; }}
+.pv-sc-meta {{ font-size:0.68rem; color:#8a9a78; font-family:DM Mono,monospace; margin-bottom:10px; }}
+.pv-broker-btns {{ display:flex; flex-direction:column; gap:6px; }}
+.pv-btn {{
+    display:block; width:100%; padding:9px 0;
+    border:none; border-radius:8px;
+    font-size:0.82rem; font-weight:700;
+    cursor:pointer; text-align:center;
+    text-decoration:none; color:#fff !important;
+    transition:opacity 0.15s, transform 0.1s;
+    letter-spacing:0.02em;
+}}
+.pv-btn:hover {{ opacity:0.88; transform:scale(0.99); }}
+.btn-groww  {{ background:linear-gradient(135deg,#00b386,#007a60); animation:glow 2.5s ease infinite; }}
+.btn-zerodha {{ background:linear-gradient(135deg,#387ed1,#2563b0); }}
+.btn-upstox  {{ background:linear-gradient(135deg,#7c3aed,#5b21b6); }}
+.btn-paper   {{ background:linear-gradient(135deg,#f59e0b,#d97706); }}
+.btn-bear-groww   {{ background:linear-gradient(135deg,#e74c3c,#c0392b); }}
+.btn-bear-zerodha {{ background:linear-gradient(135deg,#e74c3c,#991b1b); }}
+.btn-bear-upstox  {{ background:linear-gradient(135deg,#db2777,#9d174d); }}
+.pv-dismiss {{
+    position:absolute; top:8px; right:10px;
+    background:none; border:none; font-size:0.95rem;
+    cursor:pointer; color:#8a9a78; padding:2px 5px;
+}}
+.pv-dismiss:hover {{ color:#c0392b; }}
+.pv-notif-bar {{
+    background:#1a1f0e; color:#f4f7ec;
+    border-radius:10px; padding:9px 13px;
+    font-size:0.76rem; font-family:DM Mono,monospace;
+    display:flex; align-items:center; gap:8px;
+    animation:slideDown 0.2s ease;
+}}
+.pv-notif-bar button {{
+    margin-left:auto; background:#4e6130; color:#fff;
+    border:none; border-radius:6px;
+    padding:4px 10px; font-size:0.73rem;
+    font-family:DM Mono,monospace; cursor:pointer; font-weight:700;
+}}
+</style>
+
+<div class="pv-signal-popup" id="pvPopup"></div>
+
+<script>
+var PV_SIGNALS   = {signals_json};
+var PV_BROKER    = "{broker}";
+
+function growwUrl(sym) {{
+    return "https://groww.in/stocks/" + sym.toLowerCase() + "-share-price";
+}}
+function zerodhaUrl(sym, side) {{
+    // Zerodha Kite web order form deep link
+    return "https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol=" +
+           sym + "&transaction_type=" + side;
+}}
+function upstoxUrl(sym, side) {{
+    return "https://login.upstox.com/?f=1&tradingsymbol=" + sym +
+           "&exchange=NSE&transaction_type=" + side;
+}}
+
+function buildCards() {{
+    var popup = document.getElementById("pvPopup");
+    if (!popup) return;
+    popup.innerHTML = "";
+
+    var w = window.parent || window;
+    if (!w._pvNotifEnabled && w.Notification && w.Notification.permission !== "denied") {{
+        var bar = document.createElement("div");
+        bar.className = "pv-notif-bar";
+        bar.innerHTML = "🔔 Enable desktop notifications for instant trade alerts &nbsp;<button onclick=\"reqNotif()\">Allow</button>";
+        popup.appendChild(bar);
+    }}
+
+    PV_SIGNALS.forEach(function(sig, idx) {{
+        var bull = sig.side === "BUY";
+        var card = document.createElement("div");
+        card.className = "pv-signal-card" + (bull ? "" : " bear");
+        card.id = "pvCard" + idx;
+
+        var btns = "";
+
+        // Groww button (always show)
+        btns += "<a href=\"" + growwUrl(sig.symbol) + "\" target=\"_blank\" class=\"pv-btn " +
+                (bull ? "btn-groww" : "btn-bear-groww") + "\">" +
+                (bull ? "🟢 Buy on Groww" : "🔴 Sell on Groww") + "</a>";
+
+        // Zerodha button
+        btns += "<a href=\"" + zerodhaUrl(sig.symbol, sig.side) + "\" target=\"_blank\" class=\"pv-btn " +
+                (bull ? "btn-zerodha" : "btn-bear-zerodha") + "\">" +
+                "⚡ " + sig.side + " on Zerodha Kite</a>";
+
+        // Upstox button
+        btns += "<a href=\"" + upstoxUrl(sig.symbol, sig.side) + "\" target=\"_blank\" class=\"pv-btn " +
+                (bull ? "btn-upstox" : "btn-bear-upstox") + "\">" +
+                "💜 " + sig.side + " on Upstox</a>";
+
+        // Paper trade button
+        btns += "<button class=\"pv-btn btn-paper\" onclick=\"paperTrade(" + idx + ")\">" +
+                "📝 Paper Trade (Test)</button>";
+
+        card.innerHTML =
+            "<button class=\"pv-dismiss\" onclick=\"dismissCard(" + idx + ")\">✕</button>" +
+            "<div class=\"pv-sc-head\">" +
+            "  <span class=\"pv-sc-sym\">" + sig.symbol + "</span>" +
+            "  <span class=\"pv-sc-badge " + (bull ? "bull-badge" : "bear-badge") + "\">" + sig.side + "</span>" +
+            "</div>" +
+            "<div class=\"pv-sc-levels\">" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Entry</div><div class=\"pv-sc-lv\">₹" + sig.entry + "</div></div>" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Target</div><div class=\"pv-sc-lv\">₹" + sig.t1 + "</div></div>" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">SL</div><div class=\"pv-sc-lv\">₹" + sig.sl + "</div></div>" +
+            "</div>" +
+            "<div class=\"pv-sc-meta\">R:R " + sig.rr + "x · Strength " + sig.strength + "% · " + sig.candle + "</div>" +
+            "<div class=\"pv-broker-btns\">" + btns + "</div>";
+
+        popup.appendChild(card);
+
+        // Desktop notification — use parent window to escape iframe sandbox
+        (function() {{
+            var w = window.parent || window;
+            if (w._pvNotify) {{
+                w._pvNotify(
+                    (bull ? "🟢 BUY" : "🔴 SELL") + " — " + sig.symbol + " (" + sig.strength + "%)",
+                    "Entry ₹" + sig.entry + "  T1 ₹" + sig.t1 + "  SL ₹" + sig.sl + "  R:R " + sig.rr + "x",
+                    "pv-" + sig.symbol
+                );
+            }} else if (w.Notification && w.Notification.permission === "granted") {{
+                var n = new w.Notification(
+                    (bull ? "🟢 BUY" : "🔴 SELL") + " — " + sig.symbol + " (" + sig.strength + "%)",
+                    {{ body: "Entry ₹" + sig.entry + "  T1 ₹" + sig.t1 + "  SL ₹" + sig.sl + "  R:R " + sig.rr + "x",
+                       icon: "/static/icon-192.png", tag: "pv-" + sig.symbol, requireInteraction: false }}
+                );
+                n.onclick = function() {{ w.focus(); n.close(); }};
+            }}
+        }})();
+    }});
+
+    setTimeout(function() {{
+        var p = document.getElementById("pvPopup");
+        if (p) p.style.opacity = "0.3";
+    }}, 90000);
+}}
+
+function dismissCard(idx) {{
+    var c = document.getElementById("pvCard" + idx);
+    if (c) {{ c.style.transform = "translateX(110%)"; c.style.opacity = "0";
+               c.style.transition = "all 0.3s"; setTimeout(function(){{ c.remove(); }}, 300); }}
+}}
+
+function paperTrade(idx) {{
+    var sig = PV_SIGNALS[idx];
+    // Store in sessionStorage for paper trade tab to pick up
+    var trades = JSON.parse(sessionStorage.getItem("pv_paper_queue") || "[]");
+    trades.push(sig);
+    sessionStorage.setItem("pv_paper_queue", JSON.stringify(trades));
+    alert("📝 Paper trade queued for " + sig.symbol + " " + sig.side +
+          " @ ₹" + sig.entry + "\nGo to Test Trading tab to see result.");
+    dismissCard(idx);
+}}
+
+function reqNotif() {{
+    var w = window.parent || window;
+    if (w._pvRequestNotif) {{
+        w._pvRequestNotif(function(ok) {{
+            w._pvNotifEnabled = ok;
+            if (ok) buildCards();
+        }});
+    }} else if (w.Notification) {{
+        w.Notification.requestPermission().then(function(p) {{
+            w._pvNotifEnabled = (p === "granted");
+            if (p === "granted") buildCards();
+        }});
+    }}
+}}
+
+buildCards();
+</script>
+"""
+    st.markdown(groww_html, unsafe_allow_html=True)
+
+
 def page_cpr_scanner(nse500: pd.DataFrame):
     """
     CPR Scanner — one timeframe at a time.
@@ -2973,30 +4232,87 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     TF_CONFIG = {
         "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"5d",  "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
         "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"30d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
-        "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"90d", "tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#f0fdf4","label":"Swing Trading",  "refresh_label":"4 hours"},
-        "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fffbeb","label":"Positional",     "refresh_label":"24 hours"},
-        "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fef2f2","label":"Prime Trading",  "refresh_label":"24 hours"},
+        "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"90d", "tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
+        "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
+        "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
     }
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown("""
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.25rem;
-                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dce3ed;
+                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dae0cb;
                 border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
         <div style="font-size:2rem;">📡</div>
         <div style="flex:1;">
             <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
-                        font-weight:700;color:#1a2332;">CPR Scanner</div>
+                        font-weight:700;color:#1a1f0e;">CPR Scanner</div>
             <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
-                        color:#5a6a80;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
+                        color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
                 Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
             </div>
         </div>
         <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
-            <div style="font-size:0.62rem;color:#5a6a80;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
+            <div style="font-size:0.62rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
             <div id="countdown" style="font-size:1.3rem;font-weight:700;color:#1a6b3c;">—</div>
         </div>
     </div>
+    """, unsafe_allow_html=True)
+
+    # ── Notification permission bar ─────────────────────────────────────────
+    st.markdown("""
+    <div id="pv-notif-bar" style="background:#1a1f0e;color:#f4f7ec;
+         border-radius:10px;padding:10px 16px;margin-bottom:0.75rem;
+         font-family:DM Mono,monospace;font-size:0.78rem;
+         display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>🔔 Enable desktop notifications to get instant alerts when signals appear</span>
+        <button id="pv-allow-btn" onclick="pvRequestNotif()"
+            style="margin-left:auto;background:#4e6130;color:#fff;border:none;
+                   border-radius:6px;padding:6px 16px;font-size:0.75rem;
+                   font-family:DM Mono,monospace;cursor:pointer;font-weight:700;
+                   transition:background 0.2s;">
+            🔔 Allow Notifications
+        </button>
+    </div>
+    <script>
+    function pvRequestNotif() {
+        var w = window.parent || window;
+        if (!("Notification" in w)) {
+            alert("Your browser does not support desktop notifications.");
+            return;
+        }
+        w.Notification.requestPermission().then(function(perm) {
+            var btn = document.getElementById("pv-allow-btn");
+            var bar = document.getElementById("pv-notif-bar");
+            if (perm === "granted") {
+                w._pvNotifReady = true;
+                if (btn) btn.innerText = "✅ Notifications ON";
+                if (btn) btn.style.background = "#2d7a3a";
+                // Fire a test notification immediately
+                w.pvNotify(
+                    "✅ PivotVault AI Notifications Active",
+                    "You will now get instant alerts when trade signals appear.",
+                    "pv-test"
+                );
+                // Hide bar after 3s
+                setTimeout(function() {
+                    if (bar) bar.style.display = "none";
+                }, 3000);
+            } else {
+                if (btn) btn.innerText = "❌ Blocked — Enable in browser settings";
+                if (btn) btn.style.background = "#c0392b";
+            }
+        });
+    }
+    // Auto-hide bar if already granted
+    (function() {
+        var w = window.parent || window;
+        if ("Notification" in w && w.Notification.permission === "granted") {
+            var bar = document.getElementById("pv-notif-bar");
+            if (bar) bar.style.display = "none";
+            w._pvNotifReady = true;
+        }
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
     # ── Timeframe selector ────────────────────────────────────────────────────
@@ -3017,48 +4333,6 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     tf_bg      = cfg["bg"]
     tf_tag     = cfg["tag"]
     refresh_s  = cfg["refresh"]
-
-    # ── Auto-Email Config ─────────────────────────────────────────────────────
-    with st.expander("📧 Auto-Email Settings — send PDF on every scan refresh", expanded=False):
-        ae1, ae2, ae3 = st.columns([1, 3, 2])
-        with ae1:
-            auto_on = st.toggle(
-                "Auto-Send",
-                value=st.session_state.get("auto_email_enabled", False),
-                key="auto_email_toggle",
-            )
-            st.session_state["auto_email_enabled"] = auto_on
-        with ae2:
-            auto_to = st.text_input(
-                "Send PDF to",
-                value=st.session_state.get("auto_email_to", ""),
-                placeholder="your@email.com",
-                label_visibility="collapsed",
-                key="auto_email_to_input",
-            )
-            st.session_state["auto_email_to"] = auto_to
-        with ae3:
-            smtp = st.session_state.get("smtp_cfg", {})
-            if smtp.get("sender") and smtp.get("password"):
-                st.markdown(
-                    "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                    "color:#16a34a;padding-top:0.5rem;'>✅ SMTP configured</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                    "color:#dc2626;padding-top:0.5rem;'>⚠️ Configure SMTP below first</div>",
-                    unsafe_allow_html=True,
-                )
-        if auto_on:
-            st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-                f"color:#1a6b3c;padding:0.4rem 0;'>"
-                f"🔄 PDF will auto-send to <b>{auto_to or '—'}</b> every time the scanner refreshes "
-                f"(every <b>{cfg['refresh_label']}</b>)</div>",
-                unsafe_allow_html=True,
-            )
 
     scan_key      = f"cpr_scan_{tf_tag}"
     scan_time_key = f"cpr_scan_time_{tf_tag}"
@@ -3081,24 +4355,73 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.session_state[scan_time_key] = now
         last_scan = now
 
-        # ── Auto-email PDF on every scan refresh ──────────────────────────────
-        _auto_on  = st.session_state.get("auto_email_enabled", False)
-        _auto_to  = st.session_state.get("auto_email_to", "").strip()
-        _smtp_cfg = st.session_state.get("smtp_cfg", {})
-        if _auto_on and _auto_to and _smtp_cfg.get("sender") and _smtp_cfg.get("password"):
-            try:
-                _scan_t = datetime.now().strftime("%d %b %Y  %H:%M")
-                # Get top 10 from fresh result
-                _bull = result[result["Pattern"]=="Bullish"].sort_values(["Strength%","CPR Width%"],ascending=[False,True]).head(10) if not result.empty else pd.DataFrame()
-                _bear = result[result["Pattern"]=="Bearish"].sort_values(["Strength%","CPR Width%"],ascending=[False,True]).head(10) if not result.empty else pd.DataFrame()
-                _pdf  = build_scanner_pdf(_bull, _bear, tf_choice, _scan_t)
-                _ok, _msg = send_scanner_pdf_email(_pdf, _auto_to, tf_choice, _scan_t, _smtp_cfg)
-                if _ok:
-                    st.toast(f"📧 Auto-report sent to {_auto_to}", icon="✅")
-                else:
-                    st.toast(f"Auto-email failed: {_msg}", icon="⚠️")
-            except Exception as _e:
-                st.toast(f"Auto-email error: {_e}", icon="⚠️")
+        # ── Always sync canonical keys read by Trade Signals tab ──────────────
+        # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
+        if tf_tag in ("15m", "1h"):
+            st.session_state[f"cpr_scan_{tf_tag}"]      = result
+            st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+        # ── Store signals + fire desktop notifications ────────────────────────
+        if not result.empty:
+            import json as _json
+            top3_bull = result[result["Pattern"]=="Bullish"].head(3)
+            top3_bear = result[result["Pattern"]=="Bearish"].head(3)
+            notif_signals = []
+            for _, r in top3_bull.iterrows():
+                notif_signals.append({
+                    "symbol": r["Symbol"], "side": "BUY",
+                    "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                    "rr": r["RR1"], "strength": int(r["Strength%"]),
+                    "candle": r.get("Candle","—"),
+                })
+            for _, r in top3_bear.iterrows():
+                notif_signals.append({
+                    "symbol": r["Symbol"], "side": "SELL",
+                    "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                    "rr": r["RR1"], "strength": int(r["Strength%"]),
+                    "candle": r.get("Candle","—"),
+                })
+            st.session_state["pending_signals"] = notif_signals
+            # Also update the per-tag scan time key used by Trade Signals tab
+            st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+            # ── Fire desktop notifications via window.parent ──────────────────
+            # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
+            notif_js_list = _json.dumps([
+                {"sym": s["symbol"], "side": s["side"],
+                 "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
+                 "rr": s["rr"], "str": s["strength"]}
+                for s in notif_signals[:6]
+            ])
+            st.markdown(f"""
+<script>
+(function fireNotifs() {{
+    var sigs = {notif_js_list};
+    var w    = window.parent || window;
+    if (!("Notification" in w)) return;
+    if (w.Notification.permission !== "granted") {{
+        // Flash the allow button if not granted
+        var btn = document.getElementById("pv-allow-btn");
+        if (btn) {{
+            btn.style.animation = "none";
+            btn.style.background = "#c0392b";
+            btn.innerText = "⚠️ Allow Notifications!";
+        }}
+        return;
+    }}
+    sigs.forEach(function(s, i) {{
+        setTimeout(function() {{
+            var emoji = s.side === "BUY" ? "🟢" : "🔴";
+            w.pvNotify(
+                emoji + " " + s.side + " Signal — " + s.sym + " (" + s.str + "%)",
+                "Entry ₹" + s.entry + "  |  T1 ₹" + s.t1 + "  |  SL ₹" + s.sl + "  |  R:R " + s.rr + "x",
+                "pv-" + s.sym
+            );
+        }}, i * 800);  // Stagger by 800ms so they don't all fire at once
+    }});
+}})();
+</script>
+""", unsafe_allow_html=True)
 
     scan_df  = st.session_state.get(scan_key, pd.DataFrame())
     elapsed  = int(now - last_scan)
@@ -3130,7 +4453,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     scan_dt = datetime.fromtimestamp(last_scan).strftime("%d %b  %H:%M:%S") if last_scan else "—"
     st.markdown(
         f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
-        f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a80;"
+        f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
         f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{tf_bg};"
         f"border:1px solid {tf_col}33;border-left:3px solid {tf_col};border-radius:6px;'>"
         f"<span style='color:{tf_col};font-weight:700;'>{tf_choice}</span>"
@@ -3166,9 +4489,9 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
     if n_qual == 0:
         st.markdown(
-            f"<div style='text-align:center;padding:2rem;background:#f8fafc;"
+            f"<div style='text-align:center;padding:2rem;background:#f7f9f2;"
             f"border:2px dashed #dce3ed;border-radius:10px;"
-            f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#94a3b8;'>"
+            f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8a9a78;'>"
             f"No directional setups found on {tf_tag.upper()} right now.<br>"
             f"<span style='font-size:0.72rem;'>Try 🔄 Scan Now or switch to a different timeframe.</span>"
             f"</div>",
@@ -3183,14 +4506,14 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     def _cards(df, direction):
         is_bull = direction == "Bullish"
         hc  = "#16a34a" if is_bull else "#dc2626"
-        hbg = "#f0fdf4" if is_bull else "#fef2f2"
-        hbd = "#bbf7d0" if is_bull else "#fecaca"
+        hbg = "#edf7ee" if is_bull else "#fdf0ee"
+        hbd = "#b8dfc0" if is_bull else "#f0c0b8"
         arr = "▲" if is_bull else "▼"
 
         if df.empty:
-            return (f"<div style='padding:2rem;text-align:center;background:#f8fafc;"
+            return (f"<div style='padding:2rem;text-align:center;background:#f7f9f2;"
                     f"border:2px dashed #dce3ed;border-radius:10px;"
-                    f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#94a3b8;'>"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#8a9a78;'>"
                     f"No {direction} picks match criteria on this timeframe</div>")
 
         html = (f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
@@ -3220,35 +4543,35 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                 f'<div style="display:flex;align-items:center;gap:8px;">'
                 f'<span style="font-size:1rem;">{medal}</span>'
                 f'<div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a2332;">{row["Symbol"]}</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a80;">'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a1f0e;">{row["Symbol"]}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a48;">'
                 f'&#8377;{row["LTP"]:,.2f} &nbsp;·&nbsp; ATR &#8377;{row["ATR"]:,.2f} &nbsp;·&nbsp; {candle_icon} {candle}</div>'
                 f'</div></div>'
                 f'<div style="text-align:right;">'
                 f'<div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:{hc};">{prob}%</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a80;">Strength</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;">Strength</div>'
                 f'</div></div>'
                 f'<div style="background:#f1f5f9;border-radius:3px;height:5px;margin-bottom:0.5rem;">'
                 f'<div style="background:{hc};width:{prob}%;height:100%;border-radius:3px;"></div></div>'
                 f'<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.45rem;'
-                f'padding:0.4rem 0.6rem;background:#f8fafc;border-radius:6px;'
+                f'padding:0.4rem 0.6rem;background:#f7f9f2;border-radius:6px;'
                 f'font-family:IBM Plex Mono,monospace;font-size:0.68rem;">'
-                f'<span style="color:#5a6a80;">Entry <b style="color:#1a2332;">&#8377;{row["Entry"]:,.2f}</b></span>'
+                f'<span style="color:#5a6a48;">Entry <b style="color:#1a1f0e;">&#8377;{row["Entry"]:,.2f}</b></span>'
                 f'<span>|</span>'
-                f'<span style="color:#5a6a80;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
-                f'<span style="color:#5a6a80;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
+                f'<span style="color:#5a6a48;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
+                f'<span style="color:#5a6a48;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
                 f'<span>|</span>'
-                f'<span style="color:#5a6a80;">SL <b style="color:#dc2626;">&#8377;{row["SL"]:,.2f}</b></span>'
+                f'<span style="color:#5a6a48;">SL <b style="color:#c0392b;">&#8377;{row["SL"]:,.2f}</b></span>'
                 f'<span>|</span>'
-                f'<span style="color:#5a6a80;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
+                f'<span style="color:#5a6a48;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
                 f'</div>'
                 f'<div style="display:flex;flex-wrap:wrap;gap:0.3rem;">'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">CPR {cpr_w:.3f}%</span>'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">Osc {osc}</span>'
-                f'<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a2332;">Vol {vol}</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">CPR {cpr_w:.3f}%</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Osc {osc}</span>'
+                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Vol {vol}</span>'
                 f'<span style="background:{hbg};border:1px solid {hbd};border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};font-weight:600;">{arr} NARROW</span>'
                 f'</div></div>'
             )
@@ -3278,7 +4601,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     st.divider()
     st.markdown(
         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;font-weight:700;"
-        "color:#1a2332;margin-bottom:0.75rem;'>📤  Send / Download Scanner Report</div>",
+        "color:#1a1f0e;margin-bottom:0.75rem;'>📤  Send / Download Scanner Report</div>",
         unsafe_allow_html=True,
     )
 
@@ -3319,22 +4642,22 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     def _html_email(bull_df, bear_df, tf_lbl, scan_t):
         def _tbl_rows(df, is_bull):
             if df.empty:
-                return "<tr><td colspan='9' style='padding:8px;color:#94a3b8;font-style:italic;'>No qualifying stocks found.</td></tr>"
+                return "<tr><td colspan='9' style='padding:8px;color:#8a9a78;font-style:italic;'>No qualifying stocks found.</td></tr>"
             hc = "#16a34a" if is_bull else "#dc2626"
             out = ""
             for _, r in df.iterrows():
                 rr_c = "#16a34a" if r.get("RR1",0)>=2 else ("#d97706" if r.get("RR1",0)>=1.5 else "#dc2626")
                 out += (
                     f"<tr style='border-bottom:1px solid #f1f5f9;'>"
-                    f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a2332;'>{r['Symbol']}</td>"
+                    f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a1f0e;'>{r['Symbol']}</td>"
                     f"<td style='padding:7px 5px;font-size:0.83rem;'>Rs.{r['LTP']:,.2f}</td>"
                     f"<td style='padding:7px 5px;color:{hc};font-weight:700;'>{int(r['Strength%'])}%</td>"
                     f"<td style='padding:7px 5px;font-size:0.8rem;'>{r.get('Candle','—')}</td>"
                     f"<td style='padding:7px 5px;font-size:0.8rem;'>Rs.{r['Entry']:,.2f}</td>"
                     f"<td style='padding:7px 5px;color:{hc};'>Rs.{r['T1']:,.2f} / Rs.{r['T2']:,.2f}</td>"
-                    f"<td style='padding:7px 5px;color:#dc2626;'>Rs.{r['SL']:,.2f}</td>"
+                    f"<td style='padding:7px 5px;color:#c0392b;'>Rs.{r['SL']:,.2f}</td>"
                     f"<td style='padding:7px 5px;color:{rr_c};font-weight:700;'>{r.get('RR1',0)}x</td>"
-                    f"<td style='padding:7px 5px;color:#5a6a80;'>{r['RSI']}</td>"
+                    f"<td style='padding:7px 5px;color:#5a6a48;'>{r['RSI']}</td>"
                     f"</tr>"
                 )
             return out
@@ -3352,20 +4675,20 @@ def page_cpr_scanner(nse500: pd.DataFrame):
   <div style="font-family:Courier New,monospace;font-size:0.72rem;color:#b5c77a;margin-top:4px;letter-spacing:0.07em;text-transform:uppercase;">{tf_lbl} · Frank Ochoa Strategy · {scan_t}</div>
 </td></tr>
 <tr><td style="padding:20px 22px;">
-  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#16a34a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">▲ BULLISH SETUPS</div>
+  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#2d7a3a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">▲ BULLISH SETUPS</div>
   <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
   {_tbl_rows(bull_df, True)}</table>
-  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#dc2626;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">▼ BEARISH SETUPS</div>
+  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#c0392b;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">▼ BEARISH SETUPS</div>
   <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
   {_tbl_rows(bear_df, False)}</table>
 </td></tr>
-<tr><td style="padding:12px 22px 20px;"><div style="background:#f8fafc;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#94a3b8;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
+<tr><td style="padding:12px 22px 20px;"><div style="background:#f7f9f2;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#8a9a78;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
 </table></td></tr></table></body></html>"""
 
     rtab1, rtab2, rtab3 = st.tabs(["📧 Gmail / Email", "💬 WhatsApp", "⬇️ Download PDF"])
 
     with rtab1:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
         cfg = st.session_state.get("smtp_cfg", {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""})
         with st.expander("⚙️ SMTP Settings", expanded=not bool(cfg.get("sender"))):
             sc1, sc2 = st.columns(2)
@@ -3403,7 +4726,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                     st.caption("Gmail tip: use an App Password not your regular password. Requires 2FA enabled.")
 
     with rtab2:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
         wa_msg = _wa_text(top_bull, top_bear, tf_choice, scan_time_str)
         st.text_area("Message Preview (copy or use button below)", wa_msg, height=200, key="wa_prev")
         wc1, wc2 = st.columns([3, 1])
@@ -3428,9 +4751,9 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
     with rtab3:
         st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;"
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;"
             "margin-bottom:0.75rem;'>Download the scanner report as a PDF. "
-            "Use <b>Auto-Email Settings</b> above to send automatically on every refresh.</div>",
+            "Download a snapshot of the current scan results.</div>",
             unsafe_allow_html=True,
         )
         if st.button("📄 Generate & Download PDF", use_container_width=True, key="sc_gen_pdf"):
@@ -3453,15 +4776,15 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
         # ── Footer ────────────────────────────────────────────────────────────────
     st.markdown(f"""
-    <div style="background:#f8fafc;border:1px solid #dce3ed;border-radius:10px;
+    <div style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:10px;
                 padding:0.9rem 1.1rem;margin-top:0.75rem;
-                font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a80;line-height:1.9;">
-    <b style="color:#1a2332;">Auto-Refresh Schedule</b><br>
+                font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;line-height:1.9;">
+    <b style="color:#1a1f0e;">Auto-Refresh Schedule</b><br>
     ⚡ 15 Min chart → refreshes every <b>15 minutes</b> &nbsp;|&nbsp;
     🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
     📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
     📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
-    <b style="color:#1a2332;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+    <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
     </div>
     """, unsafe_allow_html=True)
 
@@ -3642,9 +4965,9 @@ def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = 
 def _signal_card(sig: dict) -> str:
     """Render a single signal card as HTML."""
     col_map = {
-        "bull": ("#16a34a", "#f0fdf4", "#bbf7d0"),
-        "bear": ("#dc2626", "#fef2f2", "#fecaca"),
-        "neut": ("#d97706", "#fffbeb", "#fde68a"),
+        "bull": ("#16a34a", "#edf7ee", "#b8dfc0"),
+        "bear": ("#dc2626", "#fdf0ee", "#f0c0b8"),
+        "neut": ("#d97706", "#fdf9ec", "#fde68a"),
     }
     fc, bg, bdr = col_map.get(sig["bias_col"], col_map["neut"])
     bias_labels = {
@@ -3661,7 +4984,7 @@ def _signal_card(sig: dict) -> str:
             f"<div style='display:flex;align-items:flex-start;gap:6px;padding:3px 0;"
             f"border-bottom:1px solid #f1f5f9;font-size:0.72rem;'>"
             f"<span>{icon}</span>"
-            f"<span style='color:#1a2332;'>{text}</span></div>"
+            f"<span style='color:#1a1f0e;'>{text}</span></div>"
         )
 
     return f"""
@@ -3670,10 +4993,10 @@ def _signal_card(sig: dict) -> str:
             box-shadow:0 2px 8px rgba(0,0,0,0.06);">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
     <div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a2332;">
+      <div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a1f0e;">
         {sig['symbol']}
       </div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a80;">
+      <div style="font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;">
         ₹{sig['ltp']:,.2f} &nbsp;·&nbsp; ATR ₹{sig['atr']:,.2f}
       </div>
     </div>
@@ -3681,7 +5004,7 @@ def _signal_card(sig: dict) -> str:
       <div style="background:{bg};border:1px solid {bdr};border-radius:6px;
                   padding:0.3rem 0.7rem;font-family:IBM Plex Mono,monospace;
                   font-size:0.78rem;font-weight:700;color:{fc};">{bias_label}</div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a80;margin-top:3px;">
+      <div style="font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;margin-top:3px;">
         Confidence: {sig['confidence']}%
       </div>
     </div>
@@ -3690,31 +5013,31 @@ def _signal_card(sig: dict) -> str:
   <div style="display:flex;gap:1rem;margin-top:0.6rem;padding-top:0.5rem;
               border-top:1px solid #f1f5f9;flex-wrap:wrap;">
     <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a80;">Entry</span>
-      <span style="color:#1a2332;font-weight:700;"> ₹{sig['entry']:,.2f}</span>
+      <span style="color:#5a6a48;">Entry</span>
+      <span style="color:#1a1f0e;font-weight:700;"> ₹{sig['entry']:,.2f}</span>
     </div>
     <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a80;">T1</span>
+      <span style="color:#5a6a48;">T1</span>
       <span style="color:{fc};font-weight:700;"> ₹{sig['tgt1']:,.2f}</span>
     </div>
     <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a80;">T2</span>
+      <span style="color:#5a6a48;">T2</span>
       <span style="color:{fc};font-weight:700;"> ₹{sig['tgt2']:,.2f}</span>
     </div>
     <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a80;">SL</span>
-      <span style="color:#dc2626;font-weight:700;"> ₹{sig['sl']:,.2f}</span>
+      <span style="color:#5a6a48;">SL</span>
+      <span style="color:#c0392b;font-weight:700;"> ₹{sig['sl']:,.2f}</span>
     </div>
     <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a80;">R:R</span>
-      <span style="color:#1a2332;font-weight:700;"> {sig['rr']}x</span>
+      <span style="color:#5a6a48;">R:R</span>
+      <span style="color:#1a1f0e;font-weight:700;"> {sig['rr']}x</span>
     </div>
   </div>
   <div style="margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:0.68rem;
               color:#8a9ab0;display:flex;flex-wrap:wrap;gap:0.5rem;">
     <span>P:{sig['P']:,.0f}</span>
-    <span style="color:#dc2626;">R1:{sig['R1']:,.0f} R2:{sig['R2']:,.0f}</span>
-    <span style="color:#16a34a;">S1:{sig['S1']:,.0f} S2:{sig['S2']:,.0f}</span>
+    <span style="color:#c0392b;">R1:{sig['R1']:,.0f} R2:{sig['R2']:,.0f}</span>
+    <span style="color:#2d7a3a;">S1:{sig['S1']:,.0f} S2:{sig['S2']:,.0f}</span>
     <span>RSI:{sig['rsi']}</span>
     <span>CPR:{sig['cpr_width']}%</span>
   </div>
@@ -3722,312 +5045,780 @@ def _signal_card(sig: dict) -> str:
 
 
 def page_trade_signals(nse500: pd.DataFrame):
-    """Live Trade Signals board with browser push notifications."""
+    """
+    Trade Signal Board — synced live from CPR Scanner.
+    Shows 15Min and 1Hour scanner results as actionable trade cards.
+    Refreshes automatically when scanner refreshes.
+    """
+    import json
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    st.markdown("""
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.25rem;
-                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dce3ed;
-                border-radius:12px;box-shadow:0 1px 6px rgba(0,0,0,0.06);">
-        <div style="font-size:2rem;">🔔</div>
-        <div style="flex:1;">
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
-                        font-weight:700;color:#1a2332;">Trade Signal Board</div>
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
-                        color:#5a6a80;letter-spacing:0.08em;text-transform:uppercase;">
-                Pivot Boss Signals · Push Alerts · Real-Time Analysis
-            </div>
+    # ── Header ────────────────────────────────────────────────────────────
+    h1, h2 = st.columns([5, 1])
+    with h1:
+        st.markdown("""
+        <div class="title-bar">
+            <span style="font-size:1.5rem;">🔔</span>
+            <h1 style="color:#1a1f0e;">Trade Signals</h1>
+            <span style="margin-left:auto;background:#edf7ee;border:1px solid #b8dfc0;
+                         color:#2d7a3a;padding:3px 12px;border-radius:20px;
+                         font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+                LIVE · CPR SCANNER SYNC
+            </span>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Push notification JS ───────────────────────────────────────────────────
-    st.markdown("""
-    <div id="notif-banner" style="display:none;background:#1a6b3c;color:#fff;
-         padding:0.6rem 1rem;border-radius:8px;margin-bottom:1rem;
-         font-family:IBM Plex Mono,monospace;font-size:0.8rem;
-         display:flex;align-items:center;gap:8px;">
-        🔔 <span id="notif-text">Notifications enabled</span>
-    </div>
-    <script>
-    function enableNotifications() {
-        if (!("Notification" in window)) {
-            document.getElementById("notif-status").innerText = "Not supported in this browser";
-            return;
-        }
-        Notification.requestPermission().then(function(perm) {
-            var btn = document.getElementById("notif-btn");
-            var status = document.getElementById("notif-status");
-            if (perm === "granted") {
-                btn.style.background = "#16a34a";
-                btn.style.borderColor = "#16a34a";
-                btn.innerText = "✅ Notifications ON";
-                status.innerText = "Push alerts enabled — you will be notified on strong signals";
-                status.style.color = "#16a34a";
-                new Notification("PivotVault AI", {
-                    body: "Trade signal notifications are now active!",
-                    icon: "/static/icon-192.png"
-                });
-                window._pvNotifEnabled = true;
-            } else {
-                status.innerText = "Permission denied — enable notifications in browser settings";
-                status.style.color = "#dc2626";
-            }
-        });
-    }
-
-    function sendSignalAlert(symbol, bias, entry, target, sl) {
-        if (window._pvNotifEnabled && Notification.permission === "granted") {
-            var emoji = bias.includes("BUY") ? "🚀" : "🔻";
-            new Notification(emoji + " " + symbol + " — " + bias, {
-                body: "Entry: ₹" + entry + "  |  Target: ₹" + target + "  |  SL: ₹" + sl,
-                icon: "/static/icon-192.png",
-                tag: symbol,
-                requireInteraction: true,
+        """, unsafe_allow_html=True)
+    with h2:
+        # Notification enable button — calls window.parent
+        st.markdown("""
+        <button onclick="(function(){
+            var w = window.parent || window;
+            if (!w.Notification) { alert('Notifications not supported in this browser.'); return; }
+            w.Notification.requestPermission().then(function(p){
+                if (p === 'granted') {
+                    w._pvNotifEnabled = true;
+                    new w.Notification('🏦 PivotVault AI', {
+                        body: 'Trade signal notifications are now ON!',
+                        icon: '/static/icon-192.png',
+                        tag:  'pv-enable'
+                    });
+                } else {
+                    alert('Notification permission denied. Please allow notifications in your browser settings.');
+                }
             });
-        }
-    }
-    window.sendSignalAlert = sendSignalAlert;
-    </script>
+        })()"
+        style="width:100%;padding:8px 6px;background:#4e6130;color:#fff;
+               border:none;border-radius:8px;font-family:DM Sans,sans-serif;
+               font-size:0.75rem;font-weight:700;cursor:pointer;
+               transition:opacity 0.2s;" id="notif-enable-btn">
+        🔔 Enable Alerts
+        </button>
+        <script>
+        // Update button text based on current permission
+        (function checkPerm(){
+            var w = window.parent || window;
+            var btn = document.getElementById("notif-enable-btn");
+            if (!btn) { setTimeout(checkPerm, 300); return; }
+            if (w.Notification && w.Notification.permission === "granted") {
+                btn.style.background = "#2d7a3a";
+                btn.innerText = "✅ Alerts ON";
+            } else if (w.Notification && w.Notification.permission === "denied") {
+                btn.style.background = "#c0392b";
+                btn.innerText = "🔕 Blocked";
+                btn.title = "Allow notifications in browser settings (🔒 icon in address bar)";
+            }
+        })();
+        </script>
+        """, unsafe_allow_html=True)
 
-    <div style="background:#ffffff;border:1px solid #dce3ed;border-radius:10px;
-                padding:1rem 1.25rem;margin-bottom:1.25rem;
-                font-family:IBM Plex Mono,monospace;">
-        <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;
-                    color:#5a6a80;margin-bottom:0.6rem;">🔔 Browser Push Notifications</div>
-        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-            <button id="notif-btn" onclick="enableNotifications()"
-                style="background:#ffffff;border:1.5px solid #1a6b3c;color:#1a6b3c;
-                       font-family:IBM Plex Mono,monospace;font-size:0.78rem;font-weight:600;
-                       padding:0.4rem 1.2rem;border-radius:6px;cursor:pointer;
-                       transition:all 0.2s;">
-                🔔 Enable Notifications
-            </button>
-            <div id="notif-status" style="font-size:0.75rem;color:#5a6a80;">
-                Click to receive push alerts when strong signals are detected
+    # ── Auto-refresh: inherit from scanner (15m & 1h only) ────────────────
+    if _HAS_AUTOREFRESH and is_market_open():
+        st_autorefresh(interval=15_000, limit=None, key="signals_autorefresh")
+
+    # ── Pull data from CPR scanner session state ──────────────────────────
+    # Only use 15Min and 1Hour scans as requested
+    TF_LABELS = {
+        "cpr_scan_15m":  ("⚡ 15 Min",  "#e67e22", "15m"),
+        "cpr_scan_1h":   ("🕐 1 Hour",  "#2980b9", "1h"),
+    }
+
+    all_signals = []
+    scan_times  = {}
+
+    for key, (label, color, tag) in TF_LABELS.items():
+        _raw = st.session_state.get(key)
+        df = _raw if isinstance(_raw, pd.DataFrame) else pd.DataFrame()
+        ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
+        if not df.empty:
+            scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
+            for _, r in df.iterrows():
+                all_signals.append({
+                    "tf":       label,
+                    "tf_color": color,
+                    "symbol":   r["Symbol"],
+                    "side":     "BUY"  if r["Pattern"] == "Bullish" else "SELL",
+                    "ltp":      r["LTP"],
+                    "entry":    r["Entry"],
+                    "t1":       r["T1"],
+                    "t2":       r["T2"],
+                    "t3":       r["T3"],
+                    "sl":       r["SL"],
+                    "rr1":      r["RR1"],
+                    "rr2":      r.get("RR2", 0),
+                    "strength": int(r["Strength%"]),
+                    "candle":   r.get("Candle", "—"),
+                    "rsi":      r.get("RSI", 0),
+                    "hma":      r.get("HMA", "—"),
+                    "vol":      r.get("Vol Surge", "—"),
+                    "cpr_w":    r.get("CPR Width%", 0),
+                    "atr":      r.get("ATR", 0),
+                })
+
+    # ── Status bar ────────────────────────────────────────────────────────
+    if not all_signals:
+        st.markdown("""
+        <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
+                    border:2px dashed #dae0cb;border-radius:12px;
+                    font-family:DM Mono,monospace;">
+            <div style="font-size:2rem;margin-bottom:0.75rem;">📡</div>
+            <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
+                No signals yet
+            </div>
+            <div style="font-size:0.82rem;color:#5a6a48;">
+                Go to <b>📡 CPR Scanner</b> → select <b>15 Min</b> or <b>1 Hour</b>
+                → click <b>🔄 Scan Now</b><br>
+                Signals will appear here automatically and refresh with every scan.
             </div>
         </div>
+        """, unsafe_allow_html=True)
+        # Quick scan shortcut buttons
+        st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            if st.button("📡 Go to CPR Scanner → Run Scan", use_container_width=True, key="goto_scanner"):
+                st.session_state["current_page"] = "CPR Scanner"
+                st.rerun()
+        return
+
+    # Scan time info
+    time_pills = " &nbsp;·&nbsp; ".join(
+        f"<span style='color:{TF_LABELS[k][1] if k in TF_LABELS else '#5a6a48'};font-weight:700;'>{label}</span> "
+        f"<span style='color:#8a9a78;'>scanned {t}</span>"
+        for label, t in scan_times.items()
+    ) if scan_times else ""
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+        f"color:#5a6a48;margin-bottom:1rem;padding:0.5rem 0.9rem;"
+        f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
+        f"border-left:3px solid #4e6130;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
+        f"<span class='live-dot'></span>"
+        f"<span style='font-weight:700;color:#4e6130;'>LIVE SIGNALS</span>"
+        f"{time_pills}"
+        f"<span style='margin-left:auto;color:#8a9a78;'>{len(all_signals)} signals total</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Filters ───────────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
+    with fc1:
+        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","🕐 1 Hour"],
+                                    default=["⚡ 15 Min","🕐 1 Hour"],
+                                    key="sig_tf_filter", label_visibility="collapsed")
+    with fc2:
+        side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
+                                horizontal=True, key="sig_side_filter", label_visibility="collapsed")
+    with fc3:
+        min_str = st.slider("Min Strength%", 0, 100, 60, key="sig_min_str")
+    with fc4:
+        min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
+
+    # Apply filters
+    filtered = [s for s in all_signals
+                if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
+                and (side_filter == "All"
+                     or (side_filter == "BUY only"  and s["side"] == "BUY")
+                     or (side_filter == "SELL only" and s["side"] == "SELL"))
+                and s["strength"] >= min_str
+                and s["rr1"] >= min_rr]
+
+    # Sort: strength desc, then CPR width asc
+    filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
+
+    if not filtered:
+        st.info(f"No signals match current filters. Try reducing Min Strength or Min R:R.")
+        return
+
+    bull_sigs = [s for s in filtered if s["side"] == "BUY"]
+    bear_sigs = [s for s in filtered if s["side"] == "SELL"]
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;color:#5a6a48;"
+        f"margin-bottom:0.75rem;'>Showing <b>{len(filtered)}</b> signals — "
+        f"<span style='color:#2d7a3a;font-weight:700;'>▲ {len(bull_sigs)} Bullish</span> &nbsp;"
+        f"<span style='color:#c0392b;font-weight:700;'>▼ {len(bear_sigs)} Bearish</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    broker = st.session_state.get("broker", "none")
+
+    # ── Signal cards ──────────────────────────────────────────────────────
+    def _signal_card_html(s: dict) -> str:
+        bull    = s["side"] == "BUY"
+        ac      = "#2d7a3a" if bull else "#c0392b"
+        bg      = "#edf7ee" if bull else "#fdf0ee"
+        bdr     = "#b8dfc0" if bull else "#f0c0b8"
+        arrow   = "▲" if bull else "▼"
+        rr_col  = "#2d7a3a" if s["rr1"] >= 2 else ("#b8860b" if s["rr1"] >= 1.5 else "#c0392b")
+        str_w   = min(s["strength"], 100)
+        tf_c    = s["tf_color"]
+        return f"""
+<div style="background:#ffffff;border:1px solid #dae0cb;border-radius:12px;
+            padding:1rem 1.1rem;border-top:4px solid {ac};
+            box-shadow:0 2px 10px rgba(50,70,20,0.07);
+            animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
+  <!-- Header row -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
+      <span style="background:{bg};color:{ac};border:1px solid {bdr};
+                   border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
+        {arrow} {s['side']}
+      </span>
+      <span style="background:{tf_c}18;color:{tf_c};border:1px solid {tf_c}44;
+                   border-radius:12px;padding:1px 7px;font-size:0.65rem;font-weight:700;">
+        {s['tf']}
+      </span>
+    </div>
+    <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
+      LTP ₹{s['ltp']:,.2f}
+    </span>
+  </div>
+  <!-- Level pills -->
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">Entry</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#1a1f0e;font-family:DM Mono,monospace;">₹{s['entry']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T1</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t1']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T2</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t2']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">SL</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#c0392b;font-family:DM Mono,monospace;">₹{s['sl']}</div>
+    </div>
+    <div style="background:{rr_col}15;border-radius:7px;padding:5px 3px;text-align:center;border:1px solid {rr_col}33;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">R:R</div>
+      <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
+    </div>
+  </div>
+  <!-- Strength bar -->
+  <div style="margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+      <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
+        {s['candle']} &nbsp;·&nbsp; RSI {s['rsi']} &nbsp;·&nbsp; HMA {s['hma']} &nbsp;·&nbsp; Vol {s['vol']}
+      </span>
+      <span style="font-family:DM Mono,monospace;font-size:0.65rem;font-weight:700;color:{ac};">
+        {s['strength']}%
+      </span>
+    </div>
+    <div style="background:#f0f3ea;border-radius:4px;height:5px;overflow:hidden;">
+      <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
+                  transition:width 0.5s;"></div>
+    </div>
+  </div>
+</div>"""
+
+    # Render in 2-column grid (bull left, bear right on desktop)
+    if bull_sigs and bear_sigs:
+        col_bull, col_bear = st.columns(2)
+        with col_bull:
+            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#2d7a3a;font-weight:700;margin-bottom:0.5rem;'>▲ BULLISH ({len(bull_sigs)})</div>",
+                        unsafe_allow_html=True)
+            for s in bull_sigs:
+                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                _trade_buttons(s)
+        with col_bear:
+            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#c0392b;font-weight:700;margin-bottom:0.5rem;'>▼ BEARISH ({len(bear_sigs)})</div>",
+                        unsafe_allow_html=True)
+            for s in bear_sigs:
+                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                _trade_buttons(s)
+    else:
+        for s in filtered:
+            st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+            _trade_buttons(s)
+
+    # Desktop notifications for new signals
+    if filtered:
+        notif_js = json.dumps([{
+            "symbol":s["symbol"],"side":s["side"],
+            "entry":s["entry"],"t1":s["t1"],"sl":s["sl"],
+            "rr":s["rr1"],"strength":s["strength"],"candle":s["candle"]
+        } for s in filtered[:6]])
+        st.markdown(f"""
+        <script>
+        (function(){{
+            var sigs = {notif_js};
+            var w = window.parent || window;
+            if (w._pvNotifEnabled || (w.Notification && w.Notification.permission === "granted")) {{
+                sigs.forEach(function(s){{
+                    if (w._pvNotify) {{
+                        w._pvNotify(
+                            (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                            "Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                            "pv-"+s.symbol
+                        );
+                    }} else {{
+                        var n = new w.Notification(
+                            (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                            {{body:"Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                              icon:"/static/icon-192.png",tag:"pv-"+s.symbol,requireInteraction:false}}
+                        );
+                    }}
+                }});
+            }}
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
+
+    st.caption("⚠️ Signals from CPR Scanner (15Min + 1Hour). Frank Ochoa Pivot methodology. Not financial advice.")
+
+
+def _trade_buttons(s: dict):
+    """
+    Trade action buttons with market hours awareness.
+    - During market hours (9:15–15:30 IST): Live trade buttons (Groww/Zerodha/Upstox) are active
+    - Outside market hours: Live buttons show 'Market Closed' state, Paper trade always available
+    """
+    from datetime import timezone
+    bull    = s["side"] == "BUY"
+    sym     = s["symbol"]
+    mkt_open = is_market_open()
+
+    IST     = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+
+    # Next market open message
+    if not mkt_open:
+        if now_ist.weekday() >= 5:
+            next_open = "Opens Monday 9:15 AM IST"
+        elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
+            next_open = f"Opens today at 9:15 AM IST"
+        else:
+            next_open = "Opens tomorrow 9:15 AM IST"
+    else:
+        next_open = ""
+
+    # Market status badge
+    if mkt_open:
+        st.markdown(
+            "<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+            "color:#2d7a3a;margin-bottom:4px;display:flex;align-items:center;gap:5px;'>"
+            "<span style='width:6px;height:6px;background:#2d7a3a;border-radius:50%;"
+            "display:inline-block;animation:pulse 1.5s infinite;'></span>"
+            "NSE Open · Live trading available</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+            f"color:#b8860b;margin-bottom:4px;display:flex;align-items:center;gap:5px;'>"
+            f"<span style='width:6px;height:6px;background:#b8860b;border-radius:50%;"
+            f"display:inline-block;'></span>"
+            f"Market Closed · {next_open} · Paper trade available</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Button row ────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+
+    groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
+    kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
+    upstox_url = f"https://login.upstox.com/?tradingsymbol={sym}&exchange=NSE&transaction_type={s['side']}"
+
+    if mkt_open:
+        # ── MARKET OPEN — full live trade buttons ─────────────────────────
+        with c1:
+            ac = "#00b386" if bull else "#e74c3c"
+            st.markdown(
+                f"<a href='{groww_url}' target='_blank' style='"
+                f"display:block;text-align:center;padding:7px 0;"
+                f"background:{ac};color:#fff;border-radius:7px;"
+                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
+                f"font-family:DM Sans,sans-serif;'>"
+                f"{'🟢 Groww' if bull else '🔴 Groww'}</a>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f"<a href='{kite_url}' target='_blank' style='"
+                f"display:block;text-align:center;padding:7px 0;"
+                f"background:#387ed1;color:#fff;border-radius:7px;"
+                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
+                f"font-family:DM Sans,sans-serif;'>"
+                f"⚡ Zerodha</a>",
+                unsafe_allow_html=True,
+            )
+        with c3:
+            st.markdown(
+                f"<a href='{upstox_url}' target='_blank' style='"
+                f"display:block;text-align:center;padding:7px 0;"
+                f"background:#7c3aed;color:#fff;border-radius:7px;"
+                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
+                f"font-family:DM Sans,sans-serif;'>"
+                f"💜 Upstox</a>",
+                unsafe_allow_html=True,
+            )
+    else:
+        # ── MARKET CLOSED — greyed out with tooltip ───────────────────────
+        closed_style = (
+            "display:block;text-align:center;padding:7px 0;"
+            "background:#e8eddf;color:#8a9a78;border-radius:7px;"
+            "font-size:0.7rem;font-weight:600;text-decoration:none;"
+            "font-family:DM Sans,sans-serif;cursor:not-allowed;"
+            "border:1px dashed #c4d49a;"
+        )
+        with c1:
+            st.markdown(
+                f"<div title='{next_open}' style='{closed_style}'>"
+                f"🔒 Groww</div>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f"<div title='{next_open}' style='{closed_style}'>"
+                f"🔒 Zerodha</div>",
+                unsafe_allow_html=True,
+            )
+        with c3:
+            st.markdown(
+                f"<div title='{next_open}' style='{closed_style}'>"
+                f"🔒 Upstox</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Paper Trade — always available ────────────────────────────────────
+    with c4:
+        if st.button("📝 Paper", key=f"paper_{sym}_{s['side']}_{s['tf']}", use_container_width=True):
+            balance = st.session_state.get("paper_balance", 100000.0)
+            try:
+                live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
+            except:
+                live = s["entry"]
+            qty  = max(1, int(balance * 0.05 / max(live, 1)))
+            cost = round(live * qty, 2)
+            if cost > balance:
+                qty  = max(1, int(balance * 0.02 / max(live, 1)))
+                cost = round(live * qty, 2)
+            if cost > balance:
+                st.error("Insufficient virtual balance.")
+            else:
+                trade = {
+                    "id":     len(st.session_state.get("paper_trades", [])) + 1,
+                    "symbol": sym,
+                    "side":   s["side"],
+                    "entry":  live,
+                    "qty":    qty,
+                    "target": s["t1"],
+                    "sl":     s["sl"],
+                    "rr":     s["rr1"],
+                    "cost":   cost,
+                    "status": "OPEN",
+                    "pnl":    0.0,
+                    "exit_px": None,
+                    "source": f"Scanner {s['tf']}",
+                    "time":   datetime.now().strftime("%d %b %H:%M"),
+                }
+                if "paper_trades" not in st.session_state:
+                    st.session_state["paper_trades"] = []
+                st.session_state["paper_trades"].append(trade)
+                st.session_state["paper_balance"] = balance - cost
+                st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
+
+    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+
+
+def page_broker_settings():
+    st.markdown("## ⚙️ Broker Settings")
+    st.markdown("<div style='color:#5a6a48;font-size:0.85rem;margin-bottom:1.5rem;'>Connect your broker for one-click trading. Keys stored in session only — never saved to server.</div>", unsafe_allow_html=True)
+
+    broker = st.radio("Select Broker", ["None","Zerodha Kite","Upstox","Groww (web only)"],
+                      horizontal=True, key="broker_radio")
+
+    if broker == "Zerodha Kite":
+        st.info("📋 Go to kite.zerodha.com/apps → Create app → Copy API Key & Secret. Generate daily access token via Kite login.")
+        c1, c2 = st.columns(2)
+        with c1:
+            ak  = st.text_input("API Key",    value=st.session_state.get("zerodha_api_key",""),      key="zk_ak",  type="password")
+        with c2:
+            aks = st.text_input("API Secret", value=st.session_state.get("zerodha_api_secret",""),   key="zk_aks", type="password")
+        at  = st.text_input("Access Token (regenerate daily)", value=st.session_state.get("zerodha_access_token",""), key="zk_at", type="password")
+        if st.button("💾 Save Zerodha Config", use_container_width=True, key="save_zk"):
+            st.session_state.update({"zerodha_api_key":ak,"zerodha_api_secret":aks,
+                                     "zerodha_access_token":at,"broker":"zerodha",
+                                     "broker_connected": bool(ak and at)})
+            st.success("✅ Zerodha configured!" if ak and at else "⚠️ Enter API key and access token.")
+
+    elif broker == "Upstox":
+        st.info("📋 Go to upstox.com/developer → Create app → Copy API Key & Secret → Generate access token via OAuth.")
+        c1, c2 = st.columns(2)
+        with c1:
+            uak  = st.text_input("API Key",    value=st.session_state.get("upstox_api_key",""),    key="up_ak",  type="password")
+        with c2:
+            uaks = st.text_input("API Secret", value=st.session_state.get("upstox_api_secret",""), key="up_aks", type="password")
+        uat  = st.text_input("Access Token",   value=st.session_state.get("upstox_access_token",""), key="up_at", type="password")
+        if st.button("💾 Save Upstox Config", use_container_width=True, key="save_up"):
+            st.session_state.update({"upstox_api_key":uak,"upstox_api_secret":uaks,
+                                     "upstox_access_token":uat,"broker":"upstox",
+                                     "broker_connected": bool(uat)})
+            st.success("✅ Upstox configured!" if uat else "⚠️ Enter access token.")
+
+    elif broker == "Groww (web only)":
+        st.info("ℹ️ Groww has no public API. Signal cards open Groww web/app — place order manually.")
+        st.session_state["broker"] = "groww"
+        st.session_state["broker_connected"] = True
+    else:
+        st.session_state["broker"] = "none"
+        st.session_state["broker_connected"] = False
+
+    st.divider()
+    connected = st.session_state.get("broker_connected", False)
+    bname     = st.session_state.get("broker","none").title()
+    st.markdown(
+        f"<div style='padding:0.75rem 1rem;background:{'#edf7ee' if connected else '#f7f9f2'};"
+        f"border:1px solid {'#b8dfc0' if connected else '#dae0cb'};"
+        f"border-radius:8px;font-family:DM Mono,monospace;font-size:0.8rem;'>"
+        f"{'✅ Connected: '+bname if connected else '⚪ No broker connected — using web links'}"
+        f"</div>", unsafe_allow_html=True)
+
+    st.markdown("""
+    ### 📦 Install broker SDKs (run once in terminal)
+    ```
+    pip install kiteconnect          # Zerodha
+    pip install upstox-python-sdk    # Upstox
+    ```
+    """)
+
+
+def page_paper_trading():
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">📝</span>
+        <h1 style="color:#1a1f0e;">Test Trading</h1>
+        <span style="margin-left:auto;background:#fdf9ec;border:1px solid #f0d898;
+                     color:#b8860b;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+            PAPER TRADING · VIRTUAL CAPITAL
+        </span>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Controls ───────────────────────────────────────────────────────────────
-    symbols = sorted(fetch_nifty200_list())
+    balance   = st.session_state.get("paper_balance", 100000.0)
+    trades    = st.session_state.get("paper_trades", [])
+    closed    = [t for t in trades if t.get("status") == "CLOSED"]
+    open_tr   = [t for t in trades if t.get("status") == "OPEN"]
+    wins      = [t for t in closed if t.get("pnl",0) > 0]
+    losses    = [t for t in closed if t.get("pnl",0) <= 0]
+    win_rate  = round(len(wins)/len(closed)*100) if closed else 0
+    total_pnl = sum(t.get("pnl",0) for t in closed)
 
-    col1, col2, col3, col4 = st.columns([3, 2, 1.5, 1])
-    with col1:
-        watch_syms = st.multiselect(
-            "Symbols to monitor",
-            symbols,
-            default=["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK"],
-            key="sig_symbols",
-            label_visibility="collapsed",
-            max_selections=20,
-            placeholder="Choose up to 20 symbols…",
-        )
-    with col2:
-        sig_tf = st.selectbox(
-            "Timeframe",
-            ["15 Min (Fast Scalping)", "1 Hour (Swing Scalp)",
-             "Daily (Swing Trade)", "Weekly (Positional)"],
-            index=2,
-            label_visibility="collapsed",
-            key="sig_tf",
-        )
-    with col3:
-        sig_filter = st.selectbox(
-            "Show",
-            ["All Signals", "Buy Only", "Sell Only", "Strong Only"],
-            label_visibility="collapsed",
-            key="sig_filter",
-        )
-    with col4:
-        refresh_btn = st.button("🔄 Refresh", use_container_width=True, key="sig_refresh")
-
-    SIG_TF_MAP = {
-        "15 Min (Fast Scalping)":  ("15m", "5d"),
-        "1 Hour (Swing Scalp)":    ("1h",  "30d"),
-        "Daily (Swing Trade)":     ("1d",  "90d"),
-        "Weekly (Positional)":     ("1wk", "2y"),
-    }
-    sig_interval, sig_period = SIG_TF_MAP[sig_tf]
-
-    if not watch_syms:
-        st.info("Select at least one symbol to analyse.")
-        return
-
-    # ── Compute signals ────────────────────────────────────────────────────────
-    cache_key = f"signals_{sig_interval}_{','.join(sorted(watch_syms))}"
-    if refresh_btn or cache_key not in st.session_state:
-        results = {}
-        prog = st.progress(0, text="Analysing symbols…")
-        for i, sym in enumerate(watch_syms):
-            results[sym] = compute_signals_for_symbol(sym, sig_interval, sig_period)
-            prog.progress((i + 1) / len(watch_syms), text=f"Analysing {sym}…")
-        prog.empty()
-        st.session_state[cache_key] = results
-    else:
-        results = st.session_state[cache_key]
-
-    # Filter
-    valid = {s: r for s, r in results.items() if r}
-    if sig_filter == "Buy Only":
-        valid = {s: r for s, r in valid.items() if r["bias_col"] == "bull"}
-    elif sig_filter == "Sell Only":
-        valid = {s: r for s, r in valid.items() if r["bias_col"] == "bear"}
-    elif sig_filter == "Strong Only":
-        valid = {s: r for s, r in valid.items() if "STRONG" in r["bias"]}
-
-    # Sort by |score| desc
-    sorted_sigs = sorted(valid.items(), key=lambda x: abs(x[1]["score"]), reverse=True)
-
-    if not sorted_sigs:
-        st.info("No signals match the current filter.")
-        return
-
-    # ── Summary strip ──────────────────────────────────────────────────────────
-    n_buy       = sum(1 for _, r in sorted_sigs if r["bias_col"] == "bull")
-    n_sell      = sum(1 for _, r in sorted_sigs if r["bias_col"] == "bear")
-    n_strong    = sum(1 for _, r in sorted_sigs if "STRONG" in r["bias"])
-    n_neut      = sum(1 for _, r in sorted_sigs if r["bias_col"] == "neut")
-
-    sm1, sm2, sm3, sm4 = st.columns(4)
-    sm1.metric("🟢 Buy Signals",    n_buy)
-    sm2.metric("🔴 Sell Signals",   n_sell)
-    sm3.metric("🚀 Strong Signals", n_strong)
-    sm4.metric("⚪ Neutral",        n_neut)
-
-    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-
-    # ── Push notification triggers ─────────────────────────────────────────────
-    # Inject JS calls for strong signals
-    js_alerts = ""
-    for sym, sig in sorted_sigs:
-        if "STRONG" in sig["bias"]:
-            js_alerts += (
-                f"sendSignalAlert('{sym}','{sig['bias']}',"
-                f"'{sig['entry']}','{sig['tgt1']}','{sig['sl']}');"
-            )
-    if js_alerts:
-        st.markdown(f"<script>setTimeout(function(){{ {js_alerts} }}, 1500);</script>",
-                    unsafe_allow_html=True)
-
-    # ── Signal cards in 2-column grid ─────────────────────────────────────────
-    cards_left  = ""
-    cards_right = ""
-    for i, (sym, sig) in enumerate(sorted_sigs):
-        card = _signal_card(sig)
-        if i % 2 == 0:
-            cards_left  += card
-        else:
-            cards_right += card
-
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.markdown(cards_left,  unsafe_allow_html=True)
-    with col_r:
-        st.markdown(cards_right, unsafe_allow_html=True)
-
-    # ── Pivot level table ──────────────────────────────────────────────────────
+    mc1,mc2,mc3,mc4,mc5 = st.columns(5)
+    mc1.metric("💰 Virtual Balance",  f"₹{balance:,.0f}")
+    mc2.metric("📈 Total P&L",        f"₹{total_pnl:+,.0f}")
+    mc3.metric("🔄 Open Trades",      len(open_tr))
+    mc4.metric("✅ Win Rate",         f"{win_rate}%", f"{len(wins)}W/{len(losses)}L")
+    mc5.metric("📊 Total Trades",     len(trades))
     st.divider()
-    st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
-        "font-weight:700;color:#1a2332;margin-bottom:0.5rem;'>📋 Pivot Level Reference</div>",
-        unsafe_allow_html=True,
-    )
-    ref_rows = []
-    for sym, sig in sorted_sigs:
-        if not sig:
-            continue
-        ref_rows.append({
-            "Symbol": sym,
-            "LTP":    f"₹{sig['ltp']:,.2f}",
-            "Signal": sig["bias"],
-            "R2":     f"₹{sig['R2']:,.2f}",
-            "R1":     f"₹{sig['R1']:,.2f}",
-            "P":      f"₹{sig['P']:,.2f}",
-            "S1":     f"₹{sig['S1']:,.2f}",
-            "S2":     f"₹{sig['S2']:,.2f}",
-            "RSI":    sig["rsi"],
-            "CPR%":   f"{sig['cpr_width']}%",
-        })
-    if ref_rows:
-        st.dataframe(pd.DataFrame(ref_rows), use_container_width=True, hide_index=True)
 
-    st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#94a3b8;"
-        "margin-top:0.75rem;'>⚠️ Signals based on Frank Ochoa Pivot Boss methodology. "
-        "Not financial advice. Always use proper risk management.</div>",
-        unsafe_allow_html=True,
-    )
+    # ── Place new trade ───────────────────────────────────────────────────
+    with st.expander("➕ Place Paper Trade", expanded=len(trades)==0):
+        syms = ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","HINDUNILVR","SBIN",
+                "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
+                "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","NTPC","ADANIENT"]
+        pc1,pc2,pc3 = st.columns(3)
+        with pc1:
+            sym  = st.selectbox("Symbol", syms, key="pt_sym")
+            side = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="pt_side")
+        with pc2:
+            try:    live = round(float(yf.Ticker(sym+".NS").fast_info.last_price),2)
+            except: live = 0.0
+            entry  = st.number_input("Entry ₹",  value=live,                  step=0.05, key="pt_entry")
+            qty    = st.number_input("Quantity",  value=1, min_value=1,        step=1,    key="pt_qty")
+        with pc3:
+            target = st.number_input("Target ₹", value=round(live*1.03,2),    step=0.05, key="pt_tgt")
+            sl     = st.number_input("Stop Loss ₹",value=round(live*0.98,2),  step=0.05, key="pt_sl")
+
+        risk   = max(abs(entry-sl)*qty, 0.01)
+        reward = abs(target-entry)*qty
+        rr     = round(reward/risk,2)
+        cost   = round(entry*qty,2)
+        st.markdown(
+            f"<div style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
+            f"padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
+            f"display:flex;gap:1.5rem;flex-wrap:wrap;margin:0.5rem 0;'>"
+            f"<span>💰 Cost <b>₹{cost:,.0f}</b></span>"
+            f"<span>⚠️ Risk <b>₹{round(risk,0):,.0f}</b></span>"
+            f"<span>🎯 Reward <b>₹{round(reward,0):,.0f}</b></span>"
+            f"<span>📊 R:R <b>{rr}x</b></span></div>",
+            unsafe_allow_html=True)
+
+        if st.button("📝 Place Paper Trade", use_container_width=True, key="pt_place"):
+            if cost > balance:
+                st.error(f"Insufficient balance. Need ₹{cost:,.0f}, have ₹{balance:,.0f}")
+            else:
+                trade = {"id":len(trades)+1,"symbol":sym,"side":side,"entry":entry,
+                         "qty":qty,"target":target,"sl":sl,"rr":rr,"cost":cost,
+                         "status":"OPEN","pnl":0.0,"exit_px":None,
+                         "source":"Manual","time":datetime.now().strftime("%d %b %H:%M")}
+                st.session_state["paper_trades"].append(trade)
+                st.session_state["paper_balance"] -= cost
+                st.success(f"✅ Opened: {side} {qty}×{sym} @ ₹{entry}")
+                st.rerun()
+
+    # ── Open positions ────────────────────────────────────────────────────
+    if open_tr:
+        st.markdown("### 📂 Open Positions")
+        for t in open_tr:
+            try:    cur = round(float(yf.Ticker(t["symbol"]+".NS").fast_info.last_price),2)
+            except: cur = t["entry"]
+            upnl = round((cur-t["entry"])*t["qty"] if t["side"]=="BUY" else (t["entry"]-cur)*t["qty"],2)
+            pct  = round(upnl/t["cost"]*100,2)
+            col  = "#2d7a3a" if upnl>=0 else "#c0392b"
+            flag = " 🎯 TARGET" if (t["side"]=="BUY" and cur>=t["target"]) or (t["side"]=="SELL" and cur<=t["target"])                    else (" 🛑 SL HIT" if (t["side"]=="BUY" and cur<=t["sl"]) or (t["side"]=="SELL" and cur>=t["sl"]) else "")
+            st.markdown(
+                f"<div style='background:#fff;border:1px solid #dae0cb;border-radius:10px;"
+                f"padding:0.9rem 1.1rem;margin-bottom:0.5rem;"
+                f"border-left:4px solid {'#2d7a3a' if t['side']=='BUY' else '#c0392b'};'>"
+                f"<div style='font-family:DM Mono,monospace;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
+                f"<b style='font-size:1rem;color:#1a1f0e;'>{t['symbol']}</b>"
+                f"<span style='background:{'#edf7ee' if t['side']=='BUY' else '#fdf0ee'};"
+                f"color:{'#2d7a3a' if t['side']=='BUY' else '#c0392b'};"
+                f"border-radius:20px;padding:1px 8px;font-size:0.7rem;font-weight:700;'>{t['side']}</span>"
+                f"<span style='font-size:0.8rem;color:#5a6a48;'>{t['qty']}× ₹{t['entry']} → ₹{cur}</span>"
+                f"<span style='font-weight:700;color:{col};'>{'+'if upnl>=0 else''}₹{upnl:,.2f} ({pct:+.1f}%){flag}</span>"
+                f"<span style='font-size:0.7rem;color:#8a9a78;'>T:₹{t['target']} SL:₹{t['sl']} R:R {t['rr']}x</span>"
+                f"</div></div>", unsafe_allow_html=True)
+            ec1,ec2 = st.columns([3,1])
+            with ec1:
+                xpx = st.number_input(f"Exit price (#{t['id']})", value=cur, step=0.05, key=f"xpx_{t['id']}")
+            with ec2:
+                st.markdown("<div style='padding-top:1.7rem;'>", unsafe_allow_html=True)
+                if st.button("Close", key=f"close_{t['id']}", use_container_width=True):
+                    for j,tt in enumerate(st.session_state["paper_trades"]):
+                        if tt["id"]==t["id"] and tt["status"]=="OPEN":
+                            fpnl = round((xpx-tt["entry"])*tt["qty"] if tt["side"]=="BUY" else (tt["entry"]-xpx)*tt["qty"],2)
+                            st.session_state["paper_trades"][j].update({"status":"CLOSED","pnl":fpnl,"exit_px":xpx})
+                            st.session_state["paper_balance"] += tt["cost"]+fpnl
+                            (st.success if fpnl>=0 else st.error)(f"Closed {tt['symbol']}: {'+'if fpnl>=0 else''}₹{fpnl:,.2f}")
+                            st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Closed trade history ──────────────────────────────────────────────
+    if closed:
+        st.markdown("### 📋 Trade History")
+        avg_win  = round(sum(t["pnl"] for t in wins)/max(len(wins),1),2)
+        avg_loss = round(sum(t["pnl"] for t in losses)/max(len(losses),1),2)
+        pf       = round(abs(sum(t["pnl"] for t in wins))/max(abs(sum(t["pnl"] for t in losses)),0.01),2)
+        exp      = round(total_pnl/len(closed),2)
+        sc1,sc2,sc3,sc4 = st.columns(4)
+        sc1.metric("Avg Win",      f"₹{avg_win:+,.0f}")
+        sc2.metric("Avg Loss",     f"₹{avg_loss:+,.0f}")
+        sc3.metric("Profit Factor",f"{pf}x")
+        sc4.metric("Expectancy",   f"₹{exp:+,.0f}")
+        rows = [{"#":t["id"],"Symbol":t["symbol"],"Side":t["side"],"Qty":t["qty"],
+                 "Entry":f"₹{t['entry']:,.2f}","Exit":f"₹{t['exit_px']:,.2f}" if t["exit_px"] else "—",
+                 "P&L":f"{'+'if t['pnl']>=0 else''}₹{t['pnl']:,.2f}",
+                 "R:R":f"{t['rr']}x","Source":t.get("source","Manual"),"Time":t.get("time","—")}
+                for t in reversed(closed)]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        if len(closed)>=2:
+            cum,run = [],0
+            for t in closed:
+                run+=t["pnl"]; cum.append({"Trade":t["id"],"Cumulative P&L":round(run,2)})
+            st.line_chart(pd.DataFrame(cum).set_index("Trade"), color="#4e6130", use_container_width=True)
+
+    st.divider()
+    if st.button("🔄 Reset Paper Account (₹1,00,000)", use_container_width=True, key="reset_paper"):
+        st.session_state.update({"paper_trades":[],"paper_balance":100000.0,"paper_positions":{}})
+        st.success("Paper account reset!"); st.rerun()
+    st.caption("⚠️ Paper trading uses virtual capital only. Not real trades. For strategy testing purposes only.")
 
 
 def render_sidebar():
     PAGES = [
-        "Market Snapshot",
-        "Pivot Boss Analysis",
-        "CPR Scanner",
-        "Trade Signals",
-        "Watchlist",
+        ("📊", "Market",     "Market Snapshot"),
+        ("📈", "Pivot Boss", "Pivot Boss Analysis"),
+        ("📡", "Scanner",    "CPR Scanner"),
+        ("🔔", "Signals",    "Trade Signals"),
+        ("📝", "Test Trade", "Paper Trading"),
+        ("⚙️",  "Broker",    "Broker Settings"),
+        ("⭐", "Watchlist",  "Watchlist"),
     ]
 
-    # ── Desktop sidebar ───────────────────────────────────────────────────
-    with st.sidebar:
-        st.markdown(
-            "<div style='padding:0.5rem 0 1rem;font-family:IBM Plex Mono,monospace;'>"
-            "<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;'>🏦 PivotVault <span style='color:#16a34a;'>AI</span></div>"
-            "<div style='font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-top:2px;'>Pivot Boss · Equity Terminal</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        menu_sidebar = st.radio(
-            "nav", PAGES,
-            label_visibility="collapsed",
-            key="sidebar_nav",
-        )
-        st.divider()
-        wl = len(st.session_state.get("watchlist", []))
-        st.caption(f"👤 {st.session_state.get('username','user')}  |  ⭐ {wl} stocks")
-        if st.button("🚪 Logout", use_container_width=True, key="sidebar_logout"):
-            st.session_state["logged_in"] = False
-            st.rerun()
+    if "current_page" not in st.session_state:
+        st.session_state["current_page"] = "Market Snapshot"
+    current = st.session_state["current_page"]
 
-    # ── Mobile top selectbox nav (always visible, always works) ──────────
     st.markdown("""
     <style>
-    /* Hide mobile nav on desktop */
-    .mobile-nav-box { display: none; }
-    @media (max-width: 768px) {
-        /* Show mobile nav on mobile */
-        .mobile-nav-box { display: block !important; }
-        /* Hide desktop sidebar on mobile */
-        section[data-testid="stSidebar"],
-        [data-testid="collapsedControl"],
-        button[data-testid="baseButton-header"] {
-            display: none !important;
-        }
+    .block-container { padding-top: 0.25rem !important; }
+    section[data-testid="stSidebar"]        { display: none !important; }
+    [data-testid="collapsedControl"]         { display: none !important; }
+    button[data-testid="baseButton-header"]  { display: none !important; }
+    .nav-btn > div > button {
+        background: transparent !important;
+        border: none !important;
+        border-bottom: 3px solid transparent !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        color: #5a6a48 !important;
+        font-family: DM Sans, sans-serif !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        padding: 0.45rem 0.2rem !important;
+        width: 100% !important;
+        transition: color 0.15s, border-color 0.15s !important;
+        white-space: nowrap !important;
+    }
+    .nav-btn > div > button:hover {
+        color: #3a4a22 !important;
+        border-bottom-color: #7a9651 !important;
+        background: rgba(97,122,61,0.05) !important;
+    }
+    .nav-btn-active > div > button {
+        color: #3a4a22 !important;
+        border-bottom-color: #4e6130 !important;
+        font-weight: 800 !important;
+        background: rgba(78,97,48,0.07) !important;
     }
     </style>
-    <div class="mobile-nav-box"></div>
     """, unsafe_allow_html=True)
 
-    # The selectbox always renders but is only visible on mobile via CSS
-    menu_mobile = st.selectbox(
-        "📱 Navigate",
-        PAGES,
-        index=PAGES.index(st.session_state.get("sidebar_nav", PAGES[0]))
-              if st.session_state.get("sidebar_nav") in PAGES else 0,
-        key="mobile_nav_select",
-        label_visibility="visible",
-    )
+    cols = st.columns([1.6] + [1]*len(PAGES) + [1.3])
 
-    # Determine which menu to use based on last interaction
-    # If mobile selectbox changed, use that; otherwise use sidebar
-    if st.session_state.get("mobile_nav_select") != st.session_state.get("sidebar_nav"):
-        menu = st.session_state.get("mobile_nav_select", PAGES[0])
-    else:
-        menu = menu_sidebar
+    with cols[0]:
+        st.markdown(
+            "<div style='padding:0.45rem 0.4rem 0.3rem;white-space:nowrap;'>"
+            "<span style='font-family:DM Sans,sans-serif;font-weight:900;"
+            "font-size:0.92rem;color:#1a1f0e;'>🏦 PivotVault</span>"
+            "<span style='font-family:DM Sans,sans-serif;font-weight:900;"
+            "font-size:0.92rem;color:#4e6130;'> AI</span></div>",
+            unsafe_allow_html=True,
+        )
 
-    return menu
+    for i, (icon, short, page_key) in enumerate(PAGES):
+        with cols[i + 1]:
+            cls = "nav-btn-active" if current == page_key else "nav-btn"
+            st.markdown(f'<div class="{cls}">', unsafe_allow_html=True)
+            if st.button(f"{icon} {short}", key=f"nav_{i}", use_container_width=True):
+                st.session_state["current_page"] = page_key
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    with cols[-1]:
+        wl    = len(st.session_state.get("watchlist", []))
+        uname = st.session_state.get("username", "")[:10]
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.62rem;"
+            f"color:#5a6a48;text-align:right;padding-top:0.15rem;'>"
+            f"👤{uname} ⭐{wl}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🚪 Logout", key="top_logout", use_container_width=True):
+            st.session_state["logged_in"] = False
+            st.session_state["current_page"] = "Market Snapshot"
+            st.rerun()
+
+    st.markdown("<hr style='margin:0 0 0.5rem 0;border-color:#dae0cb;'>",
+                unsafe_allow_html=True)
+    return current
 
 
 def main():
@@ -4035,18 +5826,19 @@ def main():
         page_login()
         return
 
-    menu   = render_sidebar()
+    page = render_sidebar()
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
 
-
-
-    if   menu == "Market Snapshot":     page_market_snapshot(nse500)
-    elif menu == "Pivot Boss Analysis": page_pivot_boss(nse500)
-    elif menu == "CPR Scanner":         page_cpr_scanner(nse500)
-    elif menu == "Trade Signals":       page_trade_signals(nse500)
-    elif menu == "Watchlist":           page_watchlist()
+    if   page == "Market Snapshot":     page_market_snapshot(nse500)
+    elif page == "Pivot Boss Analysis": page_pivot_boss(nse500)
+    elif page == "CPR Scanner":         page_cpr_scanner(nse500)
+    elif page == "Trade Signals":       page_trade_signals(nse500)
+    elif page == "Paper Trading":       page_paper_trading()
+    elif page == "Broker Settings":     page_broker_settings()
+    elif page == "Watchlist":           page_watchlist()
+    else:                               page_market_snapshot(nse500)
 
 
 if __name__ == "__main__":
