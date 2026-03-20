@@ -3962,16 +3962,17 @@ def page_trade_signals(nse500: pd.DataFrame):
 
 
 def render_sidebar():
-    PAGES = [
-        "Market Snapshot",
-        "Pivot Boss Analysis",
-        "CPR Scanner",
-        "Trade Signals",
-        "Watchlist",
-    ]
+    PAGES = ["Market Snapshot","Pivot Boss Analysis","CPR Scanner","Trade Signals","Watchlist"]
+    ICONS = ["📊","📈","📡","🔔","⭐"]
+    SHORT = ["Market","Pivot","Scanner","Signals","Watch"]
 
+    # ── Read page from query params (mobile nav sets this) ────────────────
+    qp = st.query_params.get("page", "")
+    if qp in PAGES and qp != st.session_state.get("main_nav"):
+        st.session_state["main_nav"] = qp
+
+    # ── Sidebar (desktop) ─────────────────────────────────────────────────
     with st.sidebar:
-        # Logo
         st.markdown(
             "<div style='padding:0.75rem 0.5rem 0.25rem;'>"
             "<span style='font-family:IBM Plex Mono,monospace;font-size:1.1rem;"
@@ -3984,130 +3985,77 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
         st.divider()
-
-        menu = st.radio(
-            "Navigation",
-            PAGES,
-            label_visibility="collapsed",
-            key="main_nav",
-        )
-
+        cur_idx = PAGES.index(st.session_state.get("main_nav", PAGES[0])) if st.session_state.get("main_nav") in PAGES else 0
+        menu = st.radio("Navigation", PAGES, index=cur_idx,
+                        label_visibility="collapsed", key="main_nav")
         st.divider()
-
         wl_count = len(st.session_state.get("watchlist", []))
-        user     = st.session_state.get("username", "user")
-        st.caption(f"👤 {user}  |  ⭐ {wl_count} stocks")
-
+        st.caption(f"👤 {st.session_state.get('username','user')}  |  ⭐ {wl_count}")
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state["logged_in"] = False
+            st.query_params.clear()
             st.rerun()
 
-    # ── Mobile bottom nav — uses st.query_params for reliable navigation ──
-    active = st.session_state.get("main_nav", "Market Snapshot")
-    ICONS  = ["📊","📈","📡","🔔","⭐"]
-    SHORT  = ["Market","Pivot Boss","Scanner","Signals","Watch"]
+    # Sync to URL
+    st.query_params["page"] = menu
 
-    nav_btns = ""
-    for i, (page, icon, short) in enumerate(zip(PAGES, ICONS, SHORT)):
-        active_cls = "pv-nav-active" if page == active else ""
-        nav_btns += (
-            f'<button class="pv-nav-btn {active_cls}" '
-            f'onclick="pvNav({i})">'
-            f'<span style="font-size:1.2rem;">{icon}</span>'
-            f'<span>{short}</span></button>'
-        )
+    # ── Mobile bottom nav (st.button — no JS DOM manipulation) ───────────
+    active = st.session_state.get("main_nav", PAGES[0])
 
-    st.markdown(
-        f"""
-        <style>
-        .pv-bottom-nav {{
-            display: none;
-        }}
-        @media (max-width: 768px) {{
-            .pv-bottom-nav {{
-                display: flex !important;
-                position: fixed;
-                bottom: 0; left: 0; right: 0;
-                height: 58px;
-                background: #1e293b;
-                border-top: 2px solid #334155;
-                z-index: 99999;
-                align-items: stretch;
-                justify-content: space-around;
-                padding: 0;
-                padding-bottom: env(safe-area-inset-bottom, 0);
-            }}
-            .pv-nav-btn {{
-                flex: 1;
-                background: transparent;
-                border: none;
-                border-top: 3px solid transparent;
-                color: #475569;
-                font-family: IBM Plex Mono, monospace;
-                font-size: 0.58rem;
-                letter-spacing: 0.03em;
-                text-transform: uppercase;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                gap: 2px;
-                cursor: pointer;
-                -webkit-tap-highlight-color: transparent;
-                transition: color 0.15s, border-color 0.15s;
-            }}
-            .pv-nav-btn.pv-nav-active {{
-                color: #16a34a !important;
-                border-top-color: #16a34a !important;
-            }}
-            /* Push content up so bottom nav doesn't overlap */
-            .block-container {{
-                padding-bottom: 68px !important;
-            }}
-        }}
-        </style>
-        <div class="pv-bottom-nav">
-            {nav_btns}
-        </div>
-        <script>
-        var PV_PAGES = {str(PAGES).replace("'", '"')};
-        function pvNav(idx) {{
-            // Method 1: click the radio label directly
-            var doc = window.parent ? window.parent.document : document;
-            var labels = doc.querySelectorAll(
-                'section[data-testid="stSidebar"] .stRadio label'
-            );
-            if (labels && labels.length > idx) {{
-                labels[idx].click();
-                return;
-            }}
-            // Method 2: click the radio input
-            var inputs = doc.querySelectorAll(
-                'section[data-testid="stSidebar"] .stRadio input[type="radio"]'
-            );
-            if (inputs && inputs.length > idx) {{
-                inputs[idx].click();
-                return;
-            }}
-            // Method 3: find by text content
-            var allLabels = doc.querySelectorAll(
-                'section[data-testid="stSidebar"] label'
-            );
-            allLabels.forEach(function(l) {{
-                if (l.innerText.trim() === PV_PAGES[idx]) l.click();
-            }});
-        }}
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown("""
+    <style>
+    .pv-mobile-nav { display: none !important; }
+    @media (max-width: 768px) {
+        .pv-mobile-nav {
+            display: flex !important;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 60px;
+            background: #1e293b;
+            border-top: 2px solid #334155;
+            z-index: 99999;
+            padding-bottom: env(safe-area-inset-bottom, 0);
+        }
+        .block-container { padding-bottom: 72px !important; }
+        section[data-testid="stSidebar"],
+        [data-testid="collapsedControl"],
+        button[data-testid="baseButton-header"] { display: none !important; }
+    }
+    /* Override st.button inside mobile nav */
+    .pv-mobile-nav .stButton > div > button {
+        background: transparent !important;
+        border: none !important;
+        border-top: 3px solid transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        color: #475569 !important;
+        font-size: 0.58rem !important;
+        letter-spacing: 0.03em !important;
+        text-transform: uppercase !important;
+        height: 60px !important;
+        width: 100% !important;
+        flex-direction: column !important;
+        padding: 2px 0 0 0 !important;
+        line-height: 1.3 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    with st.container():
+        st.markdown('<div class="pv-mobile-nav">', unsafe_allow_html=True)
+        cols = st.columns(len(PAGES))
+        for i, (page, icon, short) in enumerate(zip(PAGES, ICONS, SHORT)):
+            with cols[i]:
+                label = f"{icon}\n{short}" if False else icon + " " + short
+                if st.button(label, key=f"nav_m_{i}", use_container_width=True):
+                    st.session_state["main_nav"] = page
+                    st.query_params["page"] = page
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     return menu
 
 
-# ─────────────────────────────────────────────
-#  MAIN
-# ─────────────────────────────────────────────
 def main():
     if not st.session_state["logged_in"]:
         page_login()
