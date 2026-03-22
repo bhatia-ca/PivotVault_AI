@@ -38,6 +38,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import streamlit.components.v1 as _stc
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from execution_engine import OrderExecutor
+from event_logger import EventLogger
 
 # ══════════════════════════════════════════════════════════════
 #  STRATEGY NAMING ENGINE
@@ -688,6 +690,8 @@ defaults = {
     'paper_trades':     [],
     'paper_balance':    100000.0,  # Rs 1 lakh starting capital
     'paper_positions':  {},
+    # Active trades (broker + paper, monitored for SL/Target)
+    'active_trades':    [],
     'cpr_scan_15m': None,
     'cpr_scan_30m': None,
     'cpr_scan_1h':  None,
@@ -5328,6 +5332,66 @@ def page_trade_signals(nse500: pd.DataFrame):
     if 'cpr_scan_time_30m' not in st.session_state:
         st.session_state['cpr_scan_time_30m'] = 0
 
+    # ── SL / Target Monitor (runs on every autorefresh tick) ───────────────
+    _open_trades = [t for t in st.session_state.get("active_trades", []) if t["status"] == "OPEN"]
+    if _open_trades:
+        _syms = list({t["symbol"] for t in _open_trades})
+        _ltp_map = upstox_get_live_ltp_batch(_syms) if _upstox_connected() else {}
+        for _sym in _syms:
+            if _sym not in _ltp_map:
+                try:
+                    _ltp_map[_sym] = round(float(yf.Ticker(_sym + ".NS").fast_info.last_price), 2)
+                except Exception as _e:
+                    EventLogger.log_order_execution({"event_type": "LTP_FETCH_ERROR", "symbol": _sym, "error": str(_e)})
+        _events = OrderExecutor.monitor_trades(_ltp_map)
+        for _ev in _events:
+            _t   = _ev["trade"]
+            _typ = _ev["type"]
+            if _typ == "SL_HIT":
+                st.warning(
+                    f"🛑 Stop Loss Hit: {_t['symbol']} {_t['side']} | LTP ₹{_t['ltp']} | P&L ₹{_t['pnl']}"
+                )
+            elif _typ in ("T1_HIT", "T2_HIT"):
+                st.success(
+                    f"🎯 Target {'1' if _typ == 'T1_HIT' else '2'} Achieved: "
+                    f"{_t['symbol']} | LTP ₹{_t['ltp']} | P&L ₹{_t['pnl']}"
+                )
+            st.markdown(
+                f"""<script>
+                (function(){{var w=window.parent||window;if(w.pvNotify)w.pvNotify(
+                  "{'🛑 SL Hit' if _typ == 'SL_HIT' else '🎯 Target Hit'}",
+                  "{_t['symbol']} | LTP ₹{_t['ltp']} | P&L ₹{_t['pnl']}",
+                  "sl-target-{_t['id']}"
+                );}})();
+                </script>""",
+                unsafe_allow_html=True,
+            )
+    else:
+        _ltp_map = {}
+
+    # ── Active Trades Panel ────────────────────────────────────────────────
+    _all_trades = st.session_state.get("active_trades", [])
+    if _all_trades:
+        st.markdown("### 📋 Active Trades")
+        _cols = ["symbol", "side", "entry", "ltp", "sl", "t1", "t2", "qty", "status", "pnl", "placed_at", "broker"]
+        _df = pd.DataFrame(_all_trades)[_cols].rename(columns={
+            "symbol": "Symbol", "side": "Side", "entry": "Entry", "ltp": "LTP",
+            "sl": "SL", "t1": "T1", "t2": "T2", "qty": "Qty", "status": "Status",
+            "pnl": "P&L ₹", "placed_at": "Time", "broker": "Broker",
+        })
+        st.dataframe(_df, use_container_width=True, hide_index=True)
+        for _trade in [t for t in _all_trades if t["status"] == "OPEN"]:
+            _ecol1, _ecol2 = st.columns([4, 1])
+            with _ecol1:
+                st.caption(
+                    f"{_trade['symbol']} {_trade['side']} @ ₹{_trade['entry']} | SL ₹{_trade['sl']}"
+                )
+            with _ecol2:
+                if st.button("Exit", key=f"exit_{_trade['id']}"):
+                    _exit_ltp = _ltp_map.get(_trade["symbol"], _trade["entry"])
+                    OrderExecutor.exit_trade(_trade["id"], _trade["broker"], _exit_ltp)
+                    st.rerun()
+
     # ── Pull data from CPR scanner session state ──────────────────────────
     # Only use 15Min and 1Hour scans as requested
     TF_LABELS = {
@@ -5634,15 +5698,19 @@ def page_trade_signals(nse500: pd.DataFrame):
 def _trade_buttons(s: dict):
     """
     Trade action buttons:
-    - Upstox: ALWAYS live when token is connected (regardless of market hours)
-    - Groww/Zerodha: Live during market hours, locked outside
-    - Paper: Always available
+    - Upstox: ALWAYS live when token is connected (regardless of market hours) — places real order
+    - Zerodha: Live during market hours when token is saved — places real order; falls back to web link
+    - Groww: Opens Groww web page (no public API)
+    - Paper: Always available — uses OrderExecutor for monitoring
     """
     from datetime import timezone
     bull      = s["side"] == "BUY"
     sym       = s["symbol"]
+    side      = s["side"]
     mkt_open  = is_market_open()
-    up_live   = _upstox_connected()   # Upstox always active when token saved
+    up_live   = _upstox_connected()
+    zk_live   = bool(st.session_state.get("zerodha_access_token", "").strip() and
+                     st.session_state.get("zerodha_api_key", "").strip())
 
     IST     = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
@@ -5680,14 +5748,37 @@ def _trade_buttons(s: dict):
         unsafe_allow_html=True,
     )
 
-    # ── URLs ──────────────────────────────────────────────────────────────
-    # Correct working URLs — open stock page on each broker
-    # Groww: search page (slug varies per stock, search is reliable)
-    groww_url  = f"https://groww.in/search?q={sym}"
-    # Zerodha Kite: open kite and search the stock
-    kite_url   = f"https://kite.zerodha.com/?q={sym}"
-    # Upstox Pro Web: stock detail page on pro.upstox.com
-    upstox_url = f"https://pro.upstox.com/stocks/details/NSE/{sym}"
+    # Shared helper: get live price
+    def _get_live_price():
+        try:
+            if _upstox_connected():
+                ltp = upstox_get_ltp(sym)
+                if ltp:
+                    return ltp
+            return round(float(yf.Ticker(sym + ".NS").fast_info.last_price), 2)
+        except Exception as _ex:
+            EventLogger.log_order_execution({"event_type": "LTP_FETCH_ERROR", "symbol": sym, "error": str(_ex)})
+            return s["entry"]
+
+    # Shared helper: calculate qty
+    def _calc_qty(live_px):
+        balance = st.session_state.get("paper_balance", 100000.0)
+        qty = max(1, int(balance * 0.05 / max(live_px, 1)))
+        cost = round(live_px * qty, 2)
+        if cost > balance:
+            qty = max(1, int(balance * 0.02 / max(live_px, 1)))
+        return qty
+
+    # Shared helper: fire browser push notification
+    def _push_notif(title: str, body: str, tag: str):
+        st.markdown(
+            f"""<script>
+            (function(){{var w=window.parent||window;if(w.pvNotify)w.pvNotify(
+              "{title}","{body}","{tag}"
+            );}})();
+            </script>""",
+            unsafe_allow_html=True,
+        )
 
     # Styles
     btn_style  = (
@@ -5702,9 +5793,15 @@ def _trade_buttons(s: dict):
         "cursor:not-allowed;border:1px dashed #b8c89a;"
     )
 
+    groww_url  = f"https://groww.in/search?q={sym}"
+    kite_url   = f"https://kite.zerodha.com/?q={sym}"
+    strategy_name = s.get("strategy_name", "")
+    entry_price   = s["entry"]
+    sl = s["sl"]; t1 = s["t1"]; t2 = s["t2"]
+
     c1, c2, c3, c4 = st.columns(4)
 
-    # ── Groww — market hours only ─────────────────────────────────────────
+    # ── Groww — market hours only (web link, no API) ─────────────────────
     with c1:
         if mkt_open:
             ac = "#00b386" if bull else "#e74c3c"
@@ -5719,9 +5816,56 @@ def _trade_buttons(s: dict):
                 unsafe_allow_html=True,
             )
 
-    # ── Zerodha — market hours only ───────────────────────────────────────
+    # ── Zerodha — API order when token saved + market open, else web link ─
     with c2:
-        if mkt_open:
+        if mkt_open and zk_live:
+            btn_label = f"{'🟢 BUY' if bull else '🔴 SELL'} Zerodha"
+            if st.button(btn_label, key=f"zk_{sym}_{side}_{s['tf']}", use_container_width=True):
+                live = _get_live_price()
+                qty  = _calc_qty(live)
+                order_id = None
+                try:
+                    resp = requests.post(
+                        "https://api.kite.trade/orders/regular",
+                        headers={
+                            "X-Kite-Version": "3",
+                            "Authorization": (
+                                f"token {st.session_state['zerodha_api_key']}:"
+                                f"{st.session_state['zerodha_access_token']}"
+                            ),
+                        },
+                        data={
+                            "tradingsymbol": sym,
+                            "exchange": "NSE",
+                            "transaction_type": side,
+                            "quantity": qty,
+                            "order_type": "MARKET",
+                            "product": "MIS",
+                        },
+                        timeout=8,
+                    )
+                    if resp.status_code == 200:
+                        order_id = resp.json().get("data", {}).get("order_id")
+                    else:
+                        st.error(f"Zerodha order failed (HTTP {resp.status_code})")
+                        with st.expander("Error details"):
+                            st.code(resp.text)
+                except Exception as ex:
+                    st.error(f"Zerodha API error: {ex}")
+                trade = OrderExecutor.place_order(
+                    symbol=sym, side=side, entry=live,
+                    sl=sl, t1=t1, t2=t2, qty=qty,
+                    broker="zerodha" if order_id else "paper",
+                    strategy_name=strategy_name, order_id=order_id,
+                )
+                st.success(f"✅ {'BUY' if bull else 'SELL'} order placed for {sym} @ ₹{live}")
+                _push_notif(
+                    f"{'🟢 BUY' if bull else '🔴 SELL'} Order Placed",
+                    f"{sym} @ ₹{live} | SL: ₹{sl} | T1: ₹{t1}",
+                    f"order-placed-{trade['id']}",
+                )
+                st.rerun()
+        elif mkt_open:
             st.markdown(
                 f"<a href='{kite_url}' target='_blank' style='{btn_style}background:#387ed1;color:#fff;'>"
                 f"⚡ Zerodha</a>",
@@ -5733,21 +5877,53 @@ def _trade_buttons(s: dict):
                 unsafe_allow_html=True,
             )
 
-    # ── Upstox — ALWAYS LIVE when token connected ─────────────────────────
+    # ── Upstox — ALWAYS LIVE when token connected, places real order ──────
     with c3:
         if up_live:
-            # Always show as active — Upstox token = always ready
-            label = f"{'🟢' if bull else '🔴'} Upstox"
-            badge = " ●" if not mkt_open else ""  # dot when market closed to show it's special
-            st.markdown(
-                f"<a href='{upstox_url}' target='_blank' "
-                f"style='{btn_style}background:#7c3aed;color:#fff;"
-                f"box-shadow:0 0 8px rgba(124,58,237,0.4);'>"
-                f"{label}{badge}</a>",
-                unsafe_allow_html=True,
-            )
+            btn_label = f"{'🟢 BUY' if bull else '🔴 SELL'} Upstox"
+            badge     = " ●" if not mkt_open else ""
+            if st.button(btn_label + badge, key=f"up_{sym}_{side}_{s['tf']}", use_container_width=True):
+                live = _get_live_price()
+                qty  = _calc_qty(live)
+                order_id = None
+                try:
+                    resp = requests.post(
+                        "https://api.upstox.com/v2/order/place",
+                        headers={
+                            "Authorization": f"Bearer {st.session_state['upstox_access_token']}",
+                            "Accept": "application/json",
+                        },
+                        json={
+                            "instrument_token": _upstox_instrument_key(sym),
+                            "transaction_type": side,
+                            "quantity": qty,
+                            "order_type": "MARKET",
+                            "product": "I",
+                        },
+                        timeout=8,
+                    )
+                    if resp.status_code == 200:
+                        order_id = resp.json().get("data", {}).get("order_id")
+                    else:
+                        st.error(f"Upstox order failed (HTTP {resp.status_code})")
+                        with st.expander("Error details"):
+                            st.code(resp.text)
+                except Exception as ex:
+                    st.error(f"Upstox API error: {ex}")
+                trade = OrderExecutor.place_order(
+                    symbol=sym, side=side, entry=live,
+                    sl=sl, t1=t1, t2=t2, qty=qty,
+                    broker="upstox" if order_id else "paper",
+                    strategy_name=strategy_name, order_id=order_id,
+                )
+                st.success(f"✅ {'BUY' if bull else 'SELL'} order placed for {sym} @ ₹{live}")
+                _push_notif(
+                    f"{'🟢 BUY' if bull else '🔴 SELL'} Order Placed",
+                    f"{sym} @ ₹{live} | SL: ₹{sl} | T1: ₹{t1}",
+                    f"order-placed-{trade['id']}",
+                )
+                st.rerun()
         else:
-            # Not connected — prompt to connect
             st.markdown(
                 f"<a href='#' onclick='return false;' "
                 f"title='Connect Upstox in ⚙️ Broker settings for live trading anytime' "
@@ -5757,28 +5933,23 @@ def _trade_buttons(s: dict):
 
     # ── Paper Trade — always available ────────────────────────────────────
     with c4:
-        if st.button("📝 Paper", key=f"paper_{sym}_{s['side']}_{s['tf']}", use_container_width=True):
+        if st.button("📝 Paper", key=f"paper_{sym}_{side}_{s['tf']}", use_container_width=True):
             balance = st.session_state.get("paper_balance", 100000.0)
-            try:
-                if _upstox_connected():
-                    live = upstox_get_ltp(sym) or round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
-                else:
-                    live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
-            except:
-                live = s["entry"]
-            qty  = max(1, int(balance * 0.05 / max(live, 1)))
-            cost = round(live * qty, 2)
+            live    = _get_live_price()
+            qty     = max(1, int(balance * 0.05 / max(live, 1)))
+            cost    = round(live * qty, 2)
             if cost > balance:
                 qty  = max(1, int(balance * 0.02 / max(live, 1)))
                 cost = round(live * qty, 2)
             if cost > balance:
                 st.error("Insufficient virtual balance.")
             else:
-                trade = {
+                # Legacy paper_trades entry (for Forward Testing tab)
+                legacy_trade = {
                     "id":     len(st.session_state.get("paper_trades", [])) + 1,
-                    "symbol": sym, "side": s["side"],
+                    "symbol": sym, "side": side,
                     "entry":  live, "qty": qty,
-                    "target": s["t1"], "sl": s["sl"],
+                    "target": t1, "sl": sl,
                     "rr":     s["rr1"], "cost": cost,
                     "status": "OPEN", "pnl": 0.0, "exit_px": None,
                     "source": f"Scanner {s['tf']}",
@@ -5786,9 +5957,21 @@ def _trade_buttons(s: dict):
                 }
                 if "paper_trades" not in st.session_state:
                     st.session_state["paper_trades"] = []
-                st.session_state["paper_trades"].append(trade)
+                st.session_state["paper_trades"].append(legacy_trade)
                 st.session_state["paper_balance"] = balance - cost
-                st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
+                # OrderExecutor tracked trade for SL/Target monitoring
+                trade = OrderExecutor.place_order(
+                    symbol=sym, side=side, entry=live,
+                    sl=sl, t1=t1, t2=t2, qty=qty,
+                    broker="paper", strategy_name=strategy_name,
+                )
+                st.toast(f"📝 {side} {qty}×{sym} @ ₹{live} — Paper trade recorded", icon="✅")
+                _push_notif(
+                    f"📝 Paper {'BUY' if bull else 'SELL'} Placed",
+                    f"{sym} @ ₹{live} | SL: ₹{sl} | T1: ₹{t1}",
+                    f"order-placed-{trade['id']}",
+                )
+                st.rerun()
 
     st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
 
@@ -5913,200 +6096,6 @@ def page_price_alerts():
         st.rerun()
 
     st.caption("Alerts trigger when CPR Scanner finds the stock crossing your target price. Run scanner during market hours.")
-
-
-def page_journal():
-    """Trade Journal — notes, lessons, screenshots per trade."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">📔</span>
-        <h1>Trade Journal</h1>
-        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
-                     color:#3c3489;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            LEARN FROM EVERY TRADE
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    import json as _json
-    _journal_file = os.path.join(os.path.expanduser("~"), ".pivotvault_journal.json")
-
-    def load_journal():
-        try:
-            if os.path.exists(_journal_file):
-                with open(_journal_file) as f:
-                    return _json.load(f)
-        except Exception:
-            pass
-        return []
-
-    def save_journal(entries):
-        try:
-            with open(_journal_file, "w") as f:
-                _json.dump(entries, f, indent=2, default=str)
-        except Exception:
-            pass
-
-    journal = load_journal()
-
-    # ── Add new entry ──────────────────────────────────────────────────────
-    with st.expander("✏️ Add Journal Entry", expanded=len(journal)==0):
-        jc1, jc2, jc3 = st.columns(3)
-        with jc1:
-            j_date   = st.date_input("Date", key="j_date")
-            j_sym    = st.text_input("Symbol", placeholder="RELIANCE", key="j_sym")
-        with jc2:
-            j_side   = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="j_side")
-            j_result = st.radio("Result", ["WIN ✅","LOSS ❌","BREAK-EVEN ➖"], horizontal=True, key="j_result")
-        with jc3:
-            j_entry  = st.number_input("Entry ₹",  value=0.0, step=0.5, key="j_entry")
-            j_exit   = st.number_input("Exit ₹",   value=0.0, step=0.5, key="j_exit")
-            j_pnl    = round((j_exit - j_entry) * (1 if j_side=="BUY" else -1), 2)
-            st.metric("P&L", f"₹{j_pnl:+,.2f}", delta=f"{j_pnl/max(j_entry,1)*100:+.2f}%" if j_entry else None)
-
-        j_setup    = st.selectbox("Setup used", [
-            "CPR Breakout (Bullish)", "CPR Breakdown (Bearish)",
-            "Virgin CPR Breakout", "Pivot Level Bounce", "Candlestick Reversal",
-            "HMA Crossover", "3/10 Oscillator Cross", "VWAP Reclaim", "Custom"
-        ], key="j_setup")
-        j_why      = st.text_area("Why did I take this trade?",
-                                   placeholder="CPR was narrow, price broke above TC with volume surge...",
-                                   height=80, key="j_why")
-        j_lesson   = st.text_area("What did I learn?",
-                                   placeholder="Should have waited for candle close above TC before entering...",
-                                   height=80, key="j_lesson")
-        j_emotion  = st.select_slider("Emotional state while trading",
-                                       options=["😰 Fearful","😟 Uncertain","😐 Neutral","😊 Confident","🤩 Overconfident"],
-                                       value="😐 Neutral", key="j_emotion")
-        j_followed = st.checkbox("I followed my trading rules", key="j_followed")
-
-        if st.button("💾 Save Journal Entry", use_container_width=True, key="btn_save_journal"):
-            if j_sym.strip():
-                entry = {
-                    "id":        len(journal) + 1,
-                    "date":      str(j_date),
-                    "symbol":    j_sym.upper().strip(),
-                    "side":      j_side,
-                    "result":    j_result.split()[0],
-                    "entry_px":  j_entry,
-                    "exit_px":   j_exit,
-                    "pnl":       j_pnl,
-                    "setup":     j_setup,
-                    "why":       j_why,
-                    "lesson":    j_lesson,
-                    "emotion":   j_emotion,
-                    "followed_rules": j_followed,
-                    "created_at": datetime.now().isoformat(),
-                }
-                journal.append(entry)
-                save_journal(journal)
-                st.success("✅ Journal entry saved!")
-                st.rerun()
-            else:
-                st.error("Enter a symbol.")
-
-    if not journal:
-        st.markdown("""
-        <div style="text-align:center;padding:2.5rem;background:#f5f8ed;
-                    border:2px dashed #b8c89a;border-radius:12px;">
-            <div style="font-size:1.5rem;margin-bottom:0.5rem;">📔</div>
-            <div style="font-family:DM Mono,monospace;font-size:0.85rem;color:#2e3d1a;">
-                No entries yet — start journaling every trade
-            </div>
-            <div style="font-size:0.78rem;color:#4a5e32;margin-top:0.3rem;">
-                Consistent journaling is the #1 habit of profitable traders
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    # ── Stats ──────────────────────────────────────────────────────────────
-    wins   = [e for e in journal if e["result"] == "WIN"]
-    losses = [e for e in journal if e["result"] == "LOSS"]
-    wr     = round(len(wins)/len(journal)*100, 1)
-    tot_pnl= round(sum(e["pnl"] for e in journal), 2)
-    followed = [e for e in journal if e.get("followed_rules")]
-
-    mc1,mc2,mc3,mc4 = st.columns(4)
-    mc1.metric("📝 Total Entries", len(journal))
-    mc2.metric("✅ Win Rate",      f"{wr}%")
-    mc3.metric("💰 Total P&L",    f"₹{tot_pnl:+,.2f}")
-    mc4.metric("📐 Rule Adherence", f"{round(len(followed)/len(journal)*100)}%")
-
-    # Emotion breakdown
-    emotion_counts = {}
-    for e in journal:
-        em = e.get("emotion","😐 Neutral")
-        emotion_counts[em] = emotion_counts.get(em, 0) + 1
-
-    # Show setup performance
-    setup_perf = {}
-    for e in journal:
-        s = e.get("setup","Custom")
-        if s not in setup_perf:
-            setup_perf[s] = {"wins":0,"total":0,"pnl":0}
-        setup_perf[s]["total"] += 1
-        setup_perf[s]["pnl"]   += e["pnl"]
-        if e["result"] == "WIN":
-            setup_perf[s]["wins"] += 1
-
-    if setup_perf:
-        st.markdown("#### 📊 Setup Performance")
-        rows = []
-        for setup, v in sorted(setup_perf.items(), key=lambda x: -x[1]["pnl"]):
-            rows.append({
-                "Setup":    setup,
-                "Trades":   v["total"],
-                "Win Rate": f"{round(v['wins']/v['total']*100)}%",
-                "Total P&L":f"₹{v['pnl']:+,.2f}",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    # ── Journal entries list ───────────────────────────────────────────────
-    st.markdown("#### 📋 Journal Entries")
-    for e in reversed(journal):
-        result_color = {"WIN":"#1a6b2e","LOSS":"#9e2018","BREAK-EVEN":"#7a5800"}.get(e["result"],"#2e3d1a")
-        result_bg    = {"WIN":"#e4f5e8","LOSS":"#fbe8e6","BREAK-EVEN":"#fdf3d4"}.get(e["result"],"#f5f8ed")
-
-        with st.expander(
-            f"{e['date']} — {e['symbol']} {e['side']} — "
-            f"{e['result']} ₹{e['pnl']:+,.2f} — {e.get('setup','')[:30]}",
-            expanded=False,
-        ):
-            st.markdown(
-                f"<div style='display:flex;gap:0.75rem;flex-wrap:wrap;"
-                f"font-family:DM Mono,monospace;font-size:0.78rem;margin-bottom:0.75rem;'>"
-                f"<span style='background:{result_bg};color:{result_color};"
-                f"border-radius:5px;padding:2px 10px;font-weight:700;'>{e['result']}</span>"
-                f"<span>Entry ₹{e['entry_px']:,.2f}</span>"
-                f"<span>Exit ₹{e['exit_px']:,.2f}</span>"
-                f"<span style='color:{result_color};font-weight:700;'>P&L ₹{e['pnl']:+,.2f}</span>"
-                f"<span>{e.get('emotion','')}</span>"
-                f"<span>{'✅ Followed rules' if e.get('followed_rules') else '❌ Broke rules'}</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            if e.get("why"):
-                st.markdown(f"**Why I took this trade:** {e['why']}")
-            if e.get("lesson"):
-                st.markdown(f"**Lesson learned:** {e['lesson']}")
-
-            if st.button("🗑️ Delete entry", key=f"del_journal_{e['id']}"):
-                journal = [x for x in journal if x["id"] != e["id"]]
-                save_journal(journal)
-                st.rerun()
-
-    # Export journal
-    import json as _json2
-    if st.button("📥 Export Journal as JSON", key="export_journal"):
-        st.download_button(
-            "⬇️ Download Journal",
-            data=_json2.dumps(journal, indent=2, default=str),
-            file_name=f"pivotvault_journal_{datetime.now().strftime('%Y%m%d')}.json",
-            mime="application/json",
-            key="dl_journal"
-        )
 
 
 def page_analytics():
@@ -6333,153 +6322,6 @@ def fetch_options_chain(symbol: str = "NIFTY") -> dict:
     except Exception:
         pass
     return {}
-
-
-def page_market_intelligence():
-    """FII/DII data + Options chain + PCR + Max Pain."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">🏦</span>
-        <h1>Market Intelligence</h1>
-        <span style="margin-left:auto;background:#e6f1fb;border:1px solid #85b7eb;
-                     color:#0c447c;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            FII/DII · OPTIONS · PCR
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab_fii, tab_opts = st.tabs(["🏦 FII / DII Flow", "📊 Options Chain"])
-
-    # ── FII/DII ───────────────────────────────────────────────────────────
-    with tab_fii:
-        st.markdown("##### Institutional flow — last 10 sessions")
-        with st.spinner("Fetching FII/DII data from NSE..."):
-            df_fii = fetch_fii_dii_data()
-
-        if df_fii.empty:
-            st.warning("NSE FII/DII data unavailable. NSE blocks requests from cloud IPs — run locally.")
-        else:
-            # Net flow bar chart
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            fii_colors = ["#1a6b2e" if v >= 0 else "#9e2018" for v in df_fii["FII Net ₹Cr"]]
-            dii_colors = ["#185fa5" if v >= 0 else "#ba7517" for v in df_fii["DII Net ₹Cr"]]
-            fig.add_trace(go.Bar(name="FII Net", x=df_fii["Date"],
-                                  y=df_fii["FII Net ₹Cr"], marker_color=fii_colors))
-            fig.add_trace(go.Bar(name="DII Net", x=df_fii["Date"],
-                                  y=df_fii["DII Net ₹Cr"], marker_color=dii_colors))
-            fig.update_layout(
-                height=260, barmode="group", margin=dict(l=0,r=0,t=10,b=0),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.3)",
-                font=dict(family="DM Mono",size=10,color="#0e1308"),
-                legend=dict(orientation="h",y=1.1),
-                yaxis=dict(ticksuffix=" Cr", showgrid=True, gridcolor="#dae0cb"),
-            )
-            fig.add_hline(y=0,line_dash="dash",line_color="#b8c89a",line_width=1)
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Sentiment summary
-            last = df_fii.iloc[0]
-            fii_sent = "🐂 Bullish" if last["FII Net ₹Cr"] > 0 else "🐻 Bearish"
-            dii_sent = "🐂 Bullish" if last["DII Net ₹Cr"] > 0 else "🐻 Bearish"
-            st.markdown(
-                f"<div style='display:flex;gap:1rem;flex-wrap:wrap;font-family:DM Mono,monospace;"
-                f"font-size:0.8rem;margin-bottom:0.75rem;'>"
-                f"<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
-                f"padding:0.5rem 1rem;'>"
-                f"<b>FII today:</b> Net ₹{last['FII Net ₹Cr']:+,.1f} Cr · {fii_sent}</div>"
-                f"<div style='background:#e6f1fb;border:1px solid #85b7eb;border-radius:8px;"
-                f"padding:0.5rem 1rem;'>"
-                f"<b>DII today:</b> Net ₹{last['DII Net ₹Cr']:+,.1f} Cr · {dii_sent}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            st.dataframe(df_fii, use_container_width=True, hide_index=True)
-
-    # ── Options chain ─────────────────────────────────────────────────────
-    with tab_opts:
-        oc1, oc2 = st.columns([3,1])
-        with oc1:
-            oc_sym = st.selectbox("Symbol", ["NIFTY","BANKNIFTY","FINNIFTY",
-                                              "RELIANCE","TCS","HDFCBANK","INFY",
-                                              "ICICIBANK","SBIN","BAJFINANCE"],
-                                   key="oc_sym")
-        with oc2:
-            fetch_oc = st.button("📊 Load Chain", use_container_width=True, key="btn_oc")
-
-        if fetch_oc:
-            with st.spinner(f"Fetching {oc_sym} options chain..."):
-                oc_data = fetch_options_chain(oc_sym)
-
-            if not oc_data:
-                st.warning("Options chain unavailable. NSE may block cloud requests — works best locally.")
-            else:
-                try:
-                    records  = oc_data.get("records", {})
-                    spot     = records.get("underlyingValue", 0)
-                    exp_dates= records.get("expiryDates",[])
-                    data     = records.get("data",[])
-
-                    st.markdown(f"**{oc_sym}** Spot: ₹{spot:,.2f} · Expiry: {exp_dates[0] if exp_dates else '—'}")
-
-                    # Build chain table — ATM ±10 strikes
-                    rows = []
-                    total_ce_oi = total_pe_oi = 0
-                    for d in data:
-                        if exp_dates and d.get("expiryDate","") != exp_dates[0]:
-                            continue
-                        ce = d.get("CE",{})
-                        pe = d.get("PE",{})
-                        sp = d.get("strikePrice",0)
-                        ce_oi = ce.get("openInterest",0)
-                        pe_oi = pe.get("openInterest",0)
-                        total_ce_oi += ce_oi
-                        total_pe_oi += pe_oi
-                        rows.append({
-                            "CE OI":    ce_oi,
-                            "CE Chg OI":ce.get("changeinOpenInterest",0),
-                            "CE LTP":   ce.get("lastPrice",0),
-                            "Strike":   sp,
-                            "PE LTP":   pe.get("lastPrice",0),
-                            "PE Chg OI":pe.get("changeinOpenInterest",0),
-                            "PE OI":    pe_oi,
-                        })
-
-                    df_oc = pd.DataFrame(rows)
-                    if not df_oc.empty:
-                        # Highlight ATM
-                        atm_idx = (df_oc["Strike"] - spot).abs().idxmin()
-                        atm     = df_oc.loc[atm_idx,"Strike"]
-
-                        # PCR
-                        pcr = round(total_pe_oi / max(total_ce_oi, 1), 2)
-                        pcr_sent = "🐂 Bullish (PCR > 1)" if pcr > 1 else "🐻 Bearish (PCR < 1)"
-
-                        # Max pain — strike with minimum value of all options
-                        max_pain_strike = atm  # simplified
-
-                        mc1,mc2,mc3 = st.columns(3)
-                        mc1.metric("PCR (Put-Call Ratio)", f"{pcr}", pcr_sent)
-                        mc2.metric("ATM Strike", f"₹{atm:,.0f}")
-                        mc3.metric("Total CE OI", f"{total_ce_oi:,}")
-
-                        # Show ±8 strikes around ATM
-                        mask  = (df_oc["Strike"] >= atm - 8*50) & (df_oc["Strike"] <= atm + 8*50)
-                        df_show = df_oc[mask].copy()
-                        st.dataframe(df_show, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.error(f"Error parsing options chain: {e}")
-        else:
-            st.markdown("""
-            <div style="text-align:center;padding:2rem;background:#f5f8ed;
-                        border:2px dashed #b8c89a;border-radius:12px;">
-                <div style="font-size:1.5rem;margin-bottom:0.5rem;">📊</div>
-                <div style="font-family:DM Mono,monospace;font-size:0.85rem;color:#2e3d1a;">
-                    Select symbol and click Load Chain
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
 
 
 def page_broker_settings():
@@ -7312,9 +7154,7 @@ def render_sidebar():
         ("Price Alerts",        "🎯 Alerts"),
         ("Strategies",          "📚 Strategy"),
         ("Forward Testing",     "🧪 Fwd Test"),
-        ("Journal",             "📝 Journal"),
         ("Analytics",           "📊 Analytics"),
-        ("Market Intelligence", "🏦 Intel"),
         ("Broker Settings",     "⚙️ Broker"),
         ("Watchlist",           "⭐ Watchlist"),
     ]
@@ -7460,9 +7300,7 @@ def main():
     elif page == "Trade Signals":        page_trade_signals(nse500)
     elif page == "Price Alerts":         page_price_alerts()
     elif page == "Forward Testing":      page_forward_test()
-    elif page == "Journal":              page_journal()
     elif page == "Analytics":            page_analytics()
-    elif page == "Market Intelligence":  page_market_intelligence()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
     else:                                page_market_snapshot(nse500)
