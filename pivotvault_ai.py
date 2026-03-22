@@ -379,11 +379,11 @@ def upstox_get_funds() -> dict:
 # automatically every day without manual intervention.
 
 
-@st.cache_data(ttl=5)
 def upstox_get_live_ltp_batch(symbols: list) -> dict:
     """
     Fetch live LTP for multiple symbols in one Upstox API call.
     Returns {symbol: ltp} dict. Uses market-quote/ltp endpoint for speed.
+    No @st.cache_data — uses session_state for token (can't cache).
     """
     if not _upstox_connected() or not symbols:
         return {}
@@ -553,7 +553,6 @@ def upstox_get_quote(instrument_key: str) -> dict:
     except Exception:
         return {}
 
-@st.cache_data(ttl=60)
 def upstox_get_historical(symbol: str, interval: str = "1d",
                            from_date: str = "", to_date: str = "") -> pd.DataFrame:
     """
@@ -588,7 +587,6 @@ def upstox_get_historical(symbol: str, interval: str = "1d",
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=15)
 def upstox_get_index_quote(yf_ticker: str) -> dict:
     inst_key = UPSTOX_INDEX_KEYS.get(yf_ticker)
     if not inst_key:
@@ -1040,13 +1038,14 @@ def get_market_movers():
 
 
 @st.cache_data(ttl=15)
-def fetch_index_data(ticker: str) -> dict:
+def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
     """
     Fetch live index price.
     Priority: Upstox API → NSE API → yfinance fast_info → yfinance history
+    upstox_token passed as param so cache works (no session_state inside).
     """
-    # ── Method 0: Upstox (if access token configured) ─────────────────────
-    if _upstox_connected():
+    # ── Method 0: Upstox (if access token passed) ─────────────────────────
+    if upstox_token:
         try:
             q = upstox_get_index_quote(ticker)
             if q and q.get("ltp"):
@@ -1996,7 +1995,7 @@ def render_market_header():
     indices = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "NIFTY BANK": "^NSEBANK"}
     cols = st.columns(len(indices))
     for col, (name, ticker) in zip(cols, indices.items()):
-        d = fetch_index_data(ticker)
+        d = fetch_index_data(ticker, upstox_token=st.session_state.get('upstox_access_token',''))
         ltp, chg = d.get("ltp"), d.get("change")
         if ltp is not None:
             hi  = d.get("high")
@@ -2966,9 +2965,10 @@ def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
 
 
 @st.cache_data(ttl=60)
-def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d",
+                        upstox_token: str = "") -> pd.DataFrame:
     # ── Try Upstox first (free, accurate, NSE data) ───────────────────────
-    if _upstox_connected():
+    if upstox_token:
         try:
             # Map period to from_date
             period_days = {
@@ -3066,7 +3066,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     st.divider()
 
     with st.spinner(f"Loading {symbol} [{tf_label}] …"):
-        df = fetch_stock_history(symbol, period, interval)
+        df = fetch_stock_history(symbol, period, interval, upstox_token=st.session_state.get('upstox_access_token',''))
         if resample_4h and not df.empty:
             df = df.resample("4h").agg({
                 "Open": "first", "High": "max",
