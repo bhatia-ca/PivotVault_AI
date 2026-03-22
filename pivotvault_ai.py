@@ -6275,7 +6275,43 @@ def _trade_buttons(s: dict):
                 st.session_state["paper_balance"] = balance - cost
                 st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
 
-    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+    # ── Backtest this signal ─────────────────────────────────────────────
+    if st.button(
+        f"🔬 Backtest {sym} on {s['tf']}",
+        key=f"bt_{sym}_{s['side']}_{s['tf']}",
+        use_container_width=True,
+    ):
+        # Map signal timeframe to backtest params
+        tf_map = {
+            "⚡ 15 Min": ("15 Min", "3 Months"),
+            "🕐 1 Hour": ("1 Hour", "6 Months"),
+        }
+        bt_tf, bt_lb = tf_map.get(s.get("tf","⚡ 15 Min"), ("15 Min","3 Months"))
+
+        # Pre-fill backtest params from signal
+        rr_val = s.get("rr1", 2.0)
+        if   rr_val >= 3.5: rr_str = "1:4"
+        elif rr_val >= 2.5: rr_str = "1:3"
+        elif rr_val >= 1.5: rr_str = "1:2"
+        else:               rr_str = "1:1"
+
+        direction = "Bullish Only" if s["side"] == "BUY" else "Bearish Only"
+        strength  = max(0, s.get("strength", 60) - 10)  # slightly looser for more samples
+
+        st.session_state.update({
+            "bt_prefill_sym":  sym,
+            "bt_prefill_tf":   bt_tf,
+            "bt_prefill_lb":   bt_lb,
+            "bt_prefill_rr":   rr_str,
+            "bt_prefill_dir":  direction,
+            "bt_prefill_str":  strength,
+            "bt_results":      [],   # clear old results
+            "bt_meta":         {},
+            "current_page":    "Backtest",
+        })
+        st.rerun()
+
+    st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
 
 
 def page_broker_settings():
@@ -6715,37 +6751,76 @@ def page_backtest():
         unsafe_allow_html=True,
     )
 
+    # ── Read prefilled values from signal card ───────────────────────────
+    pf_sym = st.session_state.pop("bt_prefill_sym", None)
+    pf_tf  = st.session_state.pop("bt_prefill_tf",  None)
+    pf_lb  = st.session_state.pop("bt_prefill_lb",  None)
+    pf_rr  = st.session_state.pop("bt_prefill_rr",  None)
+    pf_dir = st.session_state.pop("bt_prefill_dir", None)
+    pf_str = st.session_state.pop("bt_prefill_str", None)
+
+    # Show signal source banner if launched from signal card
+    if pf_sym:
+        st.session_state["bt_launched_from"] = {
+            "sym": pf_sym, "tf": pf_tf, "dir": pf_dir, "rr": pf_rr
+        }
+
+    launched = st.session_state.get("bt_launched_from")
+    if launched:
+        st.markdown(
+            f"<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
+            f"border-radius:9px;padding:0.6rem 1rem;margin-bottom:0.75rem;"
+            f"font-family:DM Mono,monospace;font-size:0.8rem;'>"
+            f"🔬 Backtesting signal: <b>{launched['sym']}</b> · "
+            f"{launched['tf']} · {launched['dir']} · R:R {launched['rr']}"
+            f"<span style='float:right;cursor:pointer;color:#9e2018;' "
+            f"onclick=''>✕ <small>clear</small></span></div>",
+            unsafe_allow_html=True,
+        )
+
+    # Symbol list
+    ALL_SYMS = [
+        "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
+        "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
+        "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
+    ]
+
     # ── Config ────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        symbol = st.selectbox("Symbol", [
-            "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
-            "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
-            "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
-        ], key="bt_sym")
+        sym_default = ALL_SYMS.index(pf_sym) if pf_sym and pf_sym in ALL_SYMS else 0
+        symbol = st.selectbox("Symbol", ALL_SYMS, index=sym_default, key="bt_sym")
     with c2:
-        tf = st.selectbox("Timeframe", [
-            "15 Min", "1 Hour", "1 Day"
-        ], key="bt_tf")
+        tf_opts = ["15 Min","1 Hour","1 Day"]
+        tf_default = tf_opts.index(pf_tf) if pf_tf in tf_opts else 0
+        tf = st.selectbox("Timeframe", tf_opts, index=tf_default, key="bt_tf")
     with c3:
-        lookback = st.selectbox("Lookback Period", [
-            "1 Month","3 Months","6 Months","1 Year"
-        ], key="bt_lookback")
+        lb_opts = ["1 Month","3 Months","6 Months","1 Year"]
+        lb_default = lb_opts.index(pf_lb) if pf_lb and pf_lb in lb_opts else 1
+        lookback = st.selectbox("Lookback Period", lb_opts, index=lb_default, key="bt_lookback")
     with c4:
-        rr_target = st.selectbox("R:R Target", ["1:1","1:2","1:3","1:4"], index=1, key="bt_rr")
+        rr_opts = ["1:1","1:2","1:3","1:4"]
+        rr_default = rr_opts.index(pf_rr) if pf_rr and pf_rr in rr_opts else 1
+        rr_target = st.selectbox("R:R Target", rr_opts, index=rr_default, key="bt_rr")
 
     c5, c6, c7 = st.columns(3)
     with c5:
-        signal_type = st.radio("Signal Direction", ["Both","Bullish Only","Bearish Only"],
-                               horizontal=True, key="bt_dir")
+        dir_opts = ["Both","Bullish Only","Bearish Only"]
+        dir_default = dir_opts.index(pf_dir) if pf_dir and pf_dir in dir_opts else 0
+        signal_type = st.radio("Signal Direction", dir_opts,
+                               index=dir_default, horizontal=True, key="bt_dir")
     with c6:
-        min_strength = st.slider("Min CPR Strength %", 0, 100, 60, key="bt_str")
+        min_strength = st.slider("Min CPR Strength %", 0, 100,
+                                  pf_str if pf_str is not None else 60,
+                                  key="bt_str")
     with c7:
         sl_method = st.selectbox("Stop Loss Method",
-                                  ["Previous Candle High/Low", "ATR-based (1.5x)", "CPR Width"],
+                                  ["Previous Candle High/Low","ATR-based (1.5x)","CPR Width"],
                                   key="bt_sl")
 
-    run_bt = st.button("▶ Run Backtest", use_container_width=True, key="btn_run_bt")
+    # Auto-run if launched from signal card
+    auto_run = pf_sym is not None
+    run_bt   = st.button("▶ Run Backtest", use_container_width=True, key="btn_run_bt") or auto_run
 
     if not run_bt and not st.session_state.get("bt_results"):
         st.markdown("""
