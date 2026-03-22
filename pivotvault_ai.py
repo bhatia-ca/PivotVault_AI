@@ -8426,146 +8426,145 @@ def _calc_max_drawdown(results: list) -> float:
 
 def render_sidebar():
     PAGES = [
-        ("📊", "Market",     "Market Snapshot"),
-        ("📈", "Pivot Boss", "Pivot Boss Analysis"),
-        ("📡", "Scanner",    "CPR Scanner"),
-        ("🔔", "Signals",    "Trade Signals"),
-        ("🎯", "Alerts",     "Price Alerts"),
-        ("📚", "Strategy",   "Strategies"),
-        ("🔬", "Backtest",   "Backtest"),
-        ("📝", "Journal",    "Journal"),
-        ("📊", "Analytics",  "Analytics"),
-        ("🏦", "Intel",      "Market Intelligence"),
-        ("💼", "Trades",     "Paper Trading"),
-        ("⚙️",  "Broker",    "Broker Settings"),
-        ("⭐", "Watchlist",  "Watchlist"),
+        ("Market Snapshot",     "📊 Market"),
+        ("Pivot Boss Analysis", "📈 Pivot Boss"),
+        ("CPR Scanner",         "📡 Scanner"),
+        ("Trade Signals",       "🔔 Signals"),
+        ("Price Alerts",        "🎯 Alerts"),
+        ("Strategies",          "📚 Strategy"),
+        ("Backtest",            "🔬 Backtest"),
+        ("Journal",             "📝 Journal"),
+        ("Analytics",           "📊 Analytics"),
+        ("Market Intelligence", "🏦 Intel"),
+        ("Paper Trading",       "💼 Trades"),
+        ("Broker Settings",     "⚙️ Broker"),
+        ("Watchlist",           "⭐ Watchlist"),
     ]
 
     if "current_page" not in st.session_state:
         st.session_state["current_page"] = "Market Snapshot"
     current = st.session_state["current_page"]
 
-    # ── CSS ───────────────────────────────────────────────────────────────
     st.markdown("""<style>
-.block-container{padding-top:0.3rem !important;padding-left:0.75rem !important;padding-right:0.75rem !important;}
+.block-container{padding-top:0.3rem !important;
+                 padding-left:0.75rem !important;
+                 padding-right:0.75rem !important;}
 section[data-testid="stSidebar"]{display:none !important;}
 [data-testid="collapsedControl"]{display:none !important;}
 button[data-testid="baseButton-header"]{display:none !important;}
-.pv-topbar{display:flex;align-items:center;justify-content:space-between;
-           padding:0.35rem 0 0.25rem;margin-bottom:0.25rem;}
-.pv-logo{font-family:DM Sans,sans-serif;font-weight:900;font-size:0.95rem;
-         color:#0e1308;line-height:1.2;}
-.pv-logo em{color:#3d5a1c;font-style:normal;}
-.pv-user{font-family:DM Mono,monospace;font-size:0.65rem;color:#4a5e32;text-align:right;}
-.pv-nav{display:flex;flex-wrap:wrap;gap:5px;
-        padding:0.3rem 0 0.4rem;
-        border-bottom:2px solid #b8c89a;
-        margin-bottom:0.6rem;}
-.pv-pill{display:inline-flex;align-items:center;gap:3px;
-         padding:5px 11px;border-radius:20px;
-         border:1.5px solid #b8c89a;background:#fff;
-         font-family:DM Sans,sans-serif;font-size:0.8rem;
-         font-weight:600;color:#2e3d1a;white-space:nowrap;
-         cursor:pointer;line-height:1.4;
-         -webkit-tap-highlight-color:transparent;
-         user-select:none;text-decoration:none;}
-.pv-pill:hover{background:#dce8c4;border-color:#638534;color:#1e2c0d;}
-.pv-pill.active{background:#3d5a1c !important;border-color:#3d5a1c !important;
-                color:#f8faf0 !important;font-weight:700 !important;}
-.pv-logout{font-family:DM Sans,sans-serif;font-size:0.75rem;font-weight:600;
-           color:#2e3d1a;background:#f0f4e8;border:1.5px solid #b8c89a;
-           border-radius:7px;padding:4px 10px;cursor:pointer;
-           white-space:nowrap;line-height:1.4;}
-.pv-logout:hover{background:#dce8c4;border-color:#638534;}
-@media(max-width:500px){.pv-pill{font-size:0.72rem;padding:4px 8px;}}
 </style>""", unsafe_allow_html=True)
 
+    # Top row
     wl    = len(st.session_state.get("watchlist", []))
     uname = st.session_state.get("username", "")[:14]
+    lc, rc = st.columns([5, 1])
+    with lc:
+        st.markdown(
+            "<p style='font-family:DM Sans,sans-serif;font-weight:900;"
+            "font-size:0.95rem;color:#0e1308;margin:0.2rem 0 0.1rem;'>"
+            "🏦 PivotVault <span style=\"color:#3d5a1c;\">AI</span></p>",
+            unsafe_allow_html=True,
+        )
+    with rc:
+        st.markdown(
+            "<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+            "color:#4a5e32;text-align:right;margin-top:0.3rem;'>"
+            + "👤 " + uname + " ⭐" + str(wl) + "</div>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Build pills HTML ──────────────────────────────────────────────────
-    pills_html = ""
-    for icon, short, page_key in PAGES:
-        cls = "pv-pill active" if current == page_key else "pv-pill"
-        pills_html += f"<span class='{cls}' data-page='{page_key}'>{icon} {short}</span>"
+    # Pill styles
+    BASE = ("display:inline-flex;align-items:center;padding:6px 13px;"
+            "border-radius:20px;border:1.5px solid #b8c89a;background:#fff;"
+            "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:600;"
+            "color:#2e3d1a;white-space:nowrap;cursor:pointer;line-height:1.4;"
+            "text-decoration:none;margin:2px;")
+    ACTIVE = ("display:inline-flex;align-items:center;padding:6px 13px;"
+              "border-radius:20px;border:1.5px solid #3d5a1c;background:#3d5a1c;"
+              "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:700;"
+              "color:#f8faf0;white-space:nowrap;cursor:pointer;line-height:1.4;"
+              "text-decoration:none;margin:2px;")
+    LOGOUT = ("display:inline-flex;align-items:center;padding:6px 13px;"
+              "border-radius:20px;border:1.5px solid #dc9090;background:#fbe8e6;"
+              "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:600;"
+              "color:#9e2018;white-space:nowrap;cursor:pointer;line-height:1.4;"
+              "text-decoration:none;margin:2px;margin-left:auto;")
 
-    # ── Inject full nav as one HTML block (no Streamlit buttons) ─────────
-    st.markdown(f"""
-<div class="pv-topbar">
-  <div class="pv-logo">🏦 PivotVault <em>AI</em></div>
-  <div class="pv-user">👤 {uname} &nbsp;⭐ {wl}
-    <br><span id="pv-logout-btn" class="pv-logout"
-          onclick="document.getElementById('pv-logout-trigger').click()">
-      🚪 Logout
-    </span>
-  </div>
-</div>
-<div class="pv-nav" id="pv-nav-bar">
-  {pills_html}
-</div>
-<script>
-(function(){{
-  document.getElementById('pv-nav-bar').addEventListener('click', function(e){{
-    var pill = e.target.closest('.pv-pill');
-    if (!pill) return;
-    var page = pill.getAttribute('data-page');
-    if (!page) return;
-    // Find the matching hidden trigger and click it
-    var triggers = window.parent.document.querySelectorAll('[data-pv-nav]');
-    for (var i=0; i<triggers.length; i++){{
-      if (triggers[i].getAttribute('data-pv-nav') === page){{
-        triggers[i].click();
-        return;
-      }}
-    }}
-  }});
-}})();
-</script>
-""", unsafe_allow_html=True)
-
-    # ── Hidden Streamlit nav triggers — rendered but visually invisible ───
-    # These use CSS to be invisible while remaining clickable by JS
+    # Build pills using st.columns — one button per pill, styled as pill
+    # This is the only reliable approach in Streamlit
+    # Use columns but override button CSS completely
     st.markdown("""<style>
-.pv-hidden-nav { position:fixed; top:-9999px; left:-9999px;
-                 width:1px; height:1px; overflow:hidden; opacity:0;
-                 pointer-events:none; }
-.pv-hidden-nav > div { margin:0 !important; padding:0 !important; }
-.pv-hidden-nav button { width:1px !important; height:1px !important;
-                        min-height:0 !important; padding:0 !important;
-                        margin:0 !important; border:none !important;
-                        opacity:0 !important; pointer-events:none !important; }
-</style>
-<div class="pv-hidden-nav" id="pv-nav-triggers">
-""", unsafe_allow_html=True)
+/* Turn ALL nav buttons into pills */
+div[data-testid="stHorizontalBlock"] .stButton > div > button {
+    background:#fff !important;
+    border:1.5px solid #b8c89a !important;
+    border-radius:20px !important;
+    color:#2e3d1a !important;
+    font-family:DM Sans,sans-serif !important;
+    font-size:0.8rem !important;
+    font-weight:600 !important;
+    padding:5px 12px !important;
+    min-height:0 !important;
+    height:auto !important;
+    line-height:1.4 !important;
+    box-shadow:none !important;
+    white-space:nowrap !important;
+    transition:background 0.15s, border-color 0.15s !important;
+}
+div[data-testid="stHorizontalBlock"] .stButton > div > button:hover {
+    background:#dce8c4 !important;
+    border-color:#638534 !important;
+    color:#1e2c0d !important;
+}
+/* Active pill override — applied via a CSS class trick using :focus */
+.pv-active-pill > div > button {
+    background:#3d5a1c !important;
+    border-color:#3d5a1c !important;
+    color:#f8faf0 !important;
+    font-weight:700 !important;
+}
+/* Logout pill */
+.pv-logout-pill > div > button {
+    background:#fbe8e6 !important;
+    border-color:#dc9090 !important;
+    color:#9e2018 !important;
+}
+/* Nav row wrapper — no gaps between columns */
+div[data-testid="stHorizontalBlock"] {
+    gap:4px !important;
+    flex-wrap:wrap !important;
+    border-bottom:2px solid #b8c89a !important;
+    padding-bottom:0.4rem !important;
+    margin-bottom:0.6rem !important;
+    align-items:center !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    padding:0 !important;
+}
+</style>""", unsafe_allow_html=True)
 
-    for i, (_, short, page_key) in enumerate(PAGES):
-        if st.button(short, key=f"nav_{i}"):
-            st.session_state["current_page"] = page_key
-            st.rerun()
-
-    if st.button("Logout", key="pv-logout-trigger"):
-        st.session_state["logged_in"] = False
-        st.session_state["current_page"] = "Market Snapshot"
-        st.rerun()
-
-    # Wire up data-pv-nav attributes via JS after render
-    nav_map = {short: page_key for _, short, page_key in PAGES}
-    nav_map["Logout"] = "__logout__"
-    st.markdown(f"""</div>
-<script>
-(function(){{
-  var map = {str(nav_map).replace("'", '"')};
-  function wire(){{
-    var btns = window.parent.document.querySelectorAll('.pv-hidden-nav button');
-    btns.forEach(function(btn){{
-      var txt = btn.innerText.trim();
-      if (map[txt]) btn.setAttribute('data-pv-nav', map[txt]);
-    }});
-  }}
-  setTimeout(wire, 300);
-  setTimeout(wire, 800);
-}})();
-</script>""", unsafe_allow_html=True)
+    # Render all nav items as styled buttons in a horizontal block
+    all_pages = list(PAGES) + [("__logout__", "🚪 Logout")]
+    cols = st.columns(len(all_pages))
+    for i, (page_key, label) in enumerate(all_pages):
+        with cols[i]:
+            is_active  = (page_key == current)
+            is_logout  = (page_key == "__logout__")
+            css_class  = "pv-logout-pill" if is_logout else ("pv-active-pill" if is_active else "")
+            if css_class:
+                st.markdown(f"<div class='{css_class}'>", unsafe_allow_html=True)
+            if st.button(label, key=f"nav_{i}", use_container_width=False):
+                if is_logout:
+                    st.session_state["logged_in"]    = False
+                    st.session_state["current_page"] = "Market Snapshot"
+                else:
+                    st.session_state["current_page"] = page_key
+                st.rerun()
+            if css_class:
+                st.markdown("</div>", unsafe_allow_html=True)
 
     return current
 
