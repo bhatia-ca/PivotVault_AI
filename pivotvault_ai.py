@@ -4565,6 +4565,26 @@ def page_cpr_scanner(nse500: pd.DataFrame):
             )
         st.session_state[scan_key]      = result
         st.session_state[scan_time_key] = now
+
+        # ── Auto-feed signals into Forward Testing ───────────────────────
+        if not result.empty and tf_tag in ("15m","30m","1h"):
+            for _, row in result.iterrows():
+                sig = {
+                    "symbol":    row.get("Symbol",""),
+                    "side":      "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                    "entry":     row.get("Entry",   row.get("LTP",0)),
+                    "sl":        row.get("SL",      0),
+                    "t1":        row.get("T1",      0),
+                    "t2":        row.get("T2",      0),
+                    "rr1":       row.get("RR1",     2.0),
+                    "tf":        tf_tag,
+                    "rationale": row.get("Rationale", row.get("Strategy","CPR")),
+                    "strategy":  row.get("Strategy","CPR"),
+                    "strength":  row.get("Strength%",0),
+                    "candle":    row.get("Candle","—"),
+                }
+                if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
+                    ft_add_signal(sig, source=f"Auto · {tf_tag.upper()}")
         last_scan = now
 
         # ── Always sync canonical keys read by Trade Signals tab ──────────────
@@ -5633,853 +5653,185 @@ def page_trade_signals(nse500: pd.DataFrame):
 
 def _trade_buttons(s: dict):
     """
-    Trade action buttons:
-    - Upstox: ALWAYS live when token is connected (regardless of market hours)
-    - Groww/Zerodha: Live during market hours, locked outside
-    - Paper: Always available
+    Broker buttons + Fwd Test button.
+    When a broker button is clicked:
+      - Opens broker in new tab for order placement
+      - Simultaneously logs a PENDING trade in Forward Testing
+      - Forward Testing then polls live price to auto-trigger SL/Target
+      - On trigger, event is recorded with timestamp + P&L
     """
-    from datetime import timezone
-    bull      = s["side"] == "BUY"
-    sym       = s["symbol"]
-    mkt_open  = is_market_open()
-    up_live   = _upstox_connected()   # Upstox always active when token saved
+    from datetime import timezone as _tz
+    bull     = s["side"] == "BUY"
+    sym      = s["symbol"]
+    mkt_open = is_market_open()
+    up_live  = _upstox_connected()
+    IST      = _tz(timedelta(hours=5, minutes=30))
+    now_ist  = datetime.now(IST)
 
-    IST     = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(IST)
-
-    # Next open message for non-Upstox brokers
     if not mkt_open:
-        if now_ist.weekday() >= 5:
-            next_open = "Opens Monday 9:15 AM IST"
+        if now_ist.weekday() >= 5:        next_open = "Opens Monday 9:15 AM IST"
         elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
-            next_open = "Opens today at 9:15 AM IST"
-        else:
-            next_open = "Opens tomorrow 9:15 AM IST"
+                                           next_open = "Opens today 9:15 AM IST"
+        else:                              next_open = "Opens tomorrow 9:15 AM IST"
     else:
         next_open = ""
 
-    # ── Status bar ────────────────────────────────────────────────────────
+    # Status bar
     if mkt_open:
-        status_html = (
-            "<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-            " · Live trading available"
-        )
+        status_html = "<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span> · Live trading"
     elif up_live:
-        status_html = (
-            "<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span>"
-            f" · {next_open} · Upstox always active"
-        )
+        status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
-        status_html = (
-            f"<span style='color:#b8860b;font-weight:700;'>● Market Closed</span>"
-            f" · {next_open}"
-        )
+        status_html = f"<span style='color:#b8860b;font-weight:700;'>● Market Closed</span> · {next_open}"
     st.markdown(
         f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
         f"color:#2e3d1a;margin-bottom:5px;'>{status_html}</div>",
         unsafe_allow_html=True,
     )
 
-    # ── URLs ──────────────────────────────────────────────────────────────
-    # Correct working URLs — open stock page on each broker
-    # Groww: search page (slug varies per stock, search is reliable)
+    # URLs
     groww_url  = f"https://groww.in/search?q={sym}"
-    # Zerodha Kite: open kite and search the stock
     kite_url   = f"https://kite.zerodha.com/?q={sym}"
-    # Upstox Pro Web: stock detail page on pro.upstox.com
     upstox_url = f"https://pro.upstox.com/stocks/details/NSE/{sym}"
 
-    # Styles
-    btn_style  = (
-        "display:block;text-align:center;padding:8px 0;"
-        "border-radius:7px;font-size:0.78rem;font-weight:700;"
-        "text-decoration:none;font-family:DM Sans,sans-serif;"
-    )
-    lock_style = (
-        "display:block;text-align:center;padding:8px 0;"
-        "background:#e8eddf;color:#8a9a78;border-radius:7px;"
-        "font-size:0.72rem;font-weight:600;font-family:DM Sans,sans-serif;"
-        "cursor:not-allowed;border:1px dashed #b8c89a;"
-    )
+    btn_style = ("display:block;text-align:center;padding:8px 0;"
+                 "border-radius:7px;font-size:0.78rem;font-weight:700;"
+                 "text-decoration:none;font-family:DM Sans,sans-serif;")
+    lock_style= ("display:block;text-align:center;padding:8px 0;"
+                 "background:#e8eddf;color:#8a9a78;border-radius:7px;"
+                 "font-size:0.72rem;font-weight:600;font-family:DM Sans,sans-serif;"
+                 "cursor:not-allowed;border:1px dashed #b8c89a;")
 
+    def _log_broker_trade(broker_name: str):
+        """Log this signal as a Forward Test trade when broker button is clicked."""
+        try:
+            ltp = _ft_ltp(sym)
+            if not ltp: ltp = s.get("entry", 0)
+        except Exception:
+            ltp = s.get("entry", 0)
+        if not ltp: return
+
+        # Load FT data
+        if not st.session_state.get("ft_loaded"):
+            saved = _ft_load()
+            st.session_state["ft_trades"]  = saved["trades"]
+            st.session_state["ft_balance"] = saved["balance"]
+            st.session_state["ft_start"]   = saved.get("starting", 100000.0)
+            st.session_state["ft_loaded"]  = True
+
+        bal = st.session_state.get("ft_balance", 100000.0)
+        qty = max(1, int(bal * 0.05 / max(ltp, 1)))
+        cost= round(ltp * qty, 2)
+        if cost > bal:
+            qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+            cost = round(ltp * qty, 2)
+        if cost > bal:
+            st.toast(f"⚠️ Insufficient Forward Test balance for {sym}", icon="⚠️")
+            return
+
+        trade = {
+            "id":         len(st.session_state.get("ft_trades", [])) + 1,
+            "symbol":     sym,
+            "side":       s["side"],
+            "entry":      ltp,
+            "qty":        qty,
+            "sl":         s.get("sl",  round(ltp * (0.98 if bull else 1.02), 2)),
+            "target":     s.get("t1",  round(ltp * (1.03 if bull else 0.97), 2)),
+            "t2":         s.get("t2",  round(ltp * (1.06 if bull else 0.94), 2)),
+            "rr":         s.get("rr1", 2.0),
+            "cost":       cost,
+            "status":     "OPEN",
+            "pnl":        0.0,
+            "ltp":        ltp,
+            "exit_px":    None,
+            "exit_time":  None,
+            "source":     f"{broker_name} · {s.get('tf','—')}",
+            "strategy":   s.get("rationale", s.get("strategy","CPR Signal"))[:50],
+            "opened_at":  datetime.now().strftime("%d %b %H:%M:%S"),
+        }
+        trades = st.session_state.get("ft_trades", [])
+        trades.append(trade)
+        bal -= cost
+        st.session_state["ft_trades"]  = trades
+        st.session_state["ft_balance"] = round(bal, 2)
+        _ft_save({"trades": trades, "balance": round(bal, 2),
+                  "starting": st.session_state.get("ft_start", 100000.0)})
+        st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
+
+    # ── 4 columns: Groww | Zerodha | Upstox | Fwd Test ───────────────────
     c1, c2, c3, c4 = st.columns(4)
 
-    # ── Groww — market hours only ─────────────────────────────────────────
     with c1:
         if mkt_open:
             ac = "#00b386" if bull else "#e74c3c"
             st.markdown(
-                f"<a href='{groww_url}' target='_blank' style='{btn_style}background:{ac};color:#fff;'>"
+                f"<a href='{groww_url}' target='_blank' "
+                f"style='{btn_style}background:{ac};color:#fff;'>"
                 f"{'🟢' if bull else '🔴'} Groww</a>",
                 unsafe_allow_html=True,
             )
+            if st.button("Log in Fwd Test", key=f"gl_{sym}_{s['side']}_{s['tf']}",
+                         use_container_width=True):
+                _log_broker_trade("Groww")
         else:
-            st.markdown(
-                f"<div title='{next_open}' style='{lock_style}'>🔒 Groww</div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Groww</div>",
+                        unsafe_allow_html=True)
 
-    # ── Zerodha — market hours only ───────────────────────────────────────
     with c2:
         if mkt_open:
             st.markdown(
-                f"<a href='{kite_url}' target='_blank' style='{btn_style}background:#387ed1;color:#fff;'>"
-                f"⚡ Zerodha</a>",
+                f"<a href='{kite_url}' target='_blank' "
+                f"style='{btn_style}background:#387ed1;color:#fff;'>⚡ Zerodha</a>",
                 unsafe_allow_html=True,
             )
+            if st.button("Log in Fwd Test", key=f"zl_{sym}_{s['side']}_{s['tf']}",
+                         use_container_width=True):
+                _log_broker_trade("Zerodha")
         else:
-            st.markdown(
-                f"<div title='{next_open}' style='{lock_style}'>🔒 Zerodha</div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Zerodha</div>",
+                        unsafe_allow_html=True)
 
-    # ── Upstox — ALWAYS LIVE when token connected ─────────────────────────
     with c3:
         if up_live:
-            # Always show as active — Upstox token = always ready
             label = f"{'🟢' if bull else '🔴'} Upstox"
-            badge = " ●" if not mkt_open else ""  # dot when market closed to show it's special
             st.markdown(
                 f"<a href='{upstox_url}' target='_blank' "
-                f"style='{btn_style}background:#7c3aed;color:#fff;"
-                f"box-shadow:0 0 8px rgba(124,58,237,0.4);'>"
-                f"{label}{badge}</a>",
+                f"style='{btn_style}background:#7c3aed;color:#fff;'>{label}</a>",
                 unsafe_allow_html=True,
             )
+            if st.button("Log in Fwd Test", key=f"ul_{sym}_{s['side']}_{s['tf']}",
+                         use_container_width=True):
+                _log_broker_trade("Upstox")
         else:
-            # Not connected — prompt to connect
             st.markdown(
                 f"<a href='#' onclick='return false;' "
-                f"title='Connect Upstox in ⚙️ Broker settings for live trading anytime' "
+                f"title='Connect Upstox in ⚙️ Broker settings' "
                 f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>💜 Upstox</a>",
                 unsafe_allow_html=True,
             )
 
-    # ── Paper Trade — always available ────────────────────────────────────
     with c4:
-        if st.button("📝 Paper", key=f"paper_{sym}_{s['side']}_{s['tf']}", use_container_width=True):
-            balance = st.session_state.get("paper_balance", 100000.0)
+        if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
+                     use_container_width=True):
             try:
-                if _upstox_connected():
-                    live = upstox_get_ltp(sym) or round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
-                else:
-                    live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
-            except:
-                live = s["entry"]
-            qty  = max(1, int(balance * 0.05 / max(live, 1)))
-            cost = round(live * qty, 2)
-            if cost > balance:
-                qty  = max(1, int(balance * 0.02 / max(live, 1)))
-                cost = round(live * qty, 2)
-            if cost > balance:
-                st.error("Insufficient virtual balance.")
-            else:
-                trade = {
-                    "id":     len(st.session_state.get("paper_trades", [])) + 1,
-                    "symbol": sym, "side": s["side"],
-                    "entry":  live, "qty": qty,
-                    "target": s["t1"], "sl": s["sl"],
-                    "rr":     s["rr1"], "cost": cost,
-                    "status": "OPEN", "pnl": 0.0, "exit_px": None,
-                    "source": f"Scanner {s['tf']}",
-                    "time":   datetime.now().strftime("%d %b %H:%M"),
-                }
-                if "paper_trades" not in st.session_state:
-                    st.session_state["paper_trades"] = []
-                st.session_state["paper_trades"].append(trade)
-                st.session_state["paper_balance"] = balance - cost
-                st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
-
-    st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
-
-
-def page_price_alerts():
-    """Set price alerts — notified via toast + desktop when LTP crosses level."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">🎯</span>
-        <h1>Price Alerts</h1>
-        <span style="margin-left:auto;background:#fdf3d4;border:1px solid #e0c060;
-                     color:#7a5800;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            TRIGGERS ON SCANNER REFRESH
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    alerts = st.session_state.get("price_alerts", {})
-
-    # ── Add new alert ──────────────────────────────────────────────────────
-    with st.expander("➕ Add New Alert", expanded=True):
-        c1, c2, c3, c4 = st.columns([2, 1.5, 1.5, 1])
-        with c1:
-            al_sym  = st.selectbox("Symbol", sorted(fetch_nifty200_list()), key="al_sym")
-        with c2:
-            al_type = st.radio("Trigger", ["ABOVE ▲", "BELOW ▼"], horizontal=True, key="al_type")
-        with c3:
-            # Try to get current price
-            try:
-                if _upstox_connected():
-                    cur_px = upstox_get_ltp(al_sym) or float(yf.Ticker(al_sym+".NS").fast_info.last_price)
-                else:
-                    cur_px = float(yf.Ticker(al_sym+".NS").fast_info.last_price)
-            except:
-                cur_px = 0.0
-            al_px = st.number_input("Target Price ₹", value=round(cur_px*1.02,2),
-                                     step=0.5, key="al_px")
-        with c4:
-            st.markdown("<div style='padding-top:1.6rem;'>", unsafe_allow_html=True)
-            if st.button("🔔 Set Alert", use_container_width=True, key="btn_set_alert"):
-                sym_alerts = alerts.get(al_sym, [])
-                sym_alerts.append({
-                    "type":  "ABOVE" if "ABOVE" in al_type else "BELOW",
-                    "price": round(al_px, 2),
-                    "fired": False,
-                    "created": datetime.now().strftime("%d %b %H:%M"),
-                })
-                alerts[al_sym] = sym_alerts
-                st.session_state["price_alerts"] = alerts
-                st.success(f"✅ Alert set: {al_sym} {'above' if 'ABOVE' in al_type else 'below'} ₹{al_px:.2f}")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── Active alerts ──────────────────────────────────────────────────────
-    if not alerts:
-        st.markdown("""
-        <div style="text-align:center;padding:2rem;background:#f5f8ed;
-                    border:2px dashed #b8c89a;border-radius:12px;margin-top:1rem;">
-            <div style="font-size:1.5rem;margin-bottom:0.5rem;">🎯</div>
-            <div style="font-family:DM Mono,monospace;font-size:0.85rem;color:#2e3d1a;">
-                No alerts set yet
-            </div>
-            <div style="font-size:0.78rem;color:#4a5e32;margin-top:0.3rem;">
-                Alerts check on every scanner refresh
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    st.markdown(f"#### 🔔 Active Alerts ({sum(len(v) for v in alerts.values())} total)")
-
-    for sym, sym_alerts in list(alerts.items()):
-        # Get current LTP
-        try:
-            if _upstox_connected():
-                ltp = upstox_get_ltp(sym)
-            else:
-                ltp = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
-        except:
-            ltp = 0.0
-
-        for idx, a in enumerate(sym_alerts):
-            fired   = a.get("fired", False)
-            a_type  = a["type"]
-            a_price = a["price"]
-            ac      = "#1a6b2e" if a_type == "ABOVE" else "#9e2018"
-            bg      = "#e4f5e8" if a_type == "ABOVE" else "#fbe8e6"
-            bdr     = "#8dcc9a" if a_type == "ABOVE" else "#dc9090"
-            pct_away= round((a_price - ltp) / max(ltp, 1) * 100, 2) if ltp else 0
-
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.markdown(
-                    f"<div style='background:{'#f0f4e8' if fired else bg};"
-                    f"border:1.5px solid {'#b8c89a' if fired else bdr};"
-                    f"border-radius:9px;padding:0.65rem 1rem;"
-                    f"font-family:DM Mono,monospace;display:flex;gap:12px;"
-                    f"align-items:center;flex-wrap:wrap;"
-                    f"opacity:{'0.5' if fired else '1'};'>"
-                    f"<b style='font-size:1rem;color:#0e1308;'>{sym}</b>"
-                    f"<span style='background:{bg};color:{ac};border:1px solid {bdr};"
-                    f"border-radius:5px;padding:1px 8px;font-size:0.7rem;font-weight:700;'>"
-                    f"{'▲ ABOVE' if a_type=='ABOVE' else '▼ BELOW'} ₹{a_price:,.2f}</span>"
-                    f"<span style='color:#4a5e32;font-size:0.75rem;'>"
-                    f"LTP ₹{ltp:,.2f} · {abs(pct_away):.1f}% {'away' if not fired else '— TRIGGERED ✅'}"
-                    f"</span>"
-                    f"<span style='margin-left:auto;font-size:0.68rem;color:#8a9a78;'>"
-                    f"Set {a.get('created','')}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            with col2:
-                if st.button("🗑️", key=f"del_alert_{sym}_{idx}", use_container_width=True, help="Delete alert"):
-                    alerts[sym].pop(idx)
-                    if not alerts[sym]:
-                        del alerts[sym]
-                    st.session_state["price_alerts"] = alerts
-                    st.rerun()
-
-    if st.button("🗑️ Clear All Alerts", key="clear_all_alerts"):
-        st.session_state["price_alerts"] = {}
-        st.rerun()
-
-    st.caption("Alerts trigger when CPR Scanner finds the stock crossing your target price. Run scanner during market hours.")
-
-
-def page_journal():
-    """Trade Journal — notes, lessons, screenshots per trade."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">📔</span>
-        <h1>Trade Journal</h1>
-        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
-                     color:#3c3489;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            LEARN FROM EVERY TRADE
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    import json as _json
-    _journal_file = os.path.join(os.path.expanduser("~"), ".pivotvault_journal.json")
-
-    def load_journal():
-        try:
-            if os.path.exists(_journal_file):
-                with open(_journal_file) as f:
-                    return _json.load(f)
-        except Exception:
-            pass
-        return []
-
-    def save_journal(entries):
-        try:
-            with open(_journal_file, "w") as f:
-                _json.dump(entries, f, indent=2, default=str)
-        except Exception:
-            pass
-
-    journal = load_journal()
-
-    # ── Add new entry ──────────────────────────────────────────────────────
-    with st.expander("✏️ Add Journal Entry", expanded=len(journal)==0):
-        jc1, jc2, jc3 = st.columns(3)
-        with jc1:
-            j_date   = st.date_input("Date", key="j_date")
-            j_sym    = st.text_input("Symbol", placeholder="RELIANCE", key="j_sym")
-        with jc2:
-            j_side   = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="j_side")
-            j_result = st.radio("Result", ["WIN ✅","LOSS ❌","BREAK-EVEN ➖"], horizontal=True, key="j_result")
-        with jc3:
-            j_entry  = st.number_input("Entry ₹",  value=0.0, step=0.5, key="j_entry")
-            j_exit   = st.number_input("Exit ₹",   value=0.0, step=0.5, key="j_exit")
-            j_pnl    = round((j_exit - j_entry) * (1 if j_side=="BUY" else -1), 2)
-            st.metric("P&L", f"₹{j_pnl:+,.2f}", delta=f"{j_pnl/max(j_entry,1)*100:+.2f}%" if j_entry else None)
-
-        j_setup    = st.selectbox("Setup used", [
-            "CPR Breakout (Bullish)", "CPR Breakdown (Bearish)",
-            "Virgin CPR Breakout", "Pivot Level Bounce", "Candlestick Reversal",
-            "HMA Crossover", "3/10 Oscillator Cross", "VWAP Reclaim", "Custom"
-        ], key="j_setup")
-        j_why      = st.text_area("Why did I take this trade?",
-                                   placeholder="CPR was narrow, price broke above TC with volume surge...",
-                                   height=80, key="j_why")
-        j_lesson   = st.text_area("What did I learn?",
-                                   placeholder="Should have waited for candle close above TC before entering...",
-                                   height=80, key="j_lesson")
-        j_emotion  = st.select_slider("Emotional state while trading",
-                                       options=["😰 Fearful","😟 Uncertain","😐 Neutral","😊 Confident","🤩 Overconfident"],
-                                       value="😐 Neutral", key="j_emotion")
-        j_followed = st.checkbox("I followed my trading rules", key="j_followed")
-
-        if st.button("💾 Save Journal Entry", use_container_width=True, key="btn_save_journal"):
-            if j_sym.strip():
-                entry = {
-                    "id":        len(journal) + 1,
-                    "date":      str(j_date),
-                    "symbol":    j_sym.upper().strip(),
-                    "side":      j_side,
-                    "result":    j_result.split()[0],
-                    "entry_px":  j_entry,
-                    "exit_px":   j_exit,
-                    "pnl":       j_pnl,
-                    "setup":     j_setup,
-                    "why":       j_why,
-                    "lesson":    j_lesson,
-                    "emotion":   j_emotion,
-                    "followed_rules": j_followed,
-                    "created_at": datetime.now().isoformat(),
-                }
-                journal.append(entry)
-                save_journal(journal)
-                st.success("✅ Journal entry saved!")
-                st.rerun()
-            else:
-                st.error("Enter a symbol.")
-
-    if not journal:
-        st.markdown("""
-        <div style="text-align:center;padding:2.5rem;background:#f5f8ed;
-                    border:2px dashed #b8c89a;border-radius:12px;">
-            <div style="font-size:1.5rem;margin-bottom:0.5rem;">📔</div>
-            <div style="font-family:DM Mono,monospace;font-size:0.85rem;color:#2e3d1a;">
-                No entries yet — start journaling every trade
-            </div>
-            <div style="font-size:0.78rem;color:#4a5e32;margin-top:0.3rem;">
-                Consistent journaling is the #1 habit of profitable traders
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    # ── Stats ──────────────────────────────────────────────────────────────
-    wins   = [e for e in journal if e["result"] == "WIN"]
-    losses = [e for e in journal if e["result"] == "LOSS"]
-    wr     = round(len(wins)/len(journal)*100, 1)
-    tot_pnl= round(sum(e["pnl"] for e in journal), 2)
-    followed = [e for e in journal if e.get("followed_rules")]
-
-    mc1,mc2,mc3,mc4 = st.columns(4)
-    mc1.metric("📝 Total Entries", len(journal))
-    mc2.metric("✅ Win Rate",      f"{wr}%")
-    mc3.metric("💰 Total P&L",    f"₹{tot_pnl:+,.2f}")
-    mc4.metric("📐 Rule Adherence", f"{round(len(followed)/len(journal)*100)}%")
-
-    # Emotion breakdown
-    emotion_counts = {}
-    for e in journal:
-        em = e.get("emotion","😐 Neutral")
-        emotion_counts[em] = emotion_counts.get(em, 0) + 1
-
-    # Show setup performance
-    setup_perf = {}
-    for e in journal:
-        s = e.get("setup","Custom")
-        if s not in setup_perf:
-            setup_perf[s] = {"wins":0,"total":0,"pnl":0}
-        setup_perf[s]["total"] += 1
-        setup_perf[s]["pnl"]   += e["pnl"]
-        if e["result"] == "WIN":
-            setup_perf[s]["wins"] += 1
-
-    if setup_perf:
-        st.markdown("#### 📊 Setup Performance")
-        rows = []
-        for setup, v in sorted(setup_perf.items(), key=lambda x: -x[1]["pnl"]):
-            rows.append({
-                "Setup":    setup,
-                "Trades":   v["total"],
-                "Win Rate": f"{round(v['wins']/v['total']*100)}%",
-                "Total P&L":f"₹{v['pnl']:+,.2f}",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    # ── Journal entries list ───────────────────────────────────────────────
-    st.markdown("#### 📋 Journal Entries")
-    for e in reversed(journal):
-        result_color = {"WIN":"#1a6b2e","LOSS":"#9e2018","BREAK-EVEN":"#7a5800"}.get(e["result"],"#2e3d1a")
-        result_bg    = {"WIN":"#e4f5e8","LOSS":"#fbe8e6","BREAK-EVEN":"#fdf3d4"}.get(e["result"],"#f5f8ed")
-
-        with st.expander(
-            f"{e['date']} — {e['symbol']} {e['side']} — "
-            f"{e['result']} ₹{e['pnl']:+,.2f} — {e.get('setup','')[:30]}",
-            expanded=False,
-        ):
-            st.markdown(
-                f"<div style='display:flex;gap:0.75rem;flex-wrap:wrap;"
-                f"font-family:DM Mono,monospace;font-size:0.78rem;margin-bottom:0.75rem;'>"
-                f"<span style='background:{result_bg};color:{result_color};"
-                f"border-radius:5px;padding:2px 10px;font-weight:700;'>{e['result']}</span>"
-                f"<span>Entry ₹{e['entry_px']:,.2f}</span>"
-                f"<span>Exit ₹{e['exit_px']:,.2f}</span>"
-                f"<span style='color:{result_color};font-weight:700;'>P&L ₹{e['pnl']:+,.2f}</span>"
-                f"<span>{e.get('emotion','')}</span>"
-                f"<span>{'✅ Followed rules' if e.get('followed_rules') else '❌ Broke rules'}</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            if e.get("why"):
-                st.markdown(f"**Why I took this trade:** {e['why']}")
-            if e.get("lesson"):
-                st.markdown(f"**Lesson learned:** {e['lesson']}")
-
-            if st.button("🗑️ Delete entry", key=f"del_journal_{e['id']}"):
-                journal = [x for x in journal if x["id"] != e["id"]]
-                save_journal(journal)
-                st.rerun()
-
-    # Export journal
-    import json as _json2
-    if st.button("📥 Export Journal as JSON", key="export_journal"):
-        st.download_button(
-            "⬇️ Download Journal",
-            data=_json2.dumps(journal, indent=2, default=str),
-            file_name=f"pivotvault_journal_{datetime.now().strftime('%Y%m%d')}.json",
-            mime="application/json",
-            key="dl_journal"
-        )
-
-
-def page_analytics():
-    """Performance Analytics — P&L calendar, time analysis, drawdown chart."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">📊</span>
-        <h1>Performance Analytics</h1>
-    </div>
-    """, unsafe_allow_html=True)
-
-    trades = st.session_state.get("paper_trades", [])
-    closed = [t for t in trades if t.get("status") == "CLOSED"]
-
-    if len(closed) < 3:
-        st.info("Need at least 3 closed trades for analytics. Use 📝 Test Trade to build your track record.")
-        return
-
-    df_t = pd.DataFrame(closed)
-    df_t["date"]    = pd.to_datetime(df_t.get("opened_at", df_t.get("time", "")), errors="coerce")
-    df_t["weekday"] = df_t["date"].dt.day_name()
-    df_t["hour"]    = df_t["date"].dt.hour
-    df_t["month"]   = df_t["date"].dt.strftime("%Y-%m")
-    df_t["pnl"]     = pd.to_numeric(df_t["pnl"], errors="coerce").fillna(0)
-    df_t["win"]     = df_t["pnl"] > 0
-
-    wins   = df_t[df_t["win"]]
-    losses = df_t[~df_t["win"]]
-
-    # ── Summary row ───────────────────────────────────────────────────────
-    m1,m2,m3,m4,m5,m6 = st.columns(6)
-    m1.metric("Total Trades",  len(closed))
-    m2.metric("Win Rate",      f"{round(len(wins)/len(closed)*100,1)}%")
-    m3.metric("Total P&L",     f"₹{df_t['pnl'].sum():+,.0f}")
-    m4.metric("Profit Factor", f"{round(wins['pnl'].sum()/max(abs(losses['pnl'].sum()),1),2)}x")
-    m5.metric("Avg Win",       f"₹{wins['pnl'].mean():+,.0f}" if len(wins) else "—")
-    m6.metric("Avg Loss",      f"₹{losses['pnl'].mean():+,.0f}" if len(losses) else "—")
-
-    st.divider()
-
-    tab1, tab2, tab3, tab4 = st.tabs(["📅 P&L Calendar", "⏰ Time Analysis", "📉 Drawdown", "🎯 Setup Stats"])
-
-    # ── Tab 1: Monthly P&L heatmap calendar ──────────────────────────────
-    with tab1:
-        st.markdown("##### Monthly P&L — daily breakdown")
-        daily_pnl = df_t.groupby(df_t["date"].dt.date)["pnl"].sum().reset_index()
-        daily_pnl.columns = ["date","pnl"]
-
-        if not daily_pnl.empty:
-            import plotly.graph_objects as go
-            daily_pnl["date"] = pd.to_datetime(daily_pnl["date"])
-            daily_pnl["weekday_num"] = daily_pnl["date"].dt.weekday
-            daily_pnl["week_num"]    = daily_pnl["date"].dt.isocalendar().week
-            daily_pnl["month_label"] = daily_pnl["date"].dt.strftime("%b %Y")
-
-            colors = ["#9e2018" if p < 0 else "#1a6b2e" for p in daily_pnl["pnl"]]
-            fig = go.Figure(go.Bar(
-                x=daily_pnl["date"].astype(str),
-                y=daily_pnl["pnl"],
-                marker_color=colors,
-                text=[f"₹{p:+,.0f}" for p in daily_pnl["pnl"]],
-                textposition="outside",
-            ))
-            fig.update_layout(
-                height=280, margin=dict(l=0,r=0,t=10,b=0),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.3)",
-                font=dict(family="DM Mono",size=10,color="#0e1308"),
-                xaxis=dict(showgrid=False,tickangle=-45),
-                yaxis=dict(showgrid=True,gridcolor="#dae0cb",tickformat="+,.0f",tickprefix="₹"),
-                showlegend=False,
-            )
-            fig.add_hline(y=0,line_dash="dash",line_color="#b8c89a",line_width=1)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Monthly totals
-        if "month" in df_t.columns:
-            monthly = df_t.groupby("month")["pnl"].agg(["sum","count"]).reset_index()
-            monthly.columns = ["Month","P&L","Trades"]
-            monthly["Win Rate"] = df_t.groupby("month")["win"].mean().values * 100
-            monthly["P&L"]      = monthly["P&L"].round(2)
-            monthly["Win Rate"] = monthly["Win Rate"].round(1).astype(str) + "%"
-            st.dataframe(monthly, use_container_width=True, hide_index=True)
-
-    # ── Tab 2: Time analysis ──────────────────────────────────────────────
-    with tab2:
-        st.markdown("##### Best days & hours to trade")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**P&L by day of week**")
-            day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday"]
-            day_pnl   = df_t.groupby("weekday")["pnl"].agg(["mean","sum","count"]).reindex(day_order).fillna(0)
-            day_pnl.columns = ["Avg P&L","Total P&L","Trades"]
-            day_pnl["Win Rate"] = (df_t.groupby("weekday")["win"].mean().reindex(day_order).fillna(0)*100).round(1).astype(str)+"%"
-            st.dataframe(day_pnl.round(2), use_container_width=True)
-        with c2:
-            st.markdown("**P&L by entry hour (IST)**")
-            hour_pnl = df_t.groupby("hour")["pnl"].agg(["mean","count"]).fillna(0)
-            hour_pnl.columns = ["Avg P&L","Trades"]
-            hour_pnl.index = [f"{h}:00" for h in hour_pnl.index]
-            st.dataframe(hour_pnl.round(2), use_container_width=True)
-
-        best_day  = day_pnl["Avg P&L"].idxmax() if not day_pnl.empty else "—"
-        worst_day = day_pnl["Avg P&L"].idxmin() if not day_pnl.empty else "—"
-        st.success(f"✅ Best day to trade: **{best_day}** | Avoid: **{worst_day}**")
-
-    # ── Tab 3: Drawdown chart ─────────────────────────────────────────────
-    with tab3:
-        st.markdown("##### Equity curve & drawdown")
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-
-        cum    = df_t["pnl"].cumsum()
-        peak   = cum.cummax()
-        dd     = (cum - peak)
-        max_dd = round(dd.min(), 2)
-
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                            row_heights=[0.6,0.4], vertical_spacing=0.08)
-        fig.add_trace(go.Scatter(
-            y=cum.values, mode="lines", line=dict(color="#3d5a1c",width=2),
-            fill="tozeroy", fillcolor="rgba(61,90,28,0.1)", name="Equity"
-        ), row=1, col=1)
-        fig.add_trace(go.Bar(
-            y=dd.values, marker_color="#9e2018", opacity=0.6, name="Drawdown"
-        ), row=2, col=1)
-        fig.update_layout(
-            height=340, margin=dict(l=0,r=0,t=10,b=0),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.3)",
-            font=dict(family="DM Mono",size=10,color="#0e1308"),
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.error(f"📉 Max drawdown: **₹{max_dd:,.2f}** over {len(closed)} trades")
-
-        # Consecutive wins/losses
-        streaks = []
-        cur_streak = 0; cur_type = None
-        for w in df_t["win"]:
-            if cur_type is None or w == cur_type:
-                cur_streak += 1; cur_type = w
-            else:
-                streaks.append((cur_type, cur_streak))
-                cur_streak = 1; cur_type = w
-        if cur_streak: streaks.append((cur_type, cur_streak))
-        win_streaks  = [s for t,s in streaks if t]
-        loss_streaks = [s for t,s in streaks if not t]
-        sc1,sc2 = st.columns(2)
-        sc1.metric("🏆 Max Win Streak",  max(win_streaks)  if win_streaks  else 0)
-        sc2.metric("💀 Max Loss Streak", max(loss_streaks) if loss_streaks else 0)
-
-    # ── Tab 4: Setup stats ────────────────────────────────────────────────
-    with tab4:
-        st.markdown("##### Which signals work best for you?")
-        if "source" in df_t.columns:
-            src_perf = df_t.groupby("source").agg(
-                Trades=("pnl","count"),
-                WinRate=("win","mean"),
-                TotalPnL=("pnl","sum"),
-                AvgPnL=("pnl","mean"),
-            ).reset_index()
-            src_perf["WinRate"]  = (src_perf["WinRate"]*100).round(1).astype(str)+"%"
-            src_perf["TotalPnL"] = src_perf["TotalPnL"].round(2)
-            src_perf["AvgPnL"]   = src_perf["AvgPnL"].round(2)
-            st.dataframe(src_perf, use_container_width=True, hide_index=True)
-        else:
-            st.info("Source tracking not available for older trades.")
-
-        # Symbol performance
-        st.markdown("**Performance by symbol**")
-        sym_perf = df_t.groupby("symbol").agg(
-            Trades=("pnl","count"),
-            WinRate=("win","mean"),
-            TotalPnL=("pnl","sum"),
-        ).reset_index().sort_values("TotalPnL", ascending=False)
-        sym_perf["WinRate"]  = (sym_perf["WinRate"]*100).round(1).astype(str)+"%"
-        sym_perf["TotalPnL"] = sym_perf["TotalPnL"].round(2)
-        st.dataframe(sym_perf, use_container_width=True, hide_index=True)
-
-
-@st.cache_data(ttl=3600)
-def fetch_fii_dii_data() -> pd.DataFrame:
-    """Fetch FII/DII daily activity from NSE."""
-    try:
-        r = requests.get(
-            "https://www.nseindia.com/api/fiidiiTradeReact",
-            headers={"User-Agent":"Mozilla/5.0","Accept":"application/json",
-                     "Referer":"https://www.nseindia.com"},
-            timeout=8,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            rows = []
-            for item in data[:10]:
-                rows.append({
-                    "Date":        item.get("date",""),
-                    "FII Buy ₹Cr": round(float(item.get("fiiBuyValue",0))/100,1),
-                    "FII Sell ₹Cr":round(float(item.get("fiiSellValue",0))/100,1),
-                    "FII Net ₹Cr": round(float(item.get("fiiNetValue",0))/100,1),
-                    "DII Buy ₹Cr": round(float(item.get("diiBuyValue",0))/100,1),
-                    "DII Sell ₹Cr":round(float(item.get("diiSellValue",0))/100,1),
-                    "DII Net ₹Cr": round(float(item.get("diiNetValue",0))/100,1),
-                })
-            return pd.DataFrame(rows)
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
-@st.cache_data(ttl=60)
-def fetch_options_chain(symbol: str = "NIFTY") -> dict:
-    """Fetch NSE options chain for index or stock."""
-    try:
-        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-        if symbol not in ("NIFTY","BANKNIFTY","FINNIFTY"):
-            url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}"
-        r = requests.get(
-            url,
-            headers={"User-Agent":"Mozilla/5.0","Accept":"application/json",
-                     "Referer":f"https://www.nseindia.com/option-chain"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return {}
-
-
-def page_market_intelligence():
-    """FII/DII data + Options chain + PCR + Max Pain."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">🏦</span>
-        <h1>Market Intelligence</h1>
-        <span style="margin-left:auto;background:#e6f1fb;border:1px solid #85b7eb;
-                     color:#0c447c;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            FII/DII · OPTIONS · PCR
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab_fii, tab_opts = st.tabs(["🏦 FII / DII Flow", "📊 Options Chain"])
-
-    # ── FII/DII ───────────────────────────────────────────────────────────
-    with tab_fii:
-        st.markdown("##### Institutional flow — last 10 sessions")
-        with st.spinner("Fetching FII/DII data from NSE..."):
-            df_fii = fetch_fii_dii_data()
-
-        if df_fii.empty:
-            st.warning("NSE FII/DII data unavailable. NSE blocks requests from cloud IPs — run locally.")
-        else:
-            # Net flow bar chart
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            fii_colors = ["#1a6b2e" if v >= 0 else "#9e2018" for v in df_fii["FII Net ₹Cr"]]
-            dii_colors = ["#185fa5" if v >= 0 else "#ba7517" for v in df_fii["DII Net ₹Cr"]]
-            fig.add_trace(go.Bar(name="FII Net", x=df_fii["Date"],
-                                  y=df_fii["FII Net ₹Cr"], marker_color=fii_colors))
-            fig.add_trace(go.Bar(name="DII Net", x=df_fii["Date"],
-                                  y=df_fii["DII Net ₹Cr"], marker_color=dii_colors))
-            fig.update_layout(
-                height=260, barmode="group", margin=dict(l=0,r=0,t=10,b=0),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.3)",
-                font=dict(family="DM Mono",size=10,color="#0e1308"),
-                legend=dict(orientation="h",y=1.1),
-                yaxis=dict(ticksuffix=" Cr", showgrid=True, gridcolor="#dae0cb"),
-            )
-            fig.add_hline(y=0,line_dash="dash",line_color="#b8c89a",line_width=1)
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Sentiment summary
-            last = df_fii.iloc[0]
-            fii_sent = "🐂 Bullish" if last["FII Net ₹Cr"] > 0 else "🐻 Bearish"
-            dii_sent = "🐂 Bullish" if last["DII Net ₹Cr"] > 0 else "🐻 Bearish"
-            st.markdown(
-                f"<div style='display:flex;gap:1rem;flex-wrap:wrap;font-family:DM Mono,monospace;"
-                f"font-size:0.8rem;margin-bottom:0.75rem;'>"
-                f"<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
-                f"padding:0.5rem 1rem;'>"
-                f"<b>FII today:</b> Net ₹{last['FII Net ₹Cr']:+,.1f} Cr · {fii_sent}</div>"
-                f"<div style='background:#e6f1fb;border:1px solid #85b7eb;border-radius:8px;"
-                f"padding:0.5rem 1rem;'>"
-                f"<b>DII today:</b> Net ₹{last['DII Net ₹Cr']:+,.1f} Cr · {dii_sent}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            st.dataframe(df_fii, use_container_width=True, hide_index=True)
-
-    # ── Options chain ─────────────────────────────────────────────────────
-    with tab_opts:
-        oc1, oc2 = st.columns([3,1])
-        with oc1:
-            oc_sym = st.selectbox("Symbol", ["NIFTY","BANKNIFTY","FINNIFTY",
-                                              "RELIANCE","TCS","HDFCBANK","INFY",
-                                              "ICICIBANK","SBIN","BAJFINANCE"],
-                                   key="oc_sym")
-        with oc2:
-            fetch_oc = st.button("📊 Load Chain", use_container_width=True, key="btn_oc")
-
-        if fetch_oc:
-            with st.spinner(f"Fetching {oc_sym} options chain..."):
-                oc_data = fetch_options_chain(oc_sym)
-
-            if not oc_data:
-                st.warning("Options chain unavailable. NSE may block cloud requests — works best locally.")
-            else:
-                try:
-                    records  = oc_data.get("records", {})
-                    spot     = records.get("underlyingValue", 0)
-                    exp_dates= records.get("expiryDates",[])
-                    data     = records.get("data",[])
-
-                    st.markdown(f"**{oc_sym}** Spot: ₹{spot:,.2f} · Expiry: {exp_dates[0] if exp_dates else '—'}")
-
-                    # Build chain table — ATM ±10 strikes
-                    rows = []
-                    total_ce_oi = total_pe_oi = 0
-                    for d in data:
-                        if exp_dates and d.get("expiryDate","") != exp_dates[0]:
-                            continue
-                        ce = d.get("CE",{})
-                        pe = d.get("PE",{})
-                        sp = d.get("strikePrice",0)
-                        ce_oi = ce.get("openInterest",0)
-                        pe_oi = pe.get("openInterest",0)
-                        total_ce_oi += ce_oi
-                        total_pe_oi += pe_oi
-                        rows.append({
-                            "CE OI":    ce_oi,
-                            "CE Chg OI":ce.get("changeinOpenInterest",0),
-                            "CE LTP":   ce.get("lastPrice",0),
-                            "Strike":   sp,
-                            "PE LTP":   pe.get("lastPrice",0),
-                            "PE Chg OI":pe.get("changeinOpenInterest",0),
-                            "PE OI":    pe_oi,
-                        })
-
-                    df_oc = pd.DataFrame(rows)
-                    if not df_oc.empty:
-                        # Highlight ATM
-                        atm_idx = (df_oc["Strike"] - spot).abs().idxmin()
-                        atm     = df_oc.loc[atm_idx,"Strike"]
-
-                        # PCR
-                        pcr = round(total_pe_oi / max(total_ce_oi, 1), 2)
-                        pcr_sent = "🐂 Bullish (PCR > 1)" if pcr > 1 else "🐻 Bearish (PCR < 1)"
-
-                        # Max pain — strike with minimum value of all options
-                        max_pain_strike = atm  # simplified
-
-                        mc1,mc2,mc3 = st.columns(3)
-                        mc1.metric("PCR (Put-Call Ratio)", f"{pcr}", pcr_sent)
-                        mc2.metric("ATM Strike", f"₹{atm:,.0f}")
-                        mc3.metric("Total CE OI", f"{total_ce_oi:,}")
-
-                        # Show ±8 strikes around ATM
-                        mask  = (df_oc["Strike"] >= atm - 8*50) & (df_oc["Strike"] <= atm + 8*50)
-                        df_show = df_oc[mask].copy()
-                        st.dataframe(df_show, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.error(f"Error parsing options chain: {e}")
-        else:
-            st.markdown("""
-            <div style="text-align:center;padding:2rem;background:#f5f8ed;
-                        border:2px dashed #b8c89a;border-radius:12px;">
-                <div style="font-size:1.5rem;margin-bottom:0.5rem;">📊</div>
-                <div style="font-family:DM Mono,monospace;font-size:0.85rem;color:#2e3d1a;">
-                    Select symbol and click Load Chain
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                live = _ft_ltp(sym) or s.get("entry", 0)
+            except Exception:
+                live = s.get("entry", 0)
+            st.session_state["ft_pending_signal"] = {
+                "symbol":   sym,
+                "side":     s["side"],
+                "entry":    live,
+                "sl":       s.get("sl",   0),
+                "t1":       s.get("t1",   0),
+                "t2":       s.get("t2",   0),
+                "rr":       s.get("rr1",  2.0),
+                "source":   f"Signal {s.get('tf','—')}",
+                "strategy": s.get("rationale", "CPR Signal")[:50],
+            }
+            st.session_state["current_page"] = "Forward Testing"
+            st.rerun()
+
+    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
 
 def page_broker_settings():
@@ -6748,554 +6100,632 @@ def page_broker_settings():
     )
 
 
-def _check_price_alerts(scan_df: pd.DataFrame):
-    """Fire browser notification if any watchlist price alert is triggered."""
-    if scan_df is None or scan_df.empty:
-        return
-    alerts = st.session_state.get("price_alerts", {})
-    if not alerts:
-        return
-    triggered = []
-    for sym, row in scan_df.set_index("Symbol").iterrows() if "Symbol" in scan_df.columns else []:
-        ltp = row.get("LTP", 0)
-        if sym in alerts:
-            for a in alerts[sym]:
-                if a["type"] == "ABOVE" and ltp >= a["price"] and not a.get("fired"):
-                    triggered.append((sym, f"▲ {sym} crossed ₹{a['price']} — now ₹{ltp}"))
-                    a["fired"] = True
-                elif a["type"] == "BELOW" and ltp <= a["price"] and not a.get("fired"):
-                    triggered.append((sym, f"▼ {sym} dropped to ₹{a['price']} — now ₹{ltp}"))
-                    a["fired"] = True
-    if triggered:
-        st.session_state["price_alerts"] = alerts
-        st.session_state["alert_notifications"] = triggered
+# ══════════════════════════════════════════════════════════════════════════════
+#  FORWARD TESTING ENGINE
+#  • Every CPR scanner signal auto-creates a FT position
+#  • SL + Target checked live every 15s (Upstox) or on refresh (yfinance)
+#  • All events logged: Entry, SL Hit, Target Hit, Manual Exit
+#  • Full P&L statement strategy-wise at day end
+# ══════════════════════════════════════════════════════════════════════════════
 
+import json as _json, os as _os
 
-def _save_paper_trades():
-    """Persist paper trades to local JSON file."""
-    try:
-        import json as _json
-        _journal_file = os.path.join(os.path.expanduser("~"), ".pivotvault_trades.json")
-        data = {
-            "trades":  st.session_state.get("paper_trades", []),
-            "balance": st.session_state.get("paper_balance", 100000.0),
-        }
-        with open(_journal_file, "w") as f:
-            _json.dump(data, f, indent=2, default=str)
-    except Exception:
-        pass
+_FT_FILE = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
 
-
-import json as _json
-_FT_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_fwdtest.json")
+# ── Persistence helpers ───────────────────────────────────────────────────
 
 def _ft_load():
     try:
-        if os.path.exists(_FT_FILE):
+        if _os.path.exists(_FT_FILE):
             with open(_FT_FILE) as f:
-                return _json.load(f)
+                d = _json.load(f)
+                if "positions" not in d: d["positions"] = []
+                if "events"    not in d: d["events"]    = []
+                if "balance"   not in d: d["balance"]   = 100000.0
+                if "starting"  not in d: d["starting"]  = 100000.0
+                return d
     except Exception:
         pass
-    return {"trades": [], "balance": 100000.0, "starting": 100000.0}
+    return {"positions": [], "events": [], "balance": 100000.0, "starting": 100000.0}
 
-def _ft_save(data):
+def _ft_save(state: dict):
     try:
         with open(_FT_FILE, "w") as f:
-            _json.dump(data, f, indent=2, default=str)
+            _json.dump(state, f, indent=2, default=str)
     except Exception:
         pass
 
-def _ft_ltp(symbol):
+def _ft_state():
+    """Get FT state from session, loading from disk on first call."""
+    if not st.session_state.get("_ft_loaded"):
+        d = _ft_load()
+        st.session_state["_ft"] = d
+        st.session_state["_ft_loaded"] = True
+    return st.session_state["_ft"]
+
+def _ft_flush():
+    """Persist current FT state to disk."""
+    _ft_save(st.session_state["_ft"])
+
+# ── LTP fetch ────────────────────────────────────────────────────────────
+
+def _ft_get_ltp(symbol: str) -> float:
     try:
         if _upstox_connected():
             v = upstox_get_ltp(symbol)
-            if v: return v
+            if v and v > 0: return float(v)
         return round(float(yf.Ticker(symbol + ".NS").fast_info.last_price), 2)
     except Exception:
         return 0.0
 
-def _ft_check_triggers(data):
-    """Check open positions against live price — auto-trigger SL/Target."""
-    changed = False
-    for t in data["trades"]:
-        if t["status"] != "OPEN":
-            continue
-        ltp = _ft_ltp(t["symbol"])
-        if not ltp:
-            continue
-        t["ltp"] = ltp
-        side = t["side"]
-        if side == "BUY":
-            if ltp >= t["target"]:
-                t["status"]    = "TARGET HIT"
-                t["exit_px"]   = t["target"]
-                t["pnl"]       = round((t["target"] - t["entry"]) * t["qty"], 2)
-                t["pnl_pct"]   = round((t["target"] - t["entry"]) / t["entry"] * 100, 2)
-                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
-                data["balance"] += t["cost"] + t["pnl"]
-                changed = True
-            elif ltp <= t["sl"]:
-                t["status"]    = "SL HIT"
-                t["exit_px"]   = t["sl"]
-                t["pnl"]       = round((t["sl"] - t["entry"]) * t["qty"], 2)
-                t["pnl_pct"]   = round((t["sl"] - t["entry"]) / t["entry"] * 100, 2)
-                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
-                data["balance"] += t["cost"] + t["pnl"]
-                changed = True
-        else:  # SELL
-            if ltp <= t["target"]:
-                t["status"]    = "TARGET HIT"
-                t["exit_px"]   = t["target"]
-                t["pnl"]       = round((t["entry"] - t["target"]) * t["qty"], 2)
-                t["pnl_pct"]   = round((t["entry"] - t["target"]) / t["entry"] * 100, 2)
-                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
-                data["balance"] += t["cost"] + t["pnl"]
-                changed = True
-            elif ltp >= t["sl"]:
-                t["status"]    = "SL HIT"
-                t["exit_px"]   = t["sl"]
-                t["pnl"]       = round((t["entry"] - t["sl"]) * t["qty"], 2)
-                t["pnl_pct"]   = round((t["entry"] - t["sl"]) / t["entry"] * 100, 2)
-                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
-                data["balance"] += t["cost"] + t["pnl"]
-                changed = True
-    return data, changed
+# ── Signal auto-entry (called from scanner + signal tab) ─────────────────
 
-
-def _fwd_get_ltp(symbol: str) -> float:
-    """Get live LTP — Upstox if connected, else yfinance."""
-    try:
-        if _upstox_connected():
-            ltp = upstox_get_ltp(symbol)
-            if ltp and ltp > 0:
-                return round(ltp, 2)
-        return round(float(yf.Ticker(symbol+".NS").fast_info.last_price), 2)
-    except Exception:
-        return 0.0
-
-
-def _fwd_check_triggers(trades: list) -> list:
+def ft_add_signal(s: dict, source: str = "Scanner"):
     """
-    Live trigger checker — called on every page refresh.
-    Checks each open forward test position against live LTP.
-    Updates status to HIT_TARGET / HIT_SL / RUNNING.
-    Returns updated trades list.
+    Auto-add a scanner signal as a Forward Test position.
+    Called automatically every time the scanner finds a signal.
+    Skips if same symbol+side already open.
     """
-    updated = False
-    for i, t in enumerate(trades):
-        if t["status"] != "OPEN":
-            continue
-        ltp = _fwd_get_ltp(t["symbol"])
-        if not ltp:
-            continue
+    ft    = _ft_state()
+    sym   = s.get("symbol","")
+    side  = s.get("side","BUY")
+    # Skip if already open for this symbol+side
+    for p in ft["positions"]:
+        if p["status"] == "OPEN" and p["symbol"] == sym and p["side"] == side:
+            return
 
-        side   = t["side"]
-        target = t["target"]
-        sl     = t["sl"]
-        entry  = t["entry"]
+    ltp = _ft_get_ltp(sym)
+    if not ltp: ltp = s.get("entry", 0)
+    if not ltp: return
 
-        if side == "BUY":
-            if ltp >= target:
-                trades[i].update({
-                    "status":   "TARGET HIT ✅",
-                    "exit_px":  target,
-                    "pnl":      round((target - entry) * t["qty"], 2),
-                    "pnl_pct":  round((target - entry) / entry * 100, 2),
-                    "exit_time": datetime.now().strftime("%H:%M:%S"),
-                })
-                updated = True
-            elif ltp <= sl:
-                trades[i].update({
-                    "status":   "SL HIT ❌",
-                    "exit_px":  sl,
-                    "pnl":      round((sl - entry) * t["qty"], 2),
-                    "pnl_pct":  round((sl - entry) / entry * 100, 2),
-                    "exit_time": datetime.now().strftime("%H:%M:%S"),
-                })
-                updated = True
-            else:
-                trades[i]["live_ltp"] = ltp
-                trades[i]["live_pnl"] = round((ltp - entry) * t["qty"], 2)
-                trades[i]["live_pct"] = round((ltp - entry) / entry * 100, 2)
-        else:  # SELL
-            if ltp <= target:
-                trades[i].update({
-                    "status":   "TARGET HIT ✅",
-                    "exit_px":  target,
-                    "pnl":      round((entry - target) * t["qty"], 2),
-                    "pnl_pct":  round((entry - target) / entry * 100, 2),
-                    "exit_time": datetime.now().strftime("%H:%M:%S"),
-                })
-                updated = True
-            elif ltp >= sl:
-                trades[i].update({
-                    "status":   "SL HIT ❌",
-                    "exit_px":  sl,
-                    "pnl":      round((entry - sl) * t["qty"], 2),
-                    "pnl_pct":  round((entry - sl) / entry * 100, 2),
-                    "exit_time": datetime.now().strftime("%H:%M:%S"),
-                })
-                updated = True
-            else:
-                trades[i]["live_ltp"] = ltp
-                trades[i]["live_pnl"] = round((entry - ltp) * t["qty"], 2)
-                trades[i]["live_pct"] = round((entry - ltp) / entry * 100, 2)
+    bal = ft["balance"]
+    qty = max(1, int(bal * 0.05 / max(ltp, 1)))
+    cost= round(ltp * qty, 2)
+    if cost > bal:
+        qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+        cost = round(ltp * qty, 2)
+    if cost > bal: return          # insufficient balance — skip silently
 
-    if updated:
-        _save_paper_trades()
-    return trades
+    pos_id = len(ft["positions"]) + 1
+    pos = {
+        "id":         pos_id,
+        "symbol":     sym,
+        "side":       side,
+        "entry":      ltp,
+        "qty":        qty,
+        "sl":         s.get("sl",  round(ltp*(0.98 if side=="BUY" else 1.02), 2)),
+        "target":     s.get("t1", round(ltp*(1.03 if side=="BUY" else 0.97), 2)),
+        "t2":         s.get("t2", round(ltp*(1.06 if side=="BUY" else 0.94), 2)),
+        "rr":         round(s.get("rr1", 2.0), 2),
+        "cost":       cost,
+        "status":     "OPEN",
+        "ltp":        ltp,
+        "upnl":       0.0,
+        "pnl":        0.0,
+        "pnl_pct":    0.0,
+        "exit_px":    None,
+        "exit_type":  None,
+        "source":     source,
+        "tf":         s.get("tf","—"),
+        "strategy":   s.get("rationale", s.get("strategy","CPR"))[:60],
+        "candle":     s.get("candle","—"),
+        "strength":   s.get("strength", 0),
+        "opened_at":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "closed_at":  None,
+    }
+    ft["positions"].append(pos)
+    ft["balance"] = round(bal - cost, 2)
 
+    # Log ENTRY event
+    ft["events"].append({
+        "time":     pos["opened_at"],
+        "type":     "ENTRY",
+        "id":       pos_id,
+        "symbol":   sym,
+        "side":     side,
+        "price":    ltp,
+        "qty":      qty,
+        "sl":       pos["sl"],
+        "target":   pos["target"],
+        "rr":       pos["rr"],
+        "source":   source,
+        "strategy": pos["strategy"],
+        "pnl":      0.0,
+    })
+    _ft_flush()
+
+# ── Trigger checker ───────────────────────────────────────────────────────
+
+def _ft_run_triggers() -> list:
+    """
+    Check every OPEN position against live LTP.
+    Returns list of triggered events for toasts.
+    """
+    ft       = _ft_state()
+    fired    = []
+    for pos in ft["positions"]:
+        if pos["status"] != "OPEN": continue
+        ltp = _ft_get_ltp(pos["symbol"])
+        if not ltp: continue
+
+        pos["ltp"]  = ltp
+        bull        = pos["side"] == "BUY"
+        hit         = None
+
+        if bull:
+            if   ltp >= pos["target"]: hit = "TARGET HIT"
+            elif ltp <= pos["sl"]:     hit = "SL HIT"
+            else:                       pos["upnl"] = round((ltp-pos["entry"])*pos["qty"],2)
+        else:
+            if   ltp <= pos["target"]: hit = "TARGET HIT"
+            elif ltp >= pos["sl"]:     hit = "SL HIT"
+            else:                       pos["upnl"] = round((pos["entry"]-ltp)*pos["qty"],2)
+
+        if hit:
+            exit_px  = pos["target"] if hit == "TARGET HIT" else pos["sl"]
+            pnl      = round((exit_px-pos["entry"])*pos["qty"] if bull
+                             else (pos["entry"]-exit_px)*pos["qty"], 2)
+            pnl_pct  = round(pnl / max(pos["cost"],1) * 100, 2)
+            pos.update({
+                "status":    hit,
+                "exit_px":   exit_px,
+                "pnl":       pnl,
+                "pnl_pct":   pnl_pct,
+                "upnl":      0.0,
+                "closed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "exit_type": hit,
+            })
+            ft["balance"] = round(ft["balance"] + pos["cost"] + pnl, 2)
+
+            ft["events"].append({
+                "time":     pos["closed_at"],
+                "type":     hit,
+                "id":       pos["id"],
+                "symbol":   pos["symbol"],
+                "side":     pos["side"],
+                "price":    exit_px,
+                "entry":    pos["entry"],
+                "qty":      pos["qty"],
+                "pnl":      pnl,
+                "pnl_pct":  pnl_pct,
+                "source":   pos["source"],
+                "strategy": pos["strategy"],
+                "tf":       pos["tf"],
+            })
+            fired.append({"symbol": pos["symbol"], "hit": hit, "pnl": pnl,
+                          "strategy": pos["strategy"]})
+
+    if fired:
+        _ft_flush()
+    return fired
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FORWARD TESTING PAGE
+# ══════════════════════════════════════════════════════════════════════════════
 
 def page_forward_test():
-    """
-    Forward Testing Simulator.
-    - All scanner signals auto-flow in as forward test positions
-    - Live SL / Target triggers checked on every refresh via Upstox/yfinance LTP
-    - Full P&L report at top: daily summary, win rate, drawdown, strategy breakdown
-    - Manual entry also supported
-    """
-    from datetime import timezone
+    """Forward Testing — auto-signal entry, live SL/Target, full P&L by strategy."""
 
-    IST = timezone(timedelta(hours=5, minutes=30))
-
-    # ── Auto-refresh every 15s during market hours ────────────────────────
+    # Auto-refresh 15s during market hours
     if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(interval=15_000, limit=None, key="fwd_autorefresh")
+        st_autorefresh(interval=15_000, limit=None, key="ft_ar")
 
-    # ── Load + trigger-check trades ───────────────────────────────────────
-    trades = st.session_state.get("paper_trades", [])
-    trades = _fwd_check_triggers(trades)
-    st.session_state["paper_trades"] = trades
+    # Run triggers on every render
+    fired = _ft_run_triggers()
+    for f in fired:
+        icon = "🎯" if f["hit"] == "TARGET HIT" else "🛑"
+        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon=icon)
 
-    today      = datetime.now(IST).strftime("%Y-%m-%d")
-    closed     = [t for t in trades if t.get("status","") != "OPEN"]
-    open_tr    = [t for t in trades if t.get("status","") == "OPEN"]
-    today_cl   = [t for t in closed if str(t.get("opened_at","")).startswith(today)
-                  or str(t.get("time","")).startswith(today[:6])]
-    wins       = [t for t in closed if t.get("pnl", 0) > 0]
-    losses     = [t for t in closed if t.get("pnl", 0) <= 0]
-    today_wins = [t for t in today_cl if t.get("pnl", 0) > 0]
-    today_loss = [t for t in today_cl if t.get("pnl", 0) <= 0]
+    ft       = _ft_state()
+    positions= ft["positions"]
+    events   = ft["events"]
+    bal      = ft["balance"]
+    starting = ft["starting"]
+    IST      = __import__("datetime").timezone(__import__("datetime").timedelta(hours=5,minutes=30))
+    today    = datetime.now(IST).strftime("%Y-%m-%d")
 
-    balance    = st.session_state.get("paper_balance", 100000.0)
-    total_pnl  = sum(t.get("pnl", 0) for t in closed)
-    today_pnl  = sum(t.get("pnl", 0) for t in today_cl)
-    live_pnl   = sum(t.get("live_pnl", 0) for t in open_tr)
-    win_rate   = round(len(wins)/max(len(closed),1)*100, 1)
+    open_pos  = [p for p in positions if p["status"] == "OPEN"]
+    closed_pos= [p for p in positions if p["status"] != "OPEN"]
+    today_cl  = [p for p in closed_pos if str(p.get("closed_at","")).startswith(today)]
+    wins      = [p for p in closed_pos if p.get("pnl",0) > 0]
+    losses    = [p for p in closed_pos if p.get("pnl",0) <= 0]
+    total_pnl = round(sum(p.get("pnl",0) for p in closed_pos), 2)
+    today_pnl = round(sum(p.get("pnl",0) for p in today_cl), 2)
+    live_upnl = round(sum(p.get("upnl",0) for p in open_pos), 2)
+    win_rate  = round(len(wins)/max(len(closed_pos),1)*100,1)
 
-    # ════════════════════════════════════════════════════════════════════
-    #  TOP: P&L REPORT DASHBOARD
-    # ════════════════════════════════════════════════════════════════════
+    mkt_open = is_market_open()
+    data_src = "📡 Upstox Live" if _upstox_connected() else "📊 yfinance (delayed)"
+
+    # ── PAGE HEADER ───────────────────────────────────────────────────────
     st.markdown("""
     <div class="title-bar">
         <span style="font-size:1.4rem;">🧪</span>
         <h1>Forward Testing Simulator</h1>
-        <span style="margin-left:auto;background:#e4f5e8;border:1px solid #8dcc9a;
-                     color:#1a6b2e;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
-            LIVE TRIGGER ENGINE
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
-    # ── Market status ─────────────────────────────────────────────────────
-    mkt = is_market_open()
-    data_src = "📡 Upstox Live" if _upstox_connected() else "📊 yfinance (15min delay)"
     st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.73rem;"
-        f"color:{'#1a6b2e' if mkt else '#7a5800'};"
-        f"background:{'#e4f5e8' if mkt else '#fdf3d4'};"
-        f"border:1px solid {'#8dcc9a' if mkt else '#e0c060'};"
-        f"border-radius:7px;padding:5px 12px;margin-bottom:0.75rem;'>"
-        f"{'🟢 Market OPEN' if mkt else '🟡 Market Closed'} "
-        f"· Data: {data_src} "
-        f"· Triggers check every {'15s' if mkt else 'manual refresh only'}"
+        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+        f"padding:6px 14px;border-radius:7px;margin-bottom:0.75rem;"
+        f"background:{'#e4f5e8' if mkt_open else '#fdf3d4'};"
+        f"border:1px solid {'#8dcc9a' if mkt_open else '#e0c060'};"
+        f"color:{'#1a6b2e' if mkt_open else '#7a5800'};'>"
+        f"{'🟢 Market OPEN' if mkt_open else '🔴 Market Closed'} "
+        f"· {data_src} · "
+        f"Auto-trigger: {'every 15s' if mkt_open else 'on refresh only'}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    # ════════════════════════════════════════════════════════════════════
-    #  P&L REPORT — ALWAYS AT TOP
-    # ════════════════════════════════════════════════════════════════════
-    st.markdown("### 📊 P&L Report")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 1 — P&L REPORT (always at top)
+    # ══════════════════════════════════════════════════════════════
+    pnl_color = "#1a6b2e" if total_pnl >= 0 else "#9e2018"
+    st.markdown(
+        f"<div style='background:#1a1f0e;border-radius:12px;"
+        f"padding:1rem 1.25rem;margin-bottom:1rem;'>"
+        f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+        f"color:#7da048;letter-spacing:0.1em;text-transform:uppercase;"
+        f"margin-bottom:0.5rem;'>📊 Live P&L Statement</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
-    # Summary metrics
-    r1, r2, r3, r4, r5, r6 = st.columns(6)
-    r1.metric("💰 Virtual Balance",  f"₹{balance:,.0f}")
-    r2.metric("📅 Today P&L",        f"₹{today_pnl:+,.0f}",
-              f"{len(today_wins)}W / {len(today_loss)}L today")
-    r3.metric("📈 Total P&L",        f"₹{total_pnl:+,.0f}")
-    r4.metric("⚡ Live Unrealised",   f"₹{live_pnl:+,.0f}",
-              f"{len(open_tr)} open")
-    r5.metric("✅ Win Rate",          f"{win_rate}%",
-              f"{len(wins)}W / {len(losses)}L all-time")
-    pf = round(sum(t["pnl"] for t in wins)/max(abs(sum(t["pnl"] for t in losses)),0.01),2)
-    r6.metric("📊 Profit Factor",    f"{pf}x")
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.metric("💰 Balance",      f"₹{bal:,.0f}",
+              f"{'+'if(bal-starting)>=0 else ''}₹{(bal-starting):,.0f}")
+    c2.metric("📈 Total P&L",    f"₹{total_pnl:+,.0f}",
+              f"{round(total_pnl/max(starting,1)*100,1):+.1f}%")
+    c3.metric("📅 Today P&L",    f"₹{today_pnl:+,.0f}",
+              f"{len(today_cl)} trades today")
+    c4.metric("✅ Win Rate",      f"{win_rate}%",
+              f"{len(wins)}W / {len(losses)}L")
+    c5.metric("🔄 Open",         len(open_pos),
+              f"uPnL ₹{live_upnl:+,.0f}")
+    c6.metric("📊 Total Trades", len(positions),
+              f"{len(closed_pos)} closed")
 
-    # Strategy breakdown table
-    if closed:
-        st.markdown("##### Strategy Performance")
-        strat_perf = {}
-        for t in closed:
-            src = t.get("source","Manual")
-            if src not in strat_perf:
-                strat_perf[src] = {"trades":0,"wins":0,"pnl":0.0}
-            strat_perf[src]["trades"] += 1
-            strat_perf[src]["pnl"]   += t.get("pnl",0)
-            if t.get("pnl",0) > 0:
-                strat_perf[src]["wins"] += 1
+    # Strategy P&L statement
+    if closed_pos:
+        st.markdown("#### 📋 P&L by Strategy")
+        strat_map: dict = {}
+        for p in closed_pos:
+            key = f"{p.get('strategy','Unknown')[:35]} [{p.get('tf','—')}]"
+            if key not in strat_map:
+                strat_map[key] = {"trades":0,"wins":0,"pnl":0.0,
+                                   "sl_hits":0,"tgt_hits":0,"max_win":0.0,"max_loss":0.0}
+            sm = strat_map[key]
+            sm["trades"] += 1
+            sm["pnl"]    += p.get("pnl",0)
+            if p.get("pnl",0) > 0:
+                sm["wins"]    += 1
+                sm["tgt_hits"]+= 1
+                sm["max_win"]  = max(sm["max_win"], p.get("pnl",0))
+            else:
+                sm["sl_hits"] += 1
+                sm["max_loss"] = min(sm["max_loss"], p.get("pnl",0))
+
         rows = []
-        for src, v in sorted(strat_perf.items(), key=lambda x: -x[1]["pnl"]):
-            wr = round(v["wins"]/v["trades"]*100)
+        for strat, sm in sorted(strat_map.items(), key=lambda x: -x[1]["pnl"]):
+            wr  = round(sm["wins"]/sm["trades"]*100)
+            pf  = round(abs(sm["pnl"])/max(abs(sm["max_loss"]*sm["sl_hits"]),0.01),2)
             rows.append({
-                "Strategy / Source": src,
-                "Trades": v["trades"],
-                "Win Rate": f"{wr}%",
-                "Total P&L": f"₹{v['pnl']:+,.2f}",
-                "Avg P&L": f"₹{v['pnl']/v['trades']:+,.2f}",
+                "Strategy":      strat,
+                "Trades":        sm["trades"],
+                "Win %":         f"{wr}%",
+                "🎯 Tgt Hits":   sm["tgt_hits"],
+                "🛑 SL Hits":    sm["sl_hits"],
+                "Net P&L":       f"₹{sm['pnl']:+,.2f}",
+                "Best Trade":    f"₹{sm['max_win']:+,.2f}",
+                "Worst Trade":   f"₹{sm['max_loss']:+,.2f}",
+                "Profit Factor": f"{pf}x",
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        # Daily P&L bar chart
-        if len(closed) >= 2:
-            st.markdown("##### Daily P&L")
-            import plotly.graph_objects as go
-            df_cl = pd.DataFrame(closed)
-            df_cl["date"] = pd.to_datetime(
-                df_cl.get("opened_at", df_cl.get("time",""))
-                , errors="coerce"
-            ).dt.date
-            daily = df_cl.groupby("date")["pnl"].sum().reset_index()
-            colors = ["#1a6b2e" if p >= 0 else "#9e2018" for p in daily["pnl"]]
-            fig = go.Figure(go.Bar(
-                x=daily["date"].astype(str),
-                y=daily["pnl"],
-                marker_color=colors,
-                text=[f"₹{p:+,.0f}" for p in daily["pnl"]],
-                textposition="outside",
-            ))
-            fig.update_layout(
-                height=220, margin=dict(l=0,r=0,t=10,b=0),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(240,244,232,0.3)",
-                font=dict(family="DM Mono",size=10,color="#0e1308"),
-                yaxis=dict(tickformat="+,.0f",tickprefix="₹",showgrid=True,
-                           gridcolor="#dae0cb"),
-                xaxis=dict(showgrid=False),
-                showlegend=False,
-            )
-            fig.add_hline(y=0,line_dash="dash",line_color="#b8c89a",line_width=1)
-            st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True, height=min(250, 60+len(rows)*40))
 
     st.divider()
 
-    # ════════════════════════════════════════════════════════════════════
-    #  OPEN POSITIONS — LIVE TRIGGER STATUS
-    # ════════════════════════════════════════════════════════════════════
-    st.markdown("### ⚡ Open Positions — Live")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 2 — OPEN POSITIONS (live SL/Target monitor)
+    # ══════════════════════════════════════════════════════════════
+    st.markdown(f"#### ⚡ Open Positions ({len(open_pos)})")
 
-    if not open_tr:
-        st.markdown(
-            "<div style='text-align:center;padding:1.5rem;background:#f5f8ed;"
-            "border:2px dashed #b8c89a;border-radius:10px;"
-            "font-family:DM Mono,monospace;color:#4a5e32;'>"
-            "No open positions. Run the CPR Scanner → signals auto-appear here."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+    if not open_pos:
+        st.info("No open positions. Signals from the CPR Scanner auto-appear here. "
+                "Or add manually below.")
     else:
-        for t in open_tr:
-            ltp   = t.get("live_ltp", t["entry"])
-            upnl  = t.get("live_pnl", 0)
-            upct  = t.get("live_pct", 0)
-            bull  = t["side"] == "BUY"
-            ac    = "#1a6b2e" if bull else "#9e2018"
-            bg    = "#e4f5e8" if bull else "#fbe8e6"
-            pnl_c = "#1a6b2e" if upnl >= 0 else "#9e2018"
-
-            # Distance to target and SL
-            entry  = t["entry"]
-            target = t["target"]
-            sl     = t["sl"]
-            tgt_pct= round((target-ltp)/max(ltp,1)*100,1) if bull else round((ltp-target)/max(ltp,1)*100,1)
-            sl_pct = round((ltp-sl)/max(ltp,1)*100,1)    if bull else round((sl-ltp)/max(ltp,1)*100,1)
-
-            # Progress bar: how far from entry to target
-            if bull:
-                progress = min(max((ltp-entry)/max(target-entry,0.01)*100,0),100)
-            else:
-                progress = min(max((entry-ltp)/max(entry-target,0.01)*100,0),100)
-            prog_col = "#1a6b2e" if progress > 50 else "#ba7517"
+        for pos in open_pos:
+            bull   = pos["side"] == "BUY"
+            ltp    = pos.get("ltp", pos["entry"])
+            upnl   = pos.get("upnl", 0.0)
+            ac     = "#1a6b2e" if bull else "#9e2018"
+            pnl_c  = "#1a6b2e" if upnl >= 0 else "#9e2018"
+            # Progress: 0=at SL, 50=at entry, 100=at target
+            risk   = max(abs(pos["entry"]-pos["sl"]), 0.01)
+            move   = (ltp-pos["entry"]) if bull else (pos["entry"]-ltp)
+            prog   = max(0, min(100, int(50 + move/risk*50)))
+            prog_c = "#1a6b2e" if prog>60 else ("#b8860b" if prog>40 else "#9e2018")
 
             st.markdown(
                 f"<div style='background:#fff;border:1.5px solid #b8c89a;"
-                f"border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;"
-                f"border-left:4px solid {ac};'>"
-                f"<div style='display:flex;flex-wrap:wrap;gap:10px;"
+                f"border-left:5px solid {ac};border-radius:10px;"
+                f"padding:0.75rem 1rem;margin-bottom:0.5rem;'>"
+                f"<div style='display:flex;flex-wrap:wrap;gap:8px;"
                 f"align-items:center;margin-bottom:6px;'>"
-                f"<b style='font-size:1rem;color:#0e1308;'>{t['symbol']}</b>"
-                f"<span style='background:{bg};color:{ac};border-radius:5px;"
-                f"padding:1px 8px;font-size:0.68rem;font-weight:700;"
-                f"font-family:DM Mono,monospace;'>{t['side']}</span>"
-                f"<span style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                f"color:#4a5e32;'>{t.get('source','Manual')}</span>"
-                f"<span style='margin-left:auto;font-family:DM Mono,monospace;"
-                f"font-size:0.72rem;color:#2e3d1a;'>LTP ₹{ltp:,.2f}</span>"
-                f"<span style='font-family:DM Mono,monospace;font-size:0.8rem;"
-                f"font-weight:700;color:{pnl_c};'>₹{upnl:+,.2f} ({upct:+.1f}%)</span>"
-                f"</div>"
+                f"<b style='font-size:1rem;color:#0e1308;'>{pos['symbol']}</b>"
+                f"<span style='background:{ac};color:#fff;border-radius:4px;"
+                f"padding:1px 8px;font-size:0.72rem;font-weight:700;'>{pos['side']}</span>"
+                f"<span style='font-family:DM Mono,monospace;font-size:0.73rem;color:#4a5e32;'>"
+                f"{pos['qty']}× · Entry ₹{pos['entry']:,.2f} · LTP ₹{ltp:,.2f}</span>"
+                f"<span style='font-family:DM Mono,monospace;font-size:0.82rem;"
+                f"font-weight:700;color:{pnl_c};margin-left:auto;'>"
+                f"uPnL ₹{upnl:+,.2f}</span></div>"
                 f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
-                f"gap:6px;margin-bottom:8px;font-family:DM Mono,monospace;"
-                f"font-size:0.73rem;'>"
-                f"<div style='text-align:center;background:#f5f8ed;"
-                f"border-radius:6px;padding:4px;'>"
-                f"<div style='color:#8a9a78;font-size:0.62rem;'>ENTRY</div>"
-                f"<div style='font-weight:700;color:#0e1308;'>₹{entry:,.2f}</div></div>"
-                f"<div style='text-align:center;background:#e4f5e8;"
-                f"border-radius:6px;padding:4px;'>"
-                f"<div style='color:#1a6b2e;font-size:0.62rem;'>"
-                f"TARGET ({tgt_pct:+.1f}%)</div>"
-                f"<div style='font-weight:700;color:#1a6b2e;'>₹{target:,.2f}</div></div>"
-                f"<div style='text-align:center;background:#fbe8e6;"
-                f"border-radius:6px;padding:4px;'>"
-                f"<div style='color:#9e2018;font-size:0.62rem;'>"
-                f"STOP LOSS ({sl_pct:+.1f}%)</div>"
-                f"<div style='font-weight:700;color:#9e2018;'>₹{sl:,.2f}</div></div>"
-                f"<div style='text-align:center;background:#f5f8ed;"
-                f"border-radius:6px;padding:4px;'>"
-                f"<div style='color:#8a9a78;font-size:0.62rem;'>QTY · R:R</div>"
-                f"<div style='font-weight:700;color:#0e1308;'>"
-                f"{t['qty']} · {t.get('rr',0)}x</div></div>"
-                f"</div>"
-                f"<div style='background:#f0f4e8;border-radius:4px;height:6px;overflow:hidden;'>"
-                f"<div style='background:{prog_col};width:{progress:.0f}%;"
-                f"height:100%;border-radius:4px;transition:width 1s;'></div></div>"
-                f"<div style='font-family:DM Mono,monospace;font-size:0.62rem;"
-                f"color:#8a9a78;margin-top:3px;text-align:right;'>"
-                f"{progress:.0f}% to target</div>"
+                f"gap:6px;margin-bottom:7px;font-family:DM Mono,monospace;"
+                f"font-size:0.7rem;text-align:center;'>"
+                f"<div style='background:#fbe8e6;border-radius:5px;padding:3px;'>"
+                f"<div style='color:#9e2018;'>🛑 SL</div>"
+                f"<b style='color:#9e2018;'>₹{pos['sl']:,.2f}</b></div>"
+                f"<div style='background:#e4f5e8;border-radius:5px;padding:3px;'>"
+                f"<div style='color:#1a6b2e;'>🎯 T1</div>"
+                f"<b style='color:#1a6b2e;'>₹{pos['target']:,.2f}</b></div>"
+                f"<div style='background:#f0f4e8;border-radius:5px;padding:3px;'>"
+                f"<div style='color:#4a5e32;'>📈 T2</div>"
+                f"<b>₹{pos.get('t2',pos['target']):,.2f}</b></div>"
+                f"<div style='background:#f0f4e8;border-radius:5px;padding:3px;'>"
+                f"<div style='color:#4a5e32;'>R:R</div>"
+                f"<b>{pos.get('rr',0)}x</b></div></div>"
+                f"<div style='background:#e8eddf;border-radius:4px;height:6px;"
+                f"overflow:hidden;margin-bottom:3px;'>"
+                f"<div style='background:{prog_c};width:{prog}%;height:100%;"
+                f"border-radius:4px;'></div></div>"
+                f"<div style='font-family:DM Mono,monospace;font-size:0.63rem;"
+                f"color:#8a9a78;'>"
+                f"📌 {pos.get('source','—')} · {pos.get('tf','—')} · "
+                f"Opened {pos.get('opened_at','—')}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            # Manual exit button
-            mc1, mc2, mc3 = st.columns([2,2,1])
+            # Manual exit
+            mc1, mc2, mc3 = st.columns([2,1,1])
+            with mc1:
+                ex_px = st.number_input("Manual exit ₹", value=float(ltp),
+                                        step=0.25,
+                                        key=f"ft_ex_{pos['id']}",
+                                        label_visibility="collapsed")
+            with mc2:
+                if st.button("Exit @ T1 🎯", key=f"ft_t1_{pos['id']}",
+                             use_container_width=True):
+                    ex_px = pos["target"]
+                    pnl   = round((ex_px-pos["entry"])*pos["qty"] if bull
+                                  else (pos["entry"]-ex_px)*pos["qty"], 2)
+                    pos.update({"status":"MANUAL EXIT","exit_px":ex_px,"pnl":pnl,
+                                "pnl_pct":round(pnl/max(pos["cost"],1)*100,2),
+                                "closed_at":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "exit_type":"Manual T1"})
+                    ft["balance"] = round(ft["balance"]+pos["cost"]+pnl, 2)
+                    ft["events"].append({"time":pos["closed_at"],"type":"MANUAL EXIT",
+                        "id":pos["id"],"symbol":pos["symbol"],"side":pos["side"],
+                        "price":ex_px,"entry":pos["entry"],"qty":pos["qty"],
+                        "pnl":pnl,"pnl_pct":pos["pnl_pct"],
+                        "source":pos["source"],"strategy":pos["strategy"],"tf":pos["tf"]})
+                    _ft_flush(); st.rerun()
             with mc3:
-                if st.button("✖ Exit", key=f"exit_{t['id']}_{t['symbol']}",
-                              use_container_width=True):
-                    for j, tt in enumerate(st.session_state["paper_trades"]):
-                        if tt["id"] == t["id"] and tt["status"] == "OPEN":
-                            cur = _fwd_get_ltp(tt["symbol"]) or tt["entry"]
-                            pnl = round((cur-tt["entry"])*tt["qty"] if tt["side"]=="BUY"
-                                        else (tt["entry"]-cur)*tt["qty"], 2)
-                            st.session_state["paper_trades"][j].update({
-                                "status":   "MANUAL EXIT",
-                                "exit_px":  cur,
-                                "pnl":      pnl,
-                                "pnl_pct":  round(pnl/max(tt["cost"],1)*100,2),
-                                "exit_time":datetime.now().strftime("%H:%M:%S"),
-                            })
-                            st.session_state["paper_balance"] += tt["cost"] + pnl
-                            _save_paper_trades()
-                            st.rerun()
+                if st.button("Exit ₹ ↗", key=f"ft_mex_{pos['id']}",
+                             use_container_width=True):
+                    pnl = round((ex_px-pos["entry"])*pos["qty"] if bull
+                                else (pos["entry"]-ex_px)*pos["qty"], 2)
+                    pos.update({"status":"MANUAL EXIT","exit_px":ex_px,"pnl":pnl,
+                                "pnl_pct":round(pnl/max(pos["cost"],1)*100,2),
+                                "closed_at":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "exit_type":"Manual"})
+                    ft["balance"] = round(ft["balance"]+pos["cost"]+pnl, 2)
+                    ft["events"].append({"time":pos["closed_at"],"type":"MANUAL EXIT",
+                        "id":pos["id"],"symbol":pos["symbol"],"side":pos["side"],
+                        "price":ex_px,"entry":pos["entry"],"qty":pos["qty"],
+                        "pnl":pnl,"pnl_pct":pos["pnl_pct"],
+                        "source":pos["source"],"strategy":pos["strategy"],"tf":pos["tf"]})
+                    _ft_flush(); st.rerun()
 
     st.divider()
 
-    # ════════════════════════════════════════════════════════════════════
-    #  MANUAL TRADE ENTRY
-    # ════════════════════════════════════════════════════════════════════
-    with st.expander("➕ Manual Forward Test Entry", expanded=False):
-        mc1, mc2, mc3 = st.columns(3)
-        syms = ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
-                "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","AXISBANK","MARUTI",
-                "TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC","BAJAJHFL"]
-        with mc1:
-            sym  = st.selectbox("Symbol", syms, key="ft_sym")
-            side = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="ft_side")
-        with mc2:
-            try:   ltp_now = _fwd_get_ltp(sym)
-            except: ltp_now = 0.0
-            entry   = st.number_input("Entry ₹", value=ltp_now, step=0.5, key="ft_entry")
-            qty     = st.number_input("Qty", value=1, min_value=1, key="ft_qty")
-        with mc3:
-            target  = st.number_input("Target ₹",
-                                       value=round(ltp_now*1.02,2) if side=="BUY" else round(ltp_now*0.98,2),
-                                       step=0.5, key="ft_target")
-            sl      = st.number_input("Stop Loss ₹",
-                                       value=round(ltp_now*0.99,2) if side=="BUY" else round(ltp_now*1.01,2),
-                                       step=0.5, key="ft_sl")
-        risk   = abs(entry-sl)*qty
-        reward = abs(target-entry)*qty
-        rr     = round(reward/max(risk,0.01),2)
-        cost   = round(entry*qty,2)
-        st.markdown(
-            f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
-            f"background:#f5f8ed;border:1px solid #b8c89a;border-radius:7px;"
-            f"padding:6px 12px;display:flex;gap:1.5rem;flex-wrap:wrap;'>"
-            f"<span>Cost <b>₹{cost:,.0f}</b></span>"
-            f"<span>Risk <b>₹{risk:,.0f}</b></span>"
-            f"<span>Reward <b>₹{reward:,.0f}</b></span>"
-            f"<span>R:R <b>{rr}x</b></span></div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("🧪 Add to Forward Test", use_container_width=True, key="ft_add"):
-            if cost > balance:
-                st.error("Insufficient virtual balance.")
-            else:
-                if "paper_trades" not in st.session_state:
-                    st.session_state["paper_trades"] = []
-                trade = {
-                    "id":       len(st.session_state["paper_trades"])+1,
-                    "symbol":   sym, "side": side,
-                    "entry":    entry, "qty": qty,
-                    "target":   target, "sl": sl,
-                    "rr":       rr, "cost": cost,
-                    "status":   "OPEN", "pnl": 0.0,
-                    "exit_px":  None, "live_ltp": entry,
-                    "live_pnl": 0.0,  "live_pct": 0.0,
-                    "source":   "Manual",
-                    "opened_at":datetime.now().isoformat(),
-                    "time":     datetime.now().strftime("%d %b %H:%M"),
-                }
-                st.session_state["paper_trades"].append(trade)
-                st.session_state["paper_balance"] -= cost
-                _save_paper_trades()
-                st.success(f"✅ {side} {qty}×{sym} @ ₹{entry} added to forward test.")
-                st.rerun()
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 3 — EVENT LOG (every entry/exit/trigger)
+    # ══════════════════════════════════════════════════════════════
+    st.markdown(f"#### ⚡ Event Log — All Triggers ({len(events)})")
 
-    # ════════════════════════════════════════════════════════════════════
-    #  CLOSED TRADES LOG
-    # ════════════════════════════════════════════════════════════════════
-    if closed:
-        st.markdown("### 📋 Closed Trades Log")
+    if not events:
+        st.info("Events appear here automatically: ENTRY → SL HIT / TARGET HIT / MANUAL EXIT")
+    else:
+        # Quick stats
+        ev_tgt  = [e for e in events if e["type"] == "TARGET HIT"]
+        ev_sl   = [e for e in events if e["type"] == "SL HIT"]
+        ev_men  = [e for e in events if e["type"] == "MANUAL EXIT"]
+        ev_ent  = [e for e in events if e["type"] == "ENTRY"]
+        s1,s2,s3,s4 = st.columns(4)
+        s1.metric("📥 Entries",     len(ev_ent))
+        s2.metric("🎯 Target Hits", len(ev_tgt),
+                  f"₹{sum(e.get('pnl',0) for e in ev_tgt):+,.0f}")
+        s3.metric("🛑 SL Hits",     len(ev_sl),
+                  f"₹{sum(e.get('pnl',0) for e in ev_sl):+,.0f}")
+        s4.metric("✋ Manual Exits",len(ev_men),
+                  f"₹{sum(e.get('pnl',0) for e in ev_men):+,.0f}")
+
+        for e in reversed(events[-50:]):  # show last 50
+            etype  = e["type"]
+            pnl    = e.get("pnl", 0)
+            icon   = {"ENTRY":"📥","TARGET HIT":"🎯","SL HIT":"🛑",
+                      "MANUAL EXIT":"✋"}.get(etype,"●")
+            bg     = {"ENTRY":"#f0f4e8","TARGET HIT":"#e4f5e8",
+                      "SL HIT":"#fbe8e6","MANUAL EXIT":"#f5f0e8"}.get(etype,"#fff")
+            bdr    = {"ENTRY":"#b8c89a","TARGET HIT":"#8dcc9a",
+                      "SL HIT":"#dc9090","MANUAL EXIT":"#e0b870"}.get(etype,"#b8c89a")
+            pnl_c  = "#1a6b2e" if pnl>0 else ("#9e2018" if pnl<0 else "#4a5e32")
+            side_c = "#1a6b2e" if e.get("side","")=="BUY" else "#9e2018"
+            pnl_str= f" · P&L <b style='color:{pnl_c};'>₹{pnl:+,.2f}</b>" if etype!="ENTRY" else ""
+            st.markdown(
+                f"<div style='background:{bg};border:1px solid {bdr};"
+                f"border-left:4px solid {bdr};border-radius:8px;"
+                f"padding:0.5rem 0.85rem;margin-bottom:0.3rem;"
+                f"font-family:DM Mono,monospace;font-size:0.76rem;'>"
+                f"<span style='font-size:0.9rem;'>{icon}</span> "
+                f"<b style='color:#0e1308;'>{e.get('symbol','')}</b> "
+                f"<span style='background:{side_c};color:#fff;border-radius:3px;"
+                f"padding:0px 6px;font-size:0.68rem;font-weight:700;'>"
+                f"{e.get('side','')}</span> "
+                f"<b style='color:#2e3d1a;'>{etype}</b> "
+                f"@ ₹{e.get('price',e.get('entry',0)):,.2f}"
+                f"{pnl_str} "
+                f"<span style='color:#8a9a78;float:right;'>{e.get('time','')}</span>"
+                f"<br><span style='color:#6a7a58;font-size:0.68rem;'>"
+                f"📌 {e.get('source','—')} · {e.get('tf','—')} · "
+                f"{e.get('strategy','—')[:45]}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        ecol1, ecol2 = st.columns(2)
+        with ecol1:
+            if st.button("📥 Export Events JSON", key="ft_ev_export"):
+                st.download_button("⬇️ Download",
+                    data=_json.dumps(events, indent=2, default=str),
+                    file_name=f"ft_events_{datetime.now().strftime('%Y%m%d')}.json",
+                    mime="application/json", key="ft_ev_dl")
+        with ecol2:
+            if st.button("📋 Export CSV", key="ft_csv_exp"):
+                rows = [{k:v for k,v in e.items()} for e in events]
+                csv  = pd.DataFrame(rows).to_csv(index=False)
+                st.download_button("⬇️ CSV", data=csv,
+                    file_name=f"ft_events_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv", key="ft_ev_csv_dl")
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 4 — CLOSED TRADE HISTORY
+    # ══════════════════════════════════════════════════════════════
+    if closed_pos:
+        st.markdown(f"#### 📋 Closed Trades ({len(closed_pos)})")
         rows = []
-        for t in reversed(closed):
+        for p in reversed(closed_pos):
             rows.append({
-                "Symbol":   t["symbol"],
-                "Side":     t["side"],
-                "Entry":    f"₹{t['entry']:,.2f}",
-                "Exit":     f"₹{t.get('exit_px',0):,.2f}",
-                "Qty":      t["qty"],
-                "P&L":      f"₹{t.get('pnl',0):+,.2f}",
-                "P&L %":    f"{t.get('pnl_pct',0):+.2f}%",
-                "Status":   t.get("status","—"),
-                "Source":   t.get("source","Manual"),
-                "Time":     t.get("exit_time", t.get("time","—")),
+                "Symbol":     p["symbol"],
+                "Side":       p["side"],
+                "Entry ₹":   f"₹{p['entry']:,.2f}",
+                "Exit ₹":    f"₹{p.get('exit_px',0):,.2f}",
+                "Qty":        p["qty"],
+                "P&L":        f"₹{p.get('pnl',0):+,.2f}",
+                "P&L %":      f"{p.get('pnl_pct',0):+.2f}%",
+                "Exit Type":  p.get("exit_type","—"),
+                "Strategy":   p.get("strategy","—")[:30],
+                "TF":         p.get("tf","—"),
+                "Closed":     p.get("closed_at","—"),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True,
                      hide_index=True, height=280)
+        if st.button("📥 Export Trades CSV", key="ft_trades_csv"):
+            st.download_button("⬇️ Download",
+                data=pd.DataFrame(rows).to_csv(index=False),
+                file_name=f"ft_trades_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", key="ft_tr_dl")
 
-        cpc1, cpc2 = st.columns(2)
-        with cpc1:
-            if st.button("📥 Export CSV", key="ft_export"):
-                csv = pd.DataFrame(rows).to_csv(index=False)
-                st.download_button("⬇️ Download", csv,
-                                    f"forward_test_{today}.csv",
-                                    "text/csv", key="ft_dl")
-        with cpc2:
-            if st.button("🔄 Reset All (Keep Balance)", key="ft_reset"):
-                st.session_state["paper_trades"]  = []
-                st.session_state["paper_balance"] = 100000.0
-                _save_paper_trades()
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 5 — MANUAL SIGNAL ENTRY
+    # ══════════════════════════════════════════════════════════════
+    with st.expander("➕ Add Manual Forward Test Entry", expanded=False):
+        # Also check for pending signal from signal tab
+        pending = st.session_state.pop("ft_pending_signal", None)
+
+        ns1, ns2, ns3 = st.columns(3)
+        with ns1:
+            n_sym  = st.selectbox("Symbol",
+                ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN",
+                 "HINDUNILVR","BAJFINANCE","BHARTIARTL","KOTAKBANK",
+                 "LT","AXISBANK","MARUTI","TITAN","SUNPHARMA",
+                 "WIPRO","HCLTECH","ADANIENT","NTPC","BAJAJHFL"],
+                index=0, key="ft_nsym")
+            n_side = st.radio("Side", ["BUY","SELL"], horizontal=True,
+                              key="ft_nside",
+                              index=0 if (not pending or pending.get("side")=="BUY") else 1)
+        with ns2:
+            try:    _ltp = _ft_get_ltp(n_sym)
+            except: _ltp = 0.0
+            n_entry  = st.number_input("Entry ₹",
+                value=float(pending["entry"] if pending else _ltp or 100.0),
+                step=0.25, key="ft_nentry")
+            n_sl     = st.number_input("Stop Loss ₹",
+                value=float(pending["sl"] if pending else
+                            round(n_entry*(0.98 if n_side=="BUY" else 1.02),2)),
+                step=0.25, key="ft_nsl")
+        with ns3:
+            n_t1     = st.number_input("Target ₹",
+                value=float(pending["t1"] if pending else
+                            round(n_entry*(1.03 if n_side=="BUY" else 0.97),2)),
+                step=0.25, key="ft_nt1")
+            n_strat  = st.text_input("Strategy label",
+                value=pending.get("strategy","Manual") if pending else "Manual",
+                key="ft_nstrat")
+
+        n_risk = max(abs(n_entry-n_sl), 0.01)
+        n_rr   = round(abs(n_t1-n_entry)/n_risk, 2)
+        n_qty  = max(1, int(bal*0.05/max(n_entry,1)))
+        n_cost = round(n_entry*n_qty, 2)
+        st.markdown(
+            f"<div style='background:#f5f8ed;border:1px solid #b8c89a;"
+            f"border-radius:7px;padding:0.5rem 1rem;"
+            f"font-family:DM Mono,monospace;font-size:0.78rem;"
+            f"display:flex;gap:1.5rem;flex-wrap:wrap;'>"
+            f"<span>Qty: <b>{n_qty}</b></span>"
+            f"<span>Cost: <b>₹{n_cost:,.0f}</b></span>"
+            f"<span>Risk: <b>₹{round(n_risk*n_qty):,.0f}</b></span>"
+            f"<span>R:R: <b style='color:{'#1a6b2e' if n_rr>=2 else '#b8860b'};'>{n_rr}x</b></span>"
+            f"</div>", unsafe_allow_html=True)
+
+        if st.button("🧪 Start Forward Test", use_container_width=True, key="ft_add_manual"):
+            if n_cost > bal:
+                st.error(f"Insufficient balance. Need ₹{n_cost:,.0f}, have ₹{bal:,.0f}")
+            else:
+                fake_sig = {
+                    "symbol":    n_sym,
+                    "side":      n_side,
+                    "entry":     n_entry,
+                    "sl":        n_sl,
+                    "t1":        n_t1,
+                    "t2":        round(n_t1+(n_t1-n_entry)*0.5, 2),
+                    "rr1":       n_rr,
+                    "tf":        "Manual",
+                    "rationale": n_strat,
+                    "strategy":  n_strat,
+                }
+                ft_add_signal(fake_sig, source="Manual Entry")
+                st.success(f"✅ Forward test started: {n_side} {n_qty}×{n_sym} @ ₹{n_entry}")
                 st.rerun()
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 6 — ACCOUNT CONTROLS
+    # ══════════════════════════════════════════════════════════════
+    ac1, ac2 = st.columns(2)
+    with ac1:
+        if st.button("🔄 Refresh Live Prices", key="ft_refresh", use_container_width=True):
+            st.rerun()
+    with ac2:
+        if st.button("🗑️ Reset Entire Account", key="ft_reset_all", use_container_width=True):
+            if st.session_state.get("ft_confirm_reset"):
+                st.session_state["_ft"] = {"positions":[],"events":[],
+                                            "balance":100000.0,"starting":100000.0}
+                st.session_state["ft_confirm_reset"] = False
+                _ft_flush()
+                st.success("✅ Reset to ₹1,00,000"); st.rerun()
+            else:
+                st.session_state["ft_confirm_reset"] = True
+                st.warning("⚠️ Click Reset again to confirm. This deletes all trades & events.")
+
+    st.caption("⚠️ Forward Testing uses virtual capital only. Not connected to real broker orders.")
 
 
 def render_sidebar():
@@ -7309,12 +6739,7 @@ def render_sidebar():
         ("Pivot Boss Analysis", "📈 Pivot Boss"),
         ("CPR Scanner",         "📡 Scanner"),
         ("Trade Signals",       "🔔 Signals"),
-        ("Price Alerts",        "🎯 Alerts"),
-        ("Strategies",          "📚 Strategy"),
         ("Forward Testing",     "🧪 Fwd Test"),
-        ("Journal",             "📝 Journal"),
-        ("Analytics",           "📊 Analytics"),
-        ("Market Intelligence", "🏦 Intel"),
         ("Broker Settings",     "⚙️ Broker"),
         ("Watchlist",           "⭐ Watchlist"),
     ]
@@ -7458,15 +6883,10 @@ def main():
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
     elif page == "CPR Scanner":          page_cpr_scanner(nse500)
     elif page == "Trade Signals":        page_trade_signals(nse500)
-    elif page == "Price Alerts":         page_price_alerts()
     elif page == "Forward Testing":      page_forward_test()
-    elif page == "Journal":              page_journal()
-    elif page == "Analytics":            page_analytics()
-    elif page == "Market Intelligence":  page_market_intelligence()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
     else:                                page_market_snapshot(nse500)
-
 
 if __name__ == "__main__":
     main()
