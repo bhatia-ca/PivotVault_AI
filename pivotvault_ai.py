@@ -173,6 +173,204 @@ def _strategy_short_id(s: dict) -> str:
 # ══════════════════════════════════════════════════════════════
 
 UPSTOX_BASE = "https://api.upstox.com/v2"
+UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # High-speed order endpoint
+UPSTOX_GTT_BASE = "https://api.upstox.com/v3"        # GTT orders endpoint
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  UPSTOX ORDER EXECUTION ENGINE
+#  Compliant with SEBI Feb 2025 circular — human-confirmed orders only.
+#  Flow: Signal → Preview card → User clicks → Market order + GTT SL/Target
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _upstox_headers() -> dict:
+    token = st.session_state.get("upstox_access_token", "")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+    }
+
+def upstox_place_order(symbol: str, side: str, qty: int,
+                       order_type: str = "MARKET",
+                       price: float = 0.0,
+                       product: str = "I") -> dict:
+    """
+    Place a market/limit order on Upstox.
+    product: "I" = intraday MIS, "D" = delivery CNC
+    Returns {"success": bool, "order_id": str, "message": str}
+    """
+    instrument_key = _upstox_instrument_key(symbol)
+    payload = {
+        "quantity":          qty,
+        "product":           product,
+        "validity":          "DAY",
+        "price":             price,
+        "tag":               "PIVOTVAULT",
+        "instrument_token":  instrument_key,
+        "order_type":        order_type,
+        "transaction_type":  side.upper(),   # "BUY" or "SELL"
+        "disclosed_quantity": 0,
+        "trigger_price":     0,
+        "is_amo":            False,
+    }
+    try:
+        r = requests.post(
+            f"{UPSTOX_HFT_BASE}/order/place",
+            headers=_upstox_headers(),
+            json=payload,
+            timeout=8,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("status") == "success":
+            order_id = data.get("data", {}).get("order_id", "")
+            return {"success": True, "order_id": order_id,
+                    "message": f"Order placed: {order_id}"}
+        else:
+            err = data.get("errors", [{}])
+            msg = err[0].get("message", str(data)) if err else str(data)
+            return {"success": False, "order_id": "", "message": msg}
+    except Exception as e:
+        return {"success": False, "order_id": "", "message": str(e)}
+
+
+def upstox_place_gtt(symbol: str, side: str, qty: int,
+                     sl_price: float, t1_price: float, t2_price: float = 0.0,
+                     product: str = "I") -> dict:
+    """
+    Place GTT orders for SL and Target after entry is confirmed.
+    Creates two GTT rules:
+      - SL:  trigger when price goes BELOW sl_price → SELL
+      - T1:  trigger when price goes ABOVE t1_price → SELL (for BUY trades)
+    Returns {"success": bool, "gtt_ids": [...], "message": str}
+    """
+    instrument_key = _upstox_instrument_key(symbol)
+    exit_side = "SELL" if side.upper() == "BUY" else "BUY"
+
+    # SL GTT
+    sl_trigger  = "BELOW" if side.upper() == "BUY" else "ABOVE"
+    # T1 GTT
+    t1_trigger  = "ABOVE" if side.upper() == "BUY" else "BELOW"
+
+    gtt_ids  = []
+    messages = []
+
+    for trigger_type, trigger_price, label in [
+        (sl_trigger, sl_price,  "SL"),
+        (t1_trigger, t1_price,  "T1"),
+    ]:
+        payload = {
+            "type":              "SINGLE",
+            "quantity":          qty,
+            "product":           product,
+            "instrument_token":  instrument_key,
+            "transaction_type":  exit_side,
+            "rules": [{
+                "strategy":      "EXIT",
+                "trigger_type":  trigger_type,
+                "trigger_price": round(trigger_price, 2),
+            }],
+        }
+        try:
+            r = requests.post(
+                f"{UPSTOX_GTT_BASE}/order/gtt/place",
+                headers=_upstox_headers(),
+                json=payload,
+                timeout=8,
+            )
+            data = r.json()
+            if r.status_code == 200 and data.get("status") == "success":
+                gid = data.get("data", {}).get("id", "")
+                gtt_ids.append(gid)
+                messages.append(f"{label} GTT set @ ₹{trigger_price} (id:{gid})")
+            else:
+                err = data.get("errors", [{}])
+                msg = err[0].get("message", str(data)) if err else str(data)
+                messages.append(f"{label} GTT FAILED: {msg}")
+        except Exception as e:
+            messages.append(f"{label} GTT error: {str(e)}")
+
+    success = len(gtt_ids) == 2
+    return {
+        "success":  success,
+        "gtt_ids":  gtt_ids,
+        "message":  " | ".join(messages),
+    }
+
+
+def upstox_get_order_status(order_id: str) -> dict:
+    """Poll status of a single order."""
+    try:
+        r = requests.get(
+            f"{UPSTOX_HFT_BASE}/order/details",
+            headers=_upstox_headers(),
+            params={"order_id": order_id},
+            timeout=5,
+        )
+        data = r.json()
+        if r.status_code == 200:
+            od = data.get("data", {})
+            return {
+                "status":    od.get("status","UNKNOWN"),
+                "avg_price": od.get("average_price", 0.0),
+                "qty":       od.get("filled_quantity", 0),
+                "message":   od.get("status_message",""),
+            }
+    except Exception:
+        pass
+    return {"status": "UNKNOWN", "avg_price": 0.0, "qty": 0, "message": ""}
+
+
+def upstox_cancel_gtt(gtt_id: str) -> bool:
+    """Cancel a GTT order (used when EOD auto-closing real positions)."""
+    try:
+        r = requests.delete(
+            f"{UPSTOX_GTT_BASE}/order/gtt/cancel",
+            headers=_upstox_headers(),
+            params={"id": gtt_id},
+            timeout=5,
+        )
+        return r.status_code == 200 and r.json().get("status") == "success"
+    except Exception:
+        return False
+
+
+def upstox_get_positions() -> list:
+    """Get current day open positions from Upstox."""
+    try:
+        r = requests.get(
+            f"{UPSTOX_HFT_BASE}/portfolio/short-term-positions",
+            headers=_upstox_headers(),
+            timeout=5,
+        )
+        if r.status_code == 200:
+            return r.json().get("data", [])
+    except Exception:
+        pass
+    return []
+
+
+def upstox_get_funds() -> dict:
+    """Get available margin/cash from Upstox."""
+    try:
+        r = requests.get(
+            f"{UPSTOX_HFT_BASE}/user/get-funds-and-margin",
+            headers=_upstox_headers(),
+            params={"segment": "SEC"},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            eq   = data.get("equity", {})
+            return {
+                "available":  eq.get("available_margin", 0.0),
+                "used":       eq.get("used_margin",      0.0),
+                "total":      eq.get("net",              0.0),
+            }
+    except Exception:
+        pass
+    return {"available": 0.0, "used": 0.0, "total": 0.0}
+
+
 
 
 # ── Upstox auto-renewal via TOTP (Time-based) ─────────────────────────────
@@ -5758,7 +5956,7 @@ def _trade_buttons(s: dict):
                   "starting": st.session_state.get("ft_start", 100000.0)})
         st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
 
-    # ── 4 columns: Groww | Zerodha | Upstox | Fwd Test ───────────────────
+    # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -5770,9 +5968,6 @@ def _trade_buttons(s: dict):
                 f"{'🟢' if bull else '🔴'} Groww</a>",
                 unsafe_allow_html=True,
             )
-            if st.button("Log in Fwd Test", key=f"gl_{sym}_{s['side']}_{s['tf']}",
-                         use_container_width=True):
-                _log_broker_trade("Groww")
         else:
             st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Groww</div>",
                         unsafe_allow_html=True)
@@ -5784,29 +5979,32 @@ def _trade_buttons(s: dict):
                 f"style='{btn_style}background:#387ed1;color:#fff;'>⚡ Zerodha</a>",
                 unsafe_allow_html=True,
             )
-            if st.button("Log in Fwd Test", key=f"zl_{sym}_{s['side']}_{s['tf']}",
-                         use_container_width=True):
-                _log_broker_trade("Zerodha")
         else:
             st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Zerodha</div>",
                         unsafe_allow_html=True)
 
     with c3:
-        if up_live:
-            label = f"{'🟢' if bull else '🔴'} Upstox"
-            st.markdown(
-                f"<a href='{upstox_url}' target='_blank' "
-                f"style='{btn_style}background:#7c3aed;color:#fff;'>{label}</a>",
-                unsafe_allow_html=True,
-            )
-            if st.button("Log in Fwd Test", key=f"ul_{sym}_{s['side']}_{s['tf']}",
-                         use_container_width=True):
-                _log_broker_trade("Upstox")
+        if up_live and mkt_open:
+            if st.button(
+                f"{'🟢' if bull else '🔴'} Upstox Order",
+                key=f"upstox_order_{sym}_{s['side']}_{s['tf']}",
+                use_container_width=True,
+            ):
+                st.session_state["upstox_order_preview"] = {
+                    "symbol": sym, "side": s["side"],
+                    "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
+                    "rr": s.get("rr1",2.0), "tf": s.get("tf","—"),
+                    "strategy": s.get("rationale","CPR Signal")[:50],
+                    "strength": s.get("strength",0),
+                }
+                st.rerun()
+        elif up_live and not mkt_open:
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Upstox</div>",
+                        unsafe_allow_html=True)
         else:
             st.markdown(
-                f"<a href='#' onclick='return false;' "
-                f"title='Connect Upstox in ⚙️ Broker settings' "
-                f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>💜 Upstox</a>",
+                f"<div title='Connect Upstox in ⚙️ Broker Settings' "
+                f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>💜 Upstox</div>",
                 unsafe_allow_html=True,
             )
 
@@ -5814,24 +6012,650 @@ def _trade_buttons(s: dict):
         if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
                      use_container_width=True):
             try:
-                live = _ft_ltp(sym) or s.get("entry", 0)
+                live = _ft_get_ltp(sym) or s.get("entry", 0)
             except Exception:
                 live = s.get("entry", 0)
             st.session_state["ft_pending_signal"] = {
-                "symbol":   sym,
-                "side":     s["side"],
-                "entry":    live,
-                "sl":       s.get("sl",   0),
-                "t1":       s.get("t1",   0),
-                "t2":       s.get("t2",   0),
-                "rr":       s.get("rr1",  2.0),
-                "source":   f"Signal {s.get('tf','—')}",
-                "strategy": s.get("rationale", "CPR Signal")[:50],
+                "symbol": sym, "side": s["side"], "entry": live,
+                "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
+                "rr": s.get("rr1",2.0),
+                "source": f"Signal {s.get('tf','—')}",
+                "strategy": s.get("rationale","CPR Signal")[:50],
             }
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
+    # ── Upstox order confirmation panel ──────────────────────────────────
+    preview = st.session_state.get("upstox_order_preview")
+    if preview and preview.get("symbol") == sym:
+        try:    ltp = _ft_get_ltp(sym) or s.get("entry",0)
+        except: ltp = s.get("entry",0)
+        qty  = 100
+        cost = round(ltp * qty, 2)
+        sl   = preview.get("sl",0)
+        t1   = preview.get("t1",0)
+        t2   = preview.get("t2",0)
+        risk = round(abs(ltp-sl)*qty,2) if sl else 0
+        rew  = round(abs(t1-ltp)*qty,2) if t1 else 0
+        funds= upstox_get_funds()
+        avail= funds.get("available",0)
+
+        st.markdown(
+            f"<div style='background:#1a1f0e;border-radius:12px;"
+            f"padding:1rem 1.25rem;margin:0.5rem 0;border:2px solid #7c3aed;'>"
+            f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+            f"color:#c8a0f0;letter-spacing:0.1em;text-transform:uppercase;"
+            f"margin-bottom:0.6rem;'>⚡ Order Preview — Human Confirmation Required</div>"
+            f"<div style='display:grid;grid-template-columns:repeat(3,1fr);"
+            f"gap:8px;font-family:DM Mono,monospace;font-size:0.78rem;"
+            f"color:#f8faf0;margin-bottom:0.75rem;'>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>SYMBOL</div><b style='font-size:1rem;'>{sym}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>SIDE</div><b style='color:{'#4dbb6a' if bull else '#f08080'};font-size:1rem;'>{preview['side']}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>QTY</div><b style='font-size:1rem;'>{qty}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>ENTRY (MARKET)</div><b>₹{ltp:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>COST</div><b>₹{cost:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>AVAIL MARGIN</div><b style='color:{'#4dbb6a' if avail>cost else '#f08080'}'>₹{avail:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>SL GTT</div><b style='color:#f08080;'>₹{sl:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>T1 GTT</div><b style='color:#4dbb6a;'>₹{t1:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>T2</div><b style='color:#4dbb6a;'>₹{t2:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>MAX RISK</div><b style='color:#f08080;'>₹{risk:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>REWARD T1</div><b style='color:#4dbb6a;'>₹{rew:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>R:R</div><b>{preview.get('rr',0)}x</b></div>"
+            f"</div>"
+            f"<div style='font-family:DM Mono,monospace;font-size:0.6rem;color:#7da048;"
+            f"border-top:1px solid #2e3d1a;padding-top:0.4rem;'>"
+            f"⚠️ Clicking CONFIRM places a real order on your Upstox account. "
+            f"SL + T1 GTT set automatically. Not investment advice. You are responsible."
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+        cf1, cf2 = st.columns(2)
+        with cf1:
+            if st.button("✅ CONFIRM — Place Real Order", key=f"confirm_{sym}",
+                         use_container_width=True):
+                if avail < cost:
+                    st.error(f"Insufficient margin. Need ₹{cost:,.0f}, have ₹{avail:,.0f}")
+                else:
+                    with st.spinner("Placing market order..."):
+                        res = upstox_place_order(sym, preview["side"], qty, "MARKET")
+                    if res["success"]:
+                        st.success(f"✅ Order placed: {res['order_id']}")
+                        with st.spinner("Setting SL + Target GTT..."):
+                            gtt = upstox_place_gtt(sym, preview["side"], qty, sl, t1, t2)
+                        if gtt["success"]:
+                            st.success(f"✅ GTT set: {gtt['message']}")
+                        else:
+                            st.warning(f"⚠️ GTT partial: {gtt['message']}")
+                        # Also log in Forward Testing for P&L tracking
+                        ft_add_signal({
+                            "symbol": sym, "side": preview["side"],
+                            "entry": ltp, "sl": sl, "t1": t1, "t2": t2,
+                            "rr1": preview.get("rr",2.0), "tf": preview.get("tf","—"),
+                            "rationale": preview.get("strategy","Upstox Live Order"),
+                            "strategy": preview.get("strategy","Upstox Live Order"),
+                            "strength": preview.get("strength",0),
+                        }, source=f"Upstox Live · {preview.get('tf','—')}")
+                        # Track live order
+                        lo = st.session_state.get("upstox_live_orders", [])
+                        lo.append({"order_id": res["order_id"],
+                                   "gtt_ids": gtt.get("gtt_ids",[]),
+                                   "symbol": sym, "side": preview["side"],
+                                   "qty": qty, "entry": ltp, "sl": sl, "t1": t1, "t2": t2,
+                                   "placed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                   "status": "OPEN"})
+                        st.session_state["upstox_live_orders"] = lo
+                        st.session_state.pop("upstox_order_preview", None)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Order failed: {res['message']}")
+        with cf2:
+            if st.button("❌ Cancel", key=f"cancel_{sym}", use_container_width=True):
+                st.session_state.pop("upstox_order_preview", None)
+                st.rerun()
+
+
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  UPSTOX ORDER EXECUTION ENGINE
+#  SEBI-Compliant Design:
+#  • All orders are USER-INITIATED (you click Place Order)
+#  • No fully automated unattended execution
+#  • Every order logged with timestamp, order_id, status
+#  • SL and Target placed as GTT (Good Till Trigger) orders after entry
+#  • 2FA token (access token) required — rotated daily by user
+#  • Intended for PERSONAL account trading only
+# ══════════════════════════════════════════════════════════════════════════════
+
+UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # Order placement endpoint
+UPSTOX_GTT_BASE = "https://api.upstox.com/v2"        # GTT orders endpoint
+
+def _upstox_headers() -> dict:
+    token = st.session_state.get("upstox_access_token", "")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+    }
+
+def upstox_place_order(
+    symbol:    str,
+    side:      str,          # "BUY" or "SELL"
+    qty:       int,
+    order_type:str = "MARKET",  # "MARKET" or "LIMIT"
+    price:     float = 0.0,
+    product:   str = "I",    # "I" = Intraday (MIS), "D" = Delivery (CNC)
+    tag:       str = "PivotVaultAI",
+) -> dict:
+    """
+    Place a single order via Upstox API v2.
+    Returns {"success": bool, "order_id": str, "message": str}
+    SEBI-compliant: called only on explicit user click, never automated.
+    """
+    if not _upstox_connected():
+        return {"success": False, "order_id": "", "message": "Upstox not connected. Add token in ⚙️ Broker."}
+
+    instrument_key = _upstox_instrument_key(symbol)
+
+    payload = {
+        "quantity":           qty,
+        "product":            product,
+        "validity":           "DAY",
+        "price":              round(price, 2) if order_type == "LIMIT" else 0,
+        "tag":                tag,
+        "instrument_token":   instrument_key,
+        "order_type":         order_type,
+        "transaction_type":   side.upper(),
+        "disclosed_quantity": 0,
+        "trigger_price":      0,
+        "is_amo":             False,
+    }
+
+    try:
+        r = requests.post(
+            f"{UPSTOX_HFT_BASE}/order/place",
+            headers=_upstox_headers(),
+            json=payload,
+            timeout=8,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("status") == "success":
+            order_id = data.get("data", {}).get("order_id", "")
+            return {"success": True, "order_id": order_id,
+                    "message": f"Order placed. ID: {order_id}"}
+        else:
+            err = data.get("errors", [{}])
+            msg = err[0].get("message", str(data)) if err else str(data)
+            return {"success": False, "order_id": "", "message": f"API Error: {msg}"}
+    except Exception as e:
+        return {"success": False, "order_id": "", "message": f"Request failed: {e}"}
+
+
+def upstox_place_gtt_sl_target(
+    symbol:  str,
+    side:    str,    # original trade side (BUY/SELL) — GTT is reverse
+    qty:     int,
+    sl:      float,
+    target:  float,
+) -> dict:
+    """
+    Place GTT (Good Till Trigger) bracket for SL + Target after entry fill.
+    GTT order auto-triggers when price hits SL or Target.
+    SEBI-compliant: GTT orders are exchange-resident, not algo-generated.
+    Returns {"success": bool, "gtt_id": str, "message": str}
+    """
+    if not _upstox_connected():
+        return {"success": False, "gtt_id": "", "message": "Upstox not connected."}
+
+    instrument_key = _upstox_instrument_key(symbol)
+    exit_side      = "SELL" if side.upper() == "BUY" else "BUY"
+
+    # GTT OCO (One-Cancels-Other): SL leg + Target leg
+    payload = {
+        "type": "MULTI",           # OCO — one cancels other
+        "quantity": qty,
+        "product":  "I",           # Intraday
+        "instrument_token": instrument_key,
+        "gt_legs": [
+            {
+                "trigger_type":    "rising" if exit_side == "BUY" else "falling",
+                "transaction_type": exit_side,
+                "quantity":        qty,
+                "order_type":      "LIMIT",
+                "price":           round(target, 2),
+                "trigger_price":   round(target * 0.9995, 2),
+            },
+            {
+                "trigger_type":    "falling" if exit_side == "SELL" else "rising",
+                "transaction_type": exit_side,
+                "quantity":        qty,
+                "order_type":      "SL-M",
+                "price":           round(sl * (0.995 if exit_side == "SELL" else 1.005), 2),
+                "trigger_price":   round(sl, 2),
+            },
+        ],
+    }
+    try:
+        r = requests.post(
+            f"{UPSTOX_GTT_BASE}/gtt/place",
+            headers=_upstox_headers(),
+            json=payload,
+            timeout=8,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("status") == "success":
+            gtt_id = data.get("data", {}).get("id", "")
+            return {"success": True, "gtt_id": gtt_id,
+                    "message": f"GTT SL+Target set. ID: {gtt_id}"}
+        else:
+            err = data.get("errors", [{}])
+            msg = err[0].get("message", str(data)) if err else str(data)
+            return {"success": False, "gtt_id": "", "message": f"GTT Error: {msg}"}
+    except Exception as e:
+        return {"success": False, "gtt_id": "", "message": f"GTT request failed: {e}"}
+
+
+def upstox_get_orders_today() -> list:
+    """Fetch today's order list from Upstox."""
+    try:
+        r = requests.get(
+            f"{UPSTOX_BASE}/order/retrieve-all",
+            headers=_upstox_headers(),
+            timeout=6,
+        )
+        if r.status_code == 200:
+            return r.json().get("data", [])
+    except Exception:
+        pass
+    return []
+
+
+def upstox_cancel_order(order_id: str) -> dict:
+    """Cancel a pending order."""
+    try:
+        r = requests.delete(
+            f"{UPSTOX_HFT_BASE}/order/cancel",
+            headers=_upstox_headers(),
+            params={"order_id": order_id},
+            timeout=6,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("status") == "success":
+            return {"success": True, "message": f"Order {order_id} cancelled."}
+        return {"success": False, "message": str(data.get("errors","Cancel failed"))}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def upstox_get_positions() -> list:
+    """Get current open positions from Upstox."""
+    try:
+        r = requests.get(
+            f"{UPSTOX_BASE}/portfolio/short-term-positions",
+            headers=_upstox_headers(),
+            timeout=6,
+        )
+        if r.status_code == 200:
+            return r.json().get("data", [])
+    except Exception:
+        pass
+    return []
+
+
+def upstox_exit_all_positions() -> dict:
+    """Exit all open positions (EOD cleanup)."""
+    try:
+        r = requests.post(
+            f"{UPSTOX_HFT_BASE}/order/positions/exit",
+            headers=_upstox_headers(),
+            timeout=8,
+        )
+        data = r.json()
+        if r.status_code == 200:
+            return {"success": True, "message": "All positions exit triggered."}
+        return {"success": False, "message": str(data)}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+# ── Order log in session state ─────────────────────────────────────────────
+
+def _order_log_add(entry: dict):
+    """Add an order event to session-based order log."""
+    if "upstox_order_log" not in st.session_state:
+        st.session_state["upstox_order_log"] = []
+    entry["logged_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["upstox_order_log"].insert(0, entry)
+    # Keep last 100 orders in memory
+    st.session_state["upstox_order_log"] = st.session_state["upstox_order_log"][:100]
+
+
+def page_order_execution():
+    """
+    Upstox Live Order Execution — SEBI-compliant, user-initiated.
+    You review the signal, set params, click Place Order.
+    SL + Target auto-placed as GTT after fill confirmation.
+    """
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.4rem;">⚡</span>
+        <h1>Live Order Execution</h1>
+        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
+                     color:#3c3489;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
+            UPSTOX · SEBI COMPLIANT · USER-INITIATED
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    # SEBI disclaimer — mandatory display
+    st.markdown("""
+    <div style="background:#fdf3d4;border:2px solid #e0c060;border-radius:10px;
+                padding:0.85rem 1.1rem;margin-bottom:1rem;
+                font-family:DM Mono,monospace;font-size:0.75rem;color:#5a3e00;">
+    <b>⚖️ SEBI Compliance Notice</b><br>
+    This tool places orders on your <b>personal Upstox account only</b> via their official API.<br>
+    • All orders are <b>user-initiated</b> — you review and click Place Order manually.<br>
+    • This is a <b>white-box strategy tool</b> for your own account. Do not share access with others.<br>
+    • Algo trading for others requires SEBI Research Analyst registration + exchange empanelment.<br>
+    • Ensure your static IP is registered with Upstox per SEBI Feb 2025 circular.<br>
+    • PivotVault AI is not a SEBI-registered entity. Use at your own discretion.
+    </div>""", unsafe_allow_html=True)
+
+    # Connection check
+    if not _upstox_connected():
+        st.error("⚠️ Upstox not connected. Go to ⚙️ Broker Settings and add your daily access token.")
+        if st.button("→ Go to Broker Settings", key="oe_goto_broker"):
+            st.session_state["current_page"] = "Broker Settings"
+            st.rerun()
+        return
+
+    st.success("✅ Upstox connected — orders will execute on your live account.")
+
+    mkt_open = is_market_open()
+    from datetime import timezone as _tzoe
+    IST_oe = _tzoe(timedelta(hours=5, minutes=30))
+    now_oe = datetime.now(IST_oe)
+
+    if not mkt_open:
+        wday = now_oe.weekday()
+        if now_oe.hour >= 15 and now_oe.minute >= 30:
+            st.warning("🔴 Market closed for today. AMO (After Market Orders) can be placed for next session.")
+        else:
+            st.warning("🟡 Market not open yet. AMO orders can be placed — will execute at market open.")
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 1 — PLACE NEW ORDER
+    # ══════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Place Order")
+
+    # Pre-fill from pending signal if available
+    pending = st.session_state.pop("oe_pending_signal", None)
+
+    oc1, oc2, oc3 = st.columns(3)
+    with oc1:
+        sym  = st.text_input("Symbol (NSE)",
+                              value=pending["symbol"] if pending else "RELIANCE",
+                              key="oe_sym").upper().strip()
+        side = st.radio("Direction", ["BUY","SELL"], horizontal=True,
+                        index=0 if (not pending or pending.get("side")=="BUY") else 1,
+                        key="oe_side")
+        product = st.radio("Product", ["I — Intraday (MIS)","D — Delivery (CNC)"],
+                           horizontal=True, key="oe_product")
+        prod_code = "I" if product.startswith("I") else "D"
+
+    with oc2:
+        try:   live_px = _ft_get_ltp(sym)
+        except: live_px = 0.0
+        entry_px = st.number_input("Entry Price ₹",
+                                    value=float(pending["entry"] if pending else live_px or 100.0),
+                                    step=0.25, key="oe_entry")
+        order_type = st.radio("Order Type", ["MARKET","LIMIT"], horizontal=True, key="oe_otype")
+        qty = st.number_input("Quantity", value=100, min_value=1, step=1, key="oe_qty")
+
+    with oc3:
+        sl     = st.number_input("Stop Loss ₹",
+                                  value=float(pending["sl"] if pending else
+                                              round(entry_px*(0.98 if side=="BUY" else 1.02),2)),
+                                  step=0.25, key="oe_sl")
+        target = st.number_input("Target 1 ₹ (GTT)",
+                                  value=float(pending["t1"] if pending else
+                                              round(entry_px*(1.03 if side=="BUY" else 0.97),2)),
+                                  step=0.25, key="oe_t1")
+        t2     = st.number_input("Target 2 ₹ (GTT T2)",
+                                  value=float(pending.get("t2",
+                                              round(entry_px*(1.06 if side=="BUY" else 0.94),2))
+                                              if pending else
+                                              round(entry_px*(1.06 if side=="BUY" else 0.94),2)),
+                                  step=0.25, key="oe_t2")
+
+    # Risk metrics
+    risk    = max(abs(entry_px - sl), 0.01)
+    reward  = abs(target - entry_px)
+    rr      = round(reward/risk, 2)
+    max_loss= round(risk * qty, 2)
+    max_gain= round(reward * qty, 2)
+    rr_color= "#1a6b2e" if rr >= 2 else ("#b8860b" if rr >= 1.5 else "#9e2018")
+
+    st.markdown(
+        f"<div style='background:#f5f8ed;border:1.5px solid #b8c89a;border-radius:9px;"
+        f"padding:0.65rem 1rem;font-family:DM Mono,monospace;font-size:0.8rem;"
+        f"display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center;'>"
+        f"<span>Qty: <b>{qty}</b></span>"
+        f"<span>Value: <b>₹{entry_px*qty:,.0f}</b></span>"
+        f"<span>Max Loss: <b style='color:#9e2018;'>₹{max_loss:,.2f}</b></span>"
+        f"<span>Max Gain T1: <b style='color:#1a6b2e;'>₹{max_gain:,.2f}</b></span>"
+        f"<span>R:R: <b style='color:{rr_color};'>{rr}:1</b></span>"
+        f"<span style='margin-left:auto;font-size:0.72rem;color:#4a5e32;'>"
+        f"LTP: ₹{live_px:,.2f}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Send this signal to Live Order Execution
+    if _upstox_connected():
+        if st.button(f"⚡ Send to Live Orders — {sym}",
+                     key=f"oe_{sym}_{s['side']}_{s.get('tf','')}",
+                     use_container_width=True):
+            st.session_state["oe_pending_signal"] = {
+                "symbol":   sym,
+                "side":     s["side"],
+                "entry":    s.get("entry", 0),
+                "sl":       s.get("sl",    0),
+                "t1":       s.get("t1",    0),
+                "t2":       s.get("t2",    0),
+                "rr":       s.get("rr1",   2.0),
+                "source":   f"Signal · {s.get('tf','—')}",
+                "strategy": s.get("rationale","CPR Signal")[:50],
+            }
+            st.session_state["current_page"] = "Order Execution"
+            st.toast(f"⚡ Signal sent to Order Execution for {sym}", icon="⚡")
+            st.rerun()
+
+    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+
+    # GTT option
+    place_gtt = st.checkbox(
+        "🔒 Auto-place GTT (SL + Target) after order fill",
+        value=True, key="oe_gtt",
+        help="Recommended: Places SL and Target as exchange-resident GTT orders automatically after your entry fills."
+    )
+
+    # PLACE ORDER BUTTON — explicit user action
+    st.markdown("---")
+    col_btn1, col_btn2, col_btn3 = st.columns([2,1,1])
+    with col_btn1:
+        place_clicked = st.button(
+            f"⚡ PLACE {'MARKET' if order_type=='MARKET' else 'LIMIT'} ORDER — "
+            f"{side} {qty}× {sym}",
+            key="oe_place_btn",
+            use_container_width=True,
+            type="primary",
+        )
+    with col_btn2:
+        if st.button("🔄 Refresh LTP", key="oe_refresh_ltp", use_container_width=True):
+            st.rerun()
+    with col_btn3:
+        is_amo = not mkt_open
+
+    if place_clicked:
+        if not sym:
+            st.error("Enter a symbol.")
+        elif qty < 1:
+            st.error("Quantity must be at least 1.")
+        else:
+            with st.spinner(f"Placing {order_type} {side} order for {qty}× {sym}..."):
+                result = upstox_place_order(
+                    symbol=sym, side=side, qty=qty,
+                    order_type=order_type,
+                    price=entry_px if order_type=="LIMIT" else 0.0,
+                    product=prod_code,
+                    tag="PivotVaultAI-Signal",
+                )
+
+            if result["success"]:
+                order_id = result["order_id"]
+                st.success(f"✅ Order placed! Order ID: {order_id}")
+
+                # Log to order log
+                _order_log_add({
+                    "order_id":   order_id,
+                    "symbol":     sym,
+                    "side":       side,
+                    "qty":        qty,
+                    "order_type": order_type,
+                    "price":      entry_px,
+                    "sl":         sl,
+                    "target":     target,
+                    "t2":         t2,
+                    "product":    prod_code,
+                    "status":     "PLACED",
+                    "gtt_id":     "",
+                    "source":     pending.get("source","Manual") if pending else "Manual",
+                    "strategy":   pending.get("strategy","") if pending else "",
+                })
+
+                # Place GTT if checked
+                if place_gtt:
+                    with st.spinner("Setting GTT SL + Target..."):
+                        gtt_result = upstox_place_gtt_sl_target(
+                            symbol=sym, side=side, qty=qty,
+                            sl=sl, target=target,
+                        )
+                    if gtt_result["success"]:
+                        # Update log with GTT ID
+                        log = st.session_state.get("upstox_order_log", [])
+                        if log:
+                            log[0]["gtt_id"] = gtt_result["gtt_id"]
+                            log[0]["status"] = "PLACED + GTT SET"
+                        st.success(f"🔒 GTT SL+Target set. GTT ID: {gtt_result['gtt_id']}")
+                    else:
+                        st.warning(f"⚠️ Order placed but GTT failed: {gtt_result['message']}")
+            else:
+                st.error(f"❌ Order failed: {result['message']}")
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 2 — TODAY'S ORDERS FROM UPSTOX
+    # ══════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Today's Orders (from Upstox)")
+    c_fetch, c_exit = st.columns([2,1])
+    with c_fetch:
+        if st.button("🔄 Fetch Live Orders", key="oe_fetch_orders", use_container_width=True):
+            with st.spinner("Fetching orders..."):
+                orders = upstox_get_orders_today()
+            st.session_state["oe_live_orders"] = orders
+
+    with c_exit:
+        if st.button("🚨 Exit ALL Positions", key="oe_exit_all", use_container_width=True,
+                     help="Emergency exit — closes all open intraday positions"):
+            if st.session_state.get("oe_confirm_exit"):
+                with st.spinner("Exiting all positions..."):
+                    res = upstox_exit_all_positions()
+                st.session_state["oe_confirm_exit"] = False
+                if res["success"]:
+                    st.success("✅ Exit all triggered successfully.")
+                else:
+                    st.error(f"❌ {res['message']}")
+            else:
+                st.session_state["oe_confirm_exit"] = True
+                st.warning("⚠️ Click again to confirm EXIT ALL positions.")
+
+    live_orders = st.session_state.get("oe_live_orders", [])
+    if live_orders:
+        rows = []
+        for o in live_orders:
+            rows.append({
+                "Order ID":     o.get("order_id",""),
+                "Symbol":       o.get("trading_symbol",""),
+                "Side":         o.get("transaction_type",""),
+                "Qty":          o.get("quantity",0),
+                "Type":         o.get("order_type",""),
+                "Price":        f"₹{o.get('price',0):,.2f}",
+                "Avg Price":    f"₹{o.get('average_price',0):,.2f}",
+                "Status":       o.get("status",""),
+                "Time":         o.get("order_timestamp",""),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True, height=250)
+
+        # Cancel individual order
+        st.markdown("**Cancel a pending order:**")
+        cancel_id = st.text_input("Order ID to cancel", key="oe_cancel_id",
+                                   placeholder="Enter Order ID from table above")
+        if st.button("❌ Cancel Order", key="oe_cancel_btn") and cancel_id:
+            res = upstox_cancel_order(cancel_id.strip())
+            if res["success"]:
+                st.success(res["message"])
+            else:
+                st.error(res["message"])
+    else:
+        st.info("Click 'Fetch Live Orders' to see today's orders from Upstox.")
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 3 — ORDER LOG (this session)
+    # ══════════════════════════════════════════════════════════════
+    order_log = st.session_state.get("upstox_order_log", [])
+    st.markdown(f"### 📝 Session Order Log ({len(order_log)})")
+
+    if not order_log:
+        st.info("Orders placed this session will appear here with Order ID, GTT ID, and status.")
+    else:
+        for o in order_log:
+            s_color = "#1a6b2e" if o["side"]=="BUY" else "#9e2018"
+            st.markdown(
+                f"<div style='background:#fff;border:1.5px solid #b8c89a;"
+                f"border-left:4px solid {s_color};border-radius:9px;"
+                f"padding:0.65rem 1rem;margin-bottom:0.4rem;"
+                f"font-family:DM Mono,monospace;font-size:0.76rem;'>"
+                f"<div style='display:flex;flex-wrap:wrap;gap:10px;align-items:center;'>"
+                f"<span style='background:{s_color};color:#fff;border-radius:4px;"
+                f"padding:1px 8px;font-weight:700;font-size:0.7rem;'>{o['side']}</span>"
+                f"<b style='color:#0e1308;'>{o['symbol']}</b>"
+                f"<span>{o['qty']}× @ ₹{o['price']:,.2f} ({o['order_type']})</span>"
+                f"<span style='color:#4a5e32;'>SL ₹{o['sl']:,.2f} · T1 ₹{o['target']:,.2f}</span>"
+                f"<span style='background:#e4f0d0;color:#1e5c0a;border-radius:4px;"
+                f"padding:1px 7px;font-size:0.68rem;'>{o['status']}</span>"
+                f"<span style='margin-left:auto;color:#8a9a78;font-size:0.68rem;'>{o['logged_at']}</span>"
+                f"</div>"
+                f"<div style='color:#6a7a58;font-size:0.68rem;margin-top:3px;'>"
+                f"Order ID: {o['order_id']} "
+                f"{'· GTT: ' + o['gtt_id'] if o.get('gtt_id') else ''} "
+                f"{'· ' + o['strategy'][:35] if o.get('strategy') else ''}"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+    st.caption(
+        "⚖️ SEBI Note: This tool is for personal account use only. "
+        "Automated unattended trading requires exchange-registered algo ID. "
+        "All orders are user-initiated via explicit button click. "
+        "Static IP must be registered with Upstox. See SEBI Circular Feb 2025."
+    )
 
 
 def page_broker_settings():
@@ -7367,6 +8191,7 @@ def render_sidebar():
         ("CPR Scanner",         "📡 Scanner"),
         ("Trade Signals",       "🔔 Signals"),
         ("Forward Testing",     "🧪 Fwd Test"),
+        ("Order Execution",     "⚡ Orders"),
         ("Strategy Library",    "📚 Strategy"),
         ("Broker Settings",     "⚙️ Broker"),
         ("Watchlist",           "⭐ Watchlist"),
@@ -7512,6 +8337,7 @@ def main():
     elif page == "CPR Scanner":          page_cpr_scanner(nse500)
     elif page == "Trade Signals":        page_trade_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
+    elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
