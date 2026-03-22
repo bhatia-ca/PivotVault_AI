@@ -5716,10 +5716,10 @@ def _trade_buttons(s: dict):
             saved = _ft_load()
             st.session_state["ft_trades"]  = saved["trades"]
             st.session_state["ft_balance"] = saved["balance"]
-            st.session_state["ft_start"]   = saved.get("starting", 100000.0)
+            st.session_state["ft_start"]   = saved.get("starting", 10000000.0)
             st.session_state["ft_loaded"]  = True
 
-        bal = st.session_state.get("ft_balance", 100000.0)
+        bal = st.session_state.get("ft_balance", 10000000.0)
         qty = max(1, int(bal * 0.05 / max(ltp, 1)))
         cost= round(ltp * qty, 2)
         if cost > bal:
@@ -6121,12 +6121,12 @@ def _ft_load():
                 d = _json.load(f)
                 if "positions" not in d: d["positions"] = []
                 if "events"    not in d: d["events"]    = []
-                if "balance"   not in d: d["balance"]   = 100000.0
-                if "starting"  not in d: d["starting"]  = 100000.0
+                if "balance"   not in d: d["balance"]   = 10000000.0
+                if "starting"  not in d: d["starting"]  = 10000000.0
                 return d
     except Exception:
         pass
-    return {"positions": [], "events": [], "balance": 100000.0, "starting": 100000.0}
+    return {"positions": [], "events": [], "balance": 10000000.0, "starting": 10000000.0}
 
 def _ft_save(state: dict):
     try:
@@ -6178,13 +6178,12 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     if not ltp: ltp = s.get("entry", 0)
     if not ltp: return
 
-    bal = ft["balance"]
-    qty = max(1, int(bal * 0.05 / max(ltp, 1)))
-    cost= round(ltp * qty, 2)
+    bal  = ft["balance"]
+    qty  = 100                         # Fixed 100 units per trade
+    cost = round(ltp * qty, 2)
     if cost > bal:
-        qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
-        cost = round(ltp * qty, 2)
-    if cost > bal: return          # insufficient balance — skip silently
+        st.session_state["ft_low_bal_alert"] = True   # flag for notification
+        return          # insufficient balance — skip silently
 
     pos_id = len(ft["positions"]) + 1
     pos = {
@@ -6238,66 +6237,169 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
 
 def _ft_run_triggers() -> list:
     """
-    Check every OPEN position against live LTP.
-    Returns list of triggered events for toasts.
+    Live trigger engine — checks every OPEN position against LTP.
+    
+    Two-stage exit logic (Frank Ochoa style):
+    Stage 1 — T1 reached:
+        • Book partial profit (50% qty exits at T1)
+        • Remaining 50% continues with SL moved to ENTRY (breakeven trailing SL)
+        • Target now moves to T2
+    Stage 2 — T2 reached:
+        • Remaining qty exits at T2
+        • Position fully closed
+
+    SL Hit at any stage → full position closes at SL.
     """
-    ft       = _ft_state()
-    fired    = []
+    ft    = _ft_state()
+    fired = []
+
     for pos in ft["positions"]:
-        if pos["status"] != "OPEN": continue
+        if pos["status"] not in ("OPEN", "T1 HIT — TRAILING"): continue
         ltp = _ft_get_ltp(pos["symbol"])
         if not ltp: continue
 
-        pos["ltp"]  = ltp
-        bull        = pos["side"] == "BUY"
-        hit         = None
+        pos["ltp"] = ltp
+        bull = pos["side"] == "BUY"
+        now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # ── Update unrealised P&L ─────────────────────────────────────────
         if bull:
-            if   ltp >= pos["target"]: hit = "TARGET HIT"
-            elif ltp <= pos["sl"]:     hit = "SL HIT"
-            else:                       pos["upnl"] = round((ltp-pos["entry"])*pos["qty"],2)
+            pos["upnl"] = round((ltp - pos["entry"]) * pos.get("qty_remaining", pos["qty"]), 2)
         else:
-            if   ltp <= pos["target"]: hit = "TARGET HIT"
-            elif ltp >= pos["sl"]:     hit = "SL HIT"
-            else:                       pos["upnl"] = round((pos["entry"]-ltp)*pos["qty"],2)
+            pos["upnl"] = round((pos["entry"] - ltp) * pos.get("qty_remaining", pos["qty"]), 2)
 
-        if hit:
-            exit_px  = pos["target"] if hit == "TARGET HIT" else pos["sl"]
-            pnl      = round((exit_px-pos["entry"])*pos["qty"] if bull
-                             else (pos["entry"]-exit_px)*pos["qty"], 2)
-            pnl_pct  = round(pnl / max(pos["cost"],1) * 100, 2)
-            pos.update({
-                "status":    hit,
-                "exit_px":   exit_px,
-                "pnl":       pnl,
-                "pnl_pct":   pnl_pct,
-                "upnl":      0.0,
-                "closed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "exit_type": hit,
-            })
-            ft["balance"] = round(ft["balance"] + pos["cost"] + pnl, 2)
+        # ── Stage 1: T1 hit (only if not already trailing) ────────────────
+        if pos["status"] == "OPEN":
+            t1_hit = (bull and ltp >= pos["target"]) or (not bull and ltp <= pos["target"])
+            sl_hit = (bull and ltp <= pos["sl"])     or (not bull and ltp >= pos["sl"])
 
-            ft["events"].append({
-                "time":     pos["closed_at"],
-                "type":     hit,
-                "id":       pos["id"],
-                "symbol":   pos["symbol"],
-                "side":     pos["side"],
-                "price":    exit_px,
-                "entry":    pos["entry"],
-                "qty":      pos["qty"],
-                "pnl":      pnl,
-                "pnl_pct":  pnl_pct,
-                "source":   pos["source"],
-                "strategy": pos["strategy"],
-                "tf":       pos["tf"],
-            })
-            fired.append({"symbol": pos["symbol"], "hit": hit, "pnl": pnl,
-                          "strategy": pos["strategy"]})
+            if t1_hit:
+                # Half qty exits at T1
+                full_qty      = pos["qty"]
+                exit_qty      = max(1, full_qty // 2)
+                remaining_qty = full_qty - exit_qty
+                t1_pnl        = round((pos["target"]-pos["entry"])*exit_qty if bull
+                                      else (pos["entry"]-pos["target"])*exit_qty, 2)
+                t1_pnl_pct    = round(t1_pnl / max(pos["cost"],1) * 100, 2)
+
+                # Move SL to entry (trailing = breakeven)
+                pos["sl_original"]   = pos["sl"]
+                pos["sl"]            = pos["entry"]          # trailing SL = entry
+                pos["status"]        = "T1 HIT — TRAILING"
+                pos["qty_remaining"] = remaining_qty
+                pos["t1_exit_qty"]   = exit_qty
+                pos["t1_pnl"]        = t1_pnl
+                pos["t1_pnl_pct"]    = t1_pnl_pct
+                pos["t1_hit_at"]     = now
+                # Balance: credit T1 partial exit
+                t1_cost_freed = round(pos["cost"] * exit_qty / full_qty, 2)
+                ft["balance"]  = round(ft["balance"] + t1_cost_freed + t1_pnl, 2)
+
+                # Log T1 event
+                ft["events"].append({
+                    "time":     now,
+                    "type":     "T1 HIT — PARTIAL EXIT",
+                    "id":       pos["id"],
+                    "symbol":   pos["symbol"],
+                    "side":     pos["side"],
+                    "price":    pos["target"],
+                    "entry":    pos["entry"],
+                    "qty":      exit_qty,
+                    "pnl":      t1_pnl,
+                    "pnl_pct":  t1_pnl_pct,
+                    "source":   pos["source"],
+                    "strategy": pos["strategy"],
+                    "tf":       pos.get("tf","—"),
+                    "note":     f"T1 partial. SL moved to entry ₹{pos['entry']}. Trailing to T2 ₹{pos.get('t2',0)}"
+                })
+                fired.append({
+                    "symbol": pos["symbol"],
+                    "hit":    "T1 HIT — Trailing to T2",
+                    "pnl":    t1_pnl,
+                    "strategy": pos["strategy"],
+                    "note":   f"SL → ₹{pos['entry']} (entry). T2 target: ₹{pos.get('t2',0)}"
+                })
+                _ft_flush()
+                continue  # Don't check SL this cycle
+
+            elif sl_hit:
+                # Full SL hit — close entire position
+                exit_px = pos["sl"]
+                pnl     = round((exit_px-pos["entry"])*pos["qty"] if bull
+                                else (pos["entry"]-exit_px)*pos["qty"], 2)
+                pnl_pct = round(pnl / max(pos["cost"],1) * 100, 2)
+                pos.update({"status":"SL HIT","exit_px":exit_px,"pnl":pnl,
+                            "pnl_pct":pnl_pct,"upnl":0.0,
+                            "closed_at":now,"exit_type":"SL HIT",
+                            "qty_remaining":0})
+                ft["balance"] = round(ft["balance"] + pos["cost"] + pnl, 2)
+                ft["events"].append({
+                    "time":pos["closed_at"],"type":"SL HIT","id":pos["id"],
+                    "symbol":pos["symbol"],"side":pos["side"],"price":exit_px,
+                    "entry":pos["entry"],"qty":pos["qty"],"pnl":pnl,"pnl_pct":pnl_pct,
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
+                    "note":"Full position SL hit"
+                })
+                fired.append({"symbol":pos["symbol"],"hit":"SL HIT","pnl":pnl,
+                              "strategy":pos["strategy"],"note":f"Closed @ ₹{exit_px}"})
+
+        # ── Stage 2: Trailing to T2 ───────────────────────────────────────
+        elif pos["status"] == "T1 HIT — TRAILING":
+            t2     = pos.get("t2", pos.get("target", 0))
+            rem_qty= pos.get("qty_remaining", 1)
+            t2_hit = (bull and ltp >= t2)      or (not bull and ltp <= t2)
+            sl_hit = (bull and ltp <= pos["sl"]) or (not bull and ltp >= pos["sl"])
+
+            if t2_hit:
+                # Remaining qty exits at T2
+                pnl     = round((t2-pos["entry"])*rem_qty if bull
+                                else (pos["entry"]-t2)*rem_qty, 2)
+                pnl_pct = round(pnl / max(pos["cost"],1) * 100, 2)
+                total_pnl = round(pnl + pos.get("t1_pnl",0), 2)
+                rem_cost  = round(pos["cost"] * rem_qty / pos["qty"], 2)
+                pos.update({"status":"T2 HIT — FULL EXIT","exit_px":t2,
+                            "pnl":total_pnl,"pnl_pct":round(total_pnl/max(pos["cost"],1)*100,2),
+                            "upnl":0.0,"closed_at":now,"exit_type":"T2 HIT",
+                            "qty_remaining":0})
+                ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
+                ft["events"].append({
+                    "time":now,"type":"T2 HIT — FULL EXIT","id":pos["id"],
+                    "symbol":pos["symbol"],"side":pos["side"],"price":t2,
+                    "entry":pos["entry"],"qty":rem_qty,"pnl":pnl,"pnl_pct":pnl_pct,
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
+                    "note":f"T2 exit. Total trade P&L ₹{total_pnl} (T1 ₹{pos.get('t1_pnl',0)} + T2 ₹{pnl})"
+                })
+                fired.append({"symbol":pos["symbol"],"hit":"T2 HIT 🎯🎯",
+                              "pnl":total_pnl,"strategy":pos["strategy"],
+                              "note":f"Full exit @ ₹{t2}. Total P&L ₹{total_pnl}"})
+
+            elif sl_hit:
+                # Trailing SL hit (at entry = breakeven or better)
+                exit_px = pos["sl"]
+                pnl     = round((exit_px-pos["entry"])*rem_qty if bull
+                                else (pos["entry"]-exit_px)*rem_qty, 2)
+                total_pnl= round(pnl + pos.get("t1_pnl",0), 2)
+                rem_cost = round(pos["cost"] * rem_qty / pos["qty"], 2)
+                pos.update({"status":"TRAILING SL HIT","exit_px":exit_px,
+                            "pnl":total_pnl,"pnl_pct":round(total_pnl/max(pos["cost"],1)*100,2),
+                            "upnl":0.0,"closed_at":now,"exit_type":"Trailing SL",
+                            "qty_remaining":0})
+                ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
+                ft["events"].append({
+                    "time":now,"type":"TRAILING SL HIT","id":pos["id"],
+                    "symbol":pos["symbol"],"side":pos["side"],"price":exit_px,
+                    "entry":pos["entry"],"qty":rem_qty,"pnl":pnl,"pnl_pct":pnl_pct,
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
+                    "note":f"Trailing SL at entry. Total P&L ₹{total_pnl} (T1 ₹{pos.get('t1_pnl',0)} locked in)"
+                })
+                fired.append({"symbol":pos["symbol"],"hit":"TRAILING SL (breakeven)",
+                              "pnl":total_pnl,"strategy":pos["strategy"],
+                              "note":f"T1 profit ₹{pos.get('t1_pnl',0)} locked. Remaining at breakeven."})
 
     if fired:
         _ft_flush()
     return fired
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -6334,6 +6436,12 @@ def page_forward_test():
     today_pnl = round(sum(p.get("pnl",0) for p in today_cl), 2)
     live_upnl = round(sum(p.get("upnl",0) for p in open_pos), 2)
     win_rate  = round(len(wins)/max(len(closed_pos),1)*100,1)
+
+    # Low balance alert from auto-signal skip
+    if st.session_state.pop("ft_low_bal_alert", False):
+        st.warning("⚠️ Insufficient virtual balance — new signals were skipped. "
+                   "Add virtual funds below to continue forward testing.",
+                   icon="💰")
 
     mkt_open = is_market_open()
     data_src = "📡 Upstox Live" if _upstox_connected() else "📊 yfinance (delayed)"
@@ -6671,7 +6779,7 @@ def page_forward_test():
 
         n_risk = max(abs(n_entry-n_sl), 0.01)
         n_rr   = round(abs(n_t1-n_entry)/n_risk, 2)
-        n_qty  = max(1, int(bal*0.05/max(n_entry,1)))
+        n_qty  = 100                         # Fixed 100 units per trade
         n_cost = round(n_entry*n_qty, 2)
         st.markdown(
             f"<div style='background:#f5f8ed;border:1px solid #b8c89a;"
@@ -6707,25 +6815,385 @@ def page_forward_test():
     st.divider()
 
     # ══════════════════════════════════════════════════════════════
-    #  SECTION 6 — ACCOUNT CONTROLS
+    #  SECTION 6 — VIRTUAL FUND MANAGEMENT
     # ══════════════════════════════════════════════════════════════
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        if st.button("🔄 Refresh Live Prices", key="ft_refresh", use_container_width=True):
+    st.markdown("#### 💰 Virtual Fund Management")
+
+    # Low balance warning (< ₹10,000)
+    LOW_BAL_THRESHOLD = 500000.0
+    if bal < LOW_BAL_THRESHOLD:
+        st.markdown(
+            f"<div style='background:#fdf3d4;border:2px solid #e0c060;"
+            f"border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:0.75rem;"
+            f"font-family:DM Mono,monospace;'>"
+            f"<div style='font-weight:700;color:#7a5800;font-size:0.9rem;'>"
+            f"⚠️ Low Virtual Balance Alert</div>"
+            f"<div style='color:#5a4000;font-size:0.8rem;margin-top:4px;'>"
+            f"Balance ₹{bal:,.0f} is below ₹{LOW_BAL_THRESHOLD:,.0f} (5% of starting capital). "
+            f"New signals may not enter. Add virtual funds below to continue testing."
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        topup_amt = st.selectbox("Add funds", ["₹50,000","₹1,00,000","₹5,00,000","₹10,00,000"],
+                                  key="ft_topup_sel", label_visibility="collapsed")
+    with fc2:
+        if st.button("➕ Add Virtual Funds", key="ft_topup", use_container_width=True):
+            amt_map = {"₹50,000":50000,"₹1,00,000":100000,"₹5,00,000":500000,"₹10,00,000":1000000}
+            add_amt = amt_map.get(topup_amt, 500000)
+            ft["balance"]  = round(ft["balance"] + add_amt, 2)
+            ft["starting"] = round(ft.get("starting",10000000) + add_amt, 2)
+            ft["events"].append({
+                "time":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "type":     "FUND TOP-UP",
+                "id":       0,
+                "symbol":   "—",
+                "side":     "—",
+                "price":    0,
+                "entry":    0,
+                "qty":      0,
+                "pnl":      add_amt,
+                "pnl_pct":  0,
+                "source":   "Manual",
+                "strategy": "—",
+                "tf":       "—",
+                "note":     f"Virtual funds added: ₹{add_amt:,.0f}"
+            })
+            _ft_flush()
+            st.success(f"✅ Added ₹{add_amt:,.0f} virtual funds. New balance ₹{ft['balance']:,.0f}")
             st.rerun()
-    with ac2:
-        if st.button("🗑️ Reset Entire Account", key="ft_reset_all", use_container_width=True):
+    with fc3:
+        if st.button("🔄 Refresh Prices", key="ft_refresh", use_container_width=True):
+            st.rerun()
+    with fc4:
+        if st.button("🗑️ Reset Account", key="ft_reset_all", use_container_width=True):
             if st.session_state.get("ft_confirm_reset"):
                 st.session_state["_ft"] = {"positions":[],"events":[],
-                                            "balance":100000.0,"starting":100000.0}
+                                            "balance":10000000.0,"starting":10000000.0}
                 st.session_state["ft_confirm_reset"] = False
+                st.session_state["_ft_loaded"] = False
                 _ft_flush()
-                st.success("✅ Reset to ₹1,00,000"); st.rerun()
+                st.success("✅ Reset to ₹1,00,00,000 (1 Crore)"); st.rerun()
             else:
                 st.session_state["ft_confirm_reset"] = True
-                st.warning("⚠️ Click Reset again to confirm. This deletes all trades & events.")
+                st.warning("⚠️ Click Reset again to confirm — all trades & events will be deleted.")
 
     st.caption("⚠️ Forward Testing uses virtual capital only. Not connected to real broker orders.")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  STRATEGY LIBRARY
+#  Shows all strategies used by the CPR scanner with their live
+#  forward-test performance pulled directly from the event log.
+# ══════════════════════════════════════════════════════════════════════
+
+STRATEGY_DEFINITIONS = [
+    {
+        "name":     "CPR Narrow Breakout",
+        "icon":     "⚡",
+        "tf":       "15 Min / 30 Min",
+        "type":     "Intraday Scalp",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "color":    "#1a6b2e",
+        "bg":       "#e4f5e8",
+        "border":   "#8dcc9a",
+        "entry":    "Price closes above TC (Bull) or below BC (Bear) with volume surge",
+        "sl":       "Below BC for Bull / Above TC for Bear",
+        "t1":       "R1 (Bull) / S1 (Bear)",
+        "t2":       "R2 (Bull) / S2 (Bear) — trailing after T1",
+        "filters":  ["CPR Width < 0.5%", "RSI 50–75 (Bull) or 25–50 (Bear)",
+                     "HMA trending in signal direction", "Volume ≥ 1.2× avg"],
+        "strength_min": 70,
+        "rr_min":   1.5,
+        "best_for": ["RELIANCE","HDFCBANK","INFY","TCS","ICICIBANK"],
+    },
+    {
+        "name":     "Virgin CPR Breakout",
+        "icon":     "⭐",
+        "tf":       "1 Hour / 1 Day",
+        "type":     "Swing",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "color":    "#7c3aed",
+        "bg":       "#f3effe",
+        "border":   "#c8a0f0",
+        "entry":    "First touch of untested CPR zone — high probability reversal",
+        "sl":       "Beyond CPR range by ATR×0.5",
+        "t1":       "Previous session high/low or next pivot",
+        "t2":       "R2/S2 (Bull/Bear) — trailing after T1",
+        "filters":  ["CPR never touched in last 10 bars", "RSI oversold/overbought near CPR",
+                     "Reversal candle at CPR (Hammer, Engulfing, Doji)"],
+        "strength_min": 65,
+        "rr_min":   2.0,
+        "best_for": ["SBIN","BHARTIARTL","LT","BAJFINANCE","KOTAKBANK"],
+    },
+    {
+        "name":     "HMA Trend Follower",
+        "icon":     "📈",
+        "tf":       "1 Hour / 1 Day",
+        "type":     "Trend Follow",
+        "author":   "PivotVault AI",
+        "color":    "#0369a1",
+        "bg":       "#e0f2fe",
+        "border":   "#7dd3fc",
+        "entry":    "Price pulls back to HMA-20, bounce candle closes back above/below",
+        "sl":       "Below HMA by ATR×0.5",
+        "t1":       "Previous swing high/low or R1/S1",
+        "t2":       "R2/S2 — trailing after T1",
+        "filters":  ["HMA clearly trending (3 consecutive H/L values)",
+                     "CPR above price (Bull) or below (Bear)", "RSI recovering from extreme"],
+        "strength_min": 65,
+        "rr_min":   2.0,
+        "best_for": ["TCS","WIPRO","HCLTECH","INFY","SUNPHARMA"],
+    },
+    {
+        "name":     "RSI + CPR Confluence",
+        "icon":     "🔄",
+        "tf":       "15 Min / 1 Hour",
+        "type":     "Intraday",
+        "author":   "PivotVault AI",
+        "color":    "#dc2626",
+        "bg":       "#fbe8e6",
+        "border":   "#f0a0a0",
+        "entry":    "RSI crosses 50 AND price on correct side of CPR",
+        "sl":       "CPR midpoint (Pivot P)",
+        "t1":       "R1 (Bull) / S1 (Bear)",
+        "t2":       "R2/S2 — trailing after T1",
+        "filters":  ["RSI cross above/below 50", "Price above TC (Bull) or below BC (Bear)",
+                     "CPR width < 1%", "Volume at or above 20-bar avg"],
+        "strength_min": 55,
+        "rr_min":   1.5,
+        "best_for": ["RELIANCE","SBIN","HDFCBANK","ASIANPAINT","NTPC"],
+    },
+    {
+        "name":     "Candlestick + CPR",
+        "icon":     "🕯️",
+        "tf":       "15 Min / 1 Hour / 1 Day",
+        "type":     "Intraday / Swing",
+        "author":   "PivotVault AI",
+        "color":    "#059669",
+        "bg":       "#d1fae5",
+        "border":   "#6ee7b7",
+        "entry":    "Reversal pattern exactly at CPR or pivot level",
+        "sl":       "Below pattern low (Bull) / Above pattern high (Bear)",
+        "t1":       "Next pivot/CPR level",
+        "t2":       "Second pivot level — trailing after T1",
+        "filters":  ["Hammer/Engulfing/Morning Star/Shooting Star/Evening Star at CPR",
+                     "Volume surge on pattern candle > 1.5× avg",
+                     "RSI not at extreme", "HMA confirms direction"],
+        "strength_min": 60,
+        "rr_min":   1.5,
+        "best_for": ["BAJFINANCE","KOTAKBANK","TITAN","MARUTI","LT"],
+    },
+    {
+        "name":     "3/10 Oscillator Cross",
+        "icon":     "〰️",
+        "tf":       "30 Min / 1 Hour",
+        "type":     "Momentum",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "color":    "#d97706",
+        "bg":       "#fdf3d4",
+        "border":   "#f0c060",
+        "entry":    "Fresh 3MA/10MA bullish or bearish crossover with CPR confirmation",
+        "sl":       "Below BC (Bull) / Above TC (Bear)",
+        "t1":       "R1/S1",
+        "t2":       "R2/S2 — trailing after T1",
+        "filters":  ["Fresh crossover (not continuation)", "Price on correct CPR side",
+                     "RSI in momentum zone (>50 Bull, <50 Bear)"],
+        "strength_min": 60,
+        "rr_min":   1.5,
+        "best_for": ["MARUTI","TITAN","AXISBANK","BAJAJHFL","POWERGRID"],
+    },
+]
+
+
+def page_strategy_library():
+    """Strategy Library — all CPR strategies with live forward-test performance."""
+
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.4rem;">📚</span>
+        <h1>Strategy Library</h1>
+        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
+                     color:#3c3489;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
+            FRANK OCHOA · CPR · PIVOT BOSS
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Pull live P&L from Forward Testing events ─────────────────────────
+    try:
+        ft_events = _ft_state().get("events", [])
+    except Exception:
+        ft_events = []
+
+    # Build strategy performance map from FT events
+    strat_perf: dict = {}
+    for e in ft_events:
+        if e["type"] in ("ENTRY", "FUND TOP-UP"): continue
+        strat_key = e.get("strategy","Unknown")[:40]
+        if strat_key not in strat_perf:
+            strat_perf[strat_key] = {
+                "trades":0,"wins":0,"pnl":0.0,
+                "tgt":0,"sl_hits":0,"trailing_sl":0,
+                "t1":0,"t2":0,
+            }
+        sm = strat_perf[strat_key]
+        sm["trades"] += 1
+        sm["pnl"]    += e.get("pnl",0)
+        if e.get("pnl",0) > 0:  sm["wins"] += 1
+        if "T1 HIT"       in e["type"]: sm["t1"] += 1
+        if "T2 HIT"       in e["type"]: sm["t2"] += 1
+        if "SL HIT"       in e["type"]: sm["sl_hits"] += 1
+        if "TRAILING SL"  in e["type"]: sm["trailing_sl"] += 1
+
+    # ── Filters ───────────────────────────────────────────────────────────
+    fc1, fc2 = st.columns([2,1])
+    with fc1:
+        tf_filter = st.multiselect("Filter by timeframe",
+            ["15 Min","30 Min","1 Hour","1 Day"],
+            default=[], placeholder="All timeframes", key="sl_tf",
+            label_visibility="collapsed")
+    with fc2:
+        sort_by = st.selectbox("Sort by",
+            ["Strategy Name","Win Rate","Net P&L","Trades"],
+            key="sl_sort", label_visibility="collapsed")
+
+    filtered = STRATEGY_DEFINITIONS
+    if tf_filter:
+        filtered = [s for s in filtered if any(t in s["tf"] for t in tf_filter)]
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+        f"color:#4a5e32;margin-bottom:0.75rem;'>"
+        f"Showing <b>{len(filtered)}</b> of {len(STRATEGY_DEFINITIONS)} strategies · "
+        f"<b>{len(strat_perf)}</b> have live forward-test data</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Overall Forward Test Summary ──────────────────────────────────────
+    if strat_perf:
+        st.markdown("#### 📊 Live Forward-Test Performance — All Strategies")
+        rows = []
+        for sk, sm in sorted(strat_perf.items(),
+                              key=lambda x: (-x[1]["pnl"] if sort_by=="Net P&L"
+                                            else -x[1]["wins"]/max(x[1]["trades"],1) if sort_by=="Win Rate"
+                                            else -x[1]["trades"] if sort_by=="Trades"
+                                            else x[0])):
+            wr  = round(sm["wins"]/max(sm["trades"],1)*100)
+            rows.append({
+                "Strategy":   sk,
+                "Trades":     sm["trades"],
+                "Win %":      f"{wr}%",
+                "🎯 T1 Hits": sm["t1"],
+                "🎯🎯 T2 Hits": sm["t2"],
+                "🛑 SL Hits": sm["sl_hits"],
+                "🔒 Trail SL":sm["trailing_sl"],
+                "Net P&L":    f"₹{sm['pnl']:+,.2f}",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True, height=min(300,60+len(rows)*40))
+        st.divider()
+
+    # ── Strategy Cards ────────────────────────────────────────────────────
+    for strat in filtered:
+        col     = strat["color"]
+        bg      = strat["bg"]
+        bdr     = strat["border"]
+
+        # Look up live perf — match by partial strategy name
+        live = None
+        for sk, sm in strat_perf.items():
+            if strat["name"][:20].lower() in sk.lower():
+                live = sm; break
+
+        with st.expander(
+            f"{strat['icon']} {strat['name']} · {strat['tf']} · {strat['type']}",
+            expanded=False,
+        ):
+            cc1, cc2 = st.columns([3,2])
+
+            with cc1:
+                st.markdown(
+                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                    f"color:#4a5e32;margin-bottom:0.5rem;'>"
+                    f"<b>Author:</b> {strat['author']}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("**Entry conditions:**")
+                for f in strat["filters"]:
+                    st.markdown(
+                        f"<div style='font-family:DM Sans,sans-serif;font-size:0.82rem;"
+                        f"color:#2e3d1a;margin-bottom:2px;'>"
+                        f"<span style='color:{col};font-weight:700;'>✓</span> {f}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # Entry / SL / T1 / T2
+                for label, val in [("🎯 Entry",  strat["entry"]),
+                                   ("🛑 SL",     strat["sl"]),
+                                   ("📍 T1",     strat["t1"]),
+                                   ("🚀 T2",     strat["t2"])]:
+                    st.markdown(
+                        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+                        f"margin-bottom:3px;'><b style='color:#0e1308;'>{label}:</b> "
+                        f"<span style='color:#2e3d1a;'>{val}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+
+            with cc2:
+                st.markdown(
+                    f"<div style='background:{bg};border:1.5px solid {bdr};"
+                    f"border-radius:10px;padding:0.85rem;'>"
+                    f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+                    f"text-transform:uppercase;letter-spacing:0.08em;color:#4a5e32;"
+                    f"margin-bottom:0.5rem;'>Strategy Specs</div>"
+                    f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
+                    f"line-height:1.8;color:#1e2c0d;'>"
+                    f"Min Strength: <b>{strat['strength_min']}%</b><br>"
+                    f"Min R:R: <b>{strat['rr_min']}:1</b><br>"
+                    f"Best stocks:<br>"
+                    + "".join(f"<span style='background:{bdr};border-radius:4px;"
+                              f"padding:1px 6px;margin:1px;font-size:0.68rem;"
+                              f"display:inline-block;'>{s}</span>"
+                              for s in strat["best_for"])
+                    + "</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                if live:
+                    wr = round(live["wins"]/max(live["trades"],1)*100)
+                    pnl_c = "#1a6b2e" if live["pnl"] >= 0 else "#9e2018"
+                    st.markdown(
+                        f"<div style='background:#1a1f0e;border-radius:8px;"
+                        f"padding:0.65rem;margin-top:0.5rem;"
+                        f"font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#7da048;'>"
+                        f"🧪 LIVE FT RESULTS<br>"
+                        f"<span style='color:#f8faf0;'>"
+                        f"Trades: {live['trades']} · Win: {wr}%<br>"
+                        f"P&L: <b style='color:{pnl_c};'>₹{live['pnl']:+,.2f}</b><br>"
+                        f"T1: {live['t1']} · T2: {live['t2']} · SL: {live['sl_hits']}"
+                        f"</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='background:#f5f8ed;border:1px dashed #b8c89a;"
+                        f"border-radius:8px;padding:0.65rem;margin-top:0.5rem;"
+                        f"font-family:DM Mono,monospace;font-size:0.72rem;color:#4a5e32;"
+                        f"text-align:center;'>No forward test data yet.<br>"
+                        f"Run the scanner to start.</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # Launch FT button
+            if st.button(f"🧪 Forward Test this strategy",
+                         key=f"ft_strat_{strat['name'][:20]}",
+                         use_container_width=True):
+                st.session_state["current_page"] = "Forward Testing"
+                st.rerun()
 
 
 def render_sidebar():
@@ -6740,6 +7208,7 @@ def render_sidebar():
         ("CPR Scanner",         "📡 Scanner"),
         ("Trade Signals",       "🔔 Signals"),
         ("Forward Testing",     "🧪 Fwd Test"),
+        ("Strategy Library",    "📚 Strategy"),
         ("Broker Settings",     "⚙️ Broker"),
         ("Watchlist",           "⭐ Watchlist"),
     ]
@@ -6884,6 +7353,7 @@ def main():
     elif page == "CPR Scanner":          page_cpr_scanner(nse500)
     elif page == "Trade Signals":        page_trade_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
+    elif page == "Strategy Library":     page_strategy_library()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
     else:                                page_market_snapshot(nse500)
