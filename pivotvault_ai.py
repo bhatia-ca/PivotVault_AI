@@ -5748,253 +5748,97 @@ def page_broker_settings():
     # ══════════════════════════════
     with tab_upstox:
         st.markdown("### 📡 Upstox — Free Live Data + Trading")
-        st.info("""
-**Upstox Free API gives you:**
-- ✅ Real-time LTP (last traded price)
-- ✅ OHLCV historical data (all timeframes)
-- ✅ Market depth (bids/asks)
-- ✅ Index data (Nifty 50, Bank Nifty, Sensex)
-- ✅ Place orders programmatically
-- ✅ Free tier — no monthly charge
 
-**Setup (5 minutes):**
-1. Go to [upstox.com/developer](https://upstox.com/developer/api-documentation/introduction/)
-2. Login → My Apps → **Create New App**
-3. Add ALL these Redirect URIs in your Upstox app:
-   `http://localhost:8501`  `http://127.0.0.1:8501`  `https://your-app.streamlit.app`
-4. Copy **API Key** and **API Secret**
-5. Generate **Access Token** (see steps below)
-        """)
+        # Status banner
+        upstox_ok = _upstox_connected()
+        if upstox_ok:
+            st.success("✅ Upstox Live Data Feed is ACTIVE — all market data uses Upstox real-time feed.")
+        else:
+            st.info("📡 Connect Upstox for free NSE real-time data. Currently using yfinance (delayed).")
 
-        st.markdown("#### Step 1 — Enter API credentials")
+        st.divider()
+
+        # ── API Credentials ───────────────────────────────────────────────
+        st.markdown("**API Credentials**")
+        st.caption("Get these from upstox.com/developer → My Apps → Create App")
         c1, c2 = st.columns(2)
         with c1:
             uak  = st.text_input("API Key",    value=st.session_state.get("upstox_api_key",""),    key="up_ak",  type="password", placeholder="your-api-key")
         with c2:
             uaks = st.text_input("API Secret", value=st.session_state.get("upstox_api_secret",""), key="up_aks", type="password", placeholder="your-api-secret")
 
-        st.markdown("#### Step 2 — Set Redirect URI")
-        if uak and uaks:
-            # Let user pick exact redirect URI registered in Upstox
-            st.markdown(
-                "<div style='background:#fdf3d4;border:1.5px solid #e0c060;"
-                "border-radius:8px;padding:0.75rem 1rem;margin-bottom:0.75rem;"
-                "font-family:DM Mono,monospace;font-size:0.8rem;color:#4a3800;'>"
-                "⚠️ This must match <b>exactly</b> what you entered in Upstox developer portal."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            redir_option = st.radio(
-                "Which redirect URI did you register in Upstox?",
-                [
-                    "http://localhost:8501",
-                    "http://127.0.0.1:8501",
-                    "https://127.0.0.1",
-                    "Custom (type below)",
-                ],
-                key="up_redir_choice",
-            )
-            if redir_option == "Custom (type below)":
-                redir_uri = st.text_input(
-                    "Your exact redirect URI",
-                    placeholder="https://your-app.streamlit.app",
-                    key="up_redir_custom",
-                )
-            else:
-                redir_uri = redir_option
-
-            st.markdown("#### Step 3 — Authorize & Get Code")
-            if redir_uri:
-                auth_url = (
-                    f"https://api.upstox.com/v2/login/authorization/dialog"
-                    f"?response_type=code"
-                    f"&client_id={uak}"
-                    f"&redirect_uri={requests.utils.quote(redir_uri, safe='')}"
-                )
-                st.markdown(
-                    f"<a href='{auth_url}' target='_blank' style='"
-                    f"display:inline-block;background:#7c3aed;color:#fff;"
-                    f"padding:10px 22px;border-radius:8px;font-size:0.9rem;"
-                    f"font-weight:700;text-decoration:none;font-family:DM Sans,sans-serif;'>"
-                    f"🔐 Open Upstox Login →</a>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
-                    f"color:#2e3d1a;margin-top:0.75rem;padding:0.6rem 0.9rem;"
-                    f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:7px;'>"
-                    f"After clicking above:<br>"
-                    f"1. Login to Upstox → click Allow<br>"
-                    f"2. Browser redirects to: <code>{redir_uri}?<b>code=XXXXXX</b></code><br>"
-                    f"3. Copy <b>only the code value</b> (e.g. <code>Ab1Cd2Ef3</code>) from the URL<br>"
-                    f"4. Paste it below → click Generate Token"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
-            st.markdown("#### Step 4 — Generate Token")
-            st.markdown(
-                "<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
-                "border-radius:8px;padding:0.75rem 1rem;margin-bottom:0.75rem;"
-                "font-family:DM Mono,monospace;font-size:0.8rem;'>"
-                "<b>💡 Tip:</b> After Upstox redirects you, paste the <b>entire URL</b> "
-                "from your browser address bar — the app will extract the code automatically."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            full_redirect_url = st.text_input(
-                "Paste full redirect URL from browser (or just the code)",
-                key="up_full_url",
-                placeholder="http://localhost:8501?code=Ab1Cd2...  OR just  Ab1Cd2...",
-            )
-            # Extract code from full URL if pasted
-            import urllib.parse as _up
-            auth_code = full_redirect_url.strip()
-            if "code=" in auth_code:
-                try:
-                    parsed = _up.urlparse(auth_code)
-                    params = _up.parse_qs(parsed.query)
-                    auth_code = params.get("code", [auth_code])[0]
-                    st.success(f"✅ Code extracted: `{auth_code[:12]}...`")
-                except Exception:
-                    pass
-
-            if st.button("🔑 Generate Access Token", use_container_width=True, key="btn_gen_token"):
-                if not auth_code.strip():
-                    st.warning("Paste the authorization code first.")
-                elif not redir_uri:
-                    st.warning("Select your redirect URI above.")
-                else:
-                    try:
-                        # Upstox v2 token endpoint uses client_id + client_secret in body
-                        # NOT Basic Auth — that was the bug
-                        import urllib.parse as _urlp
-
-                        # Clean all values
-                        _code    = auth_code.strip()
-                        _key     = uak.strip()
-                        _secret  = uaks.strip()
-                        _redir   = redir_uri.strip().rstrip("/")
-
-                        # Build payload exactly per Upstox v2 spec
-                        payload = {
-                            "code":          _code,
-                            "client_id":     _key,
-                            "client_secret": _secret,
-                            "redirect_uri":  _redir,
-                            "grant_type":    "authorization_code",
-                        }
-
-                        st.info(
-                            f"**Sending:**\n"
-                            f"- client_id: `{_key}`\n"
-                            f"- redirect_uri: `{_redir}`\n"
-                            f"- code: `{_code[:15]}...` ({len(_code)} chars)"
-                        )
-
-                        r = requests.post(
-                            "https://api.upstox.com/v2/login/authorization/token",
-                            headers={
-                                "Content-Type": "application/x-www-form-urlencoded",
-                                "Accept":       "application/json",
-                            },
-                            data=payload,
-                            timeout=10,
-                        )
-
-                        if r.status_code == 200:
-                            resp = r.json()
-                            token = resp.get("access_token", "")
-                            if token:
-                                st.session_state.update({
-                                    "upstox_access_token": token,
-                                    "upstox_api_key":      uak.strip(),
-                                    "upstox_api_secret":   uaks.strip(),
-                                    "broker":              "upstox",
-                                    "broker_connected":    True,
-                                })
-                                st.cache_data.clear()
-                                st.success("✅ Token generated! Upstox live data feed is now ACTIVE.")
-                                st.rerun()
-                            else:
-                                st.error(f"Token missing in response: {resp}")
-                        else:
-                            try:
-                                err  = r.json()
-                                emsg = err.get("errors",[{}])[0].get("message","Unknown")
-                                ecode= err.get("errors",[{}])[0].get("errorCode","")
-                            except Exception:
-                                emsg = r.text[:300]
-                                ecode = ""
-                            st.error(f"❌ {ecode}: {emsg}")
-                            if "UDAPI100068" in ecode:
-                                st.warning(
-                                    "**UDAPI100068 fix checklist:**\n"
-                                    "1. Copy API Key from Upstox developer portal — paste it fresh (no spaces)\n"
-                                    "2. The redirect URI here must match **character-for-character** what's in Upstox app\n"
-                                    "3. The auth code expires in ~60 seconds — generate a new one\n"
-                                    "4. Each code can only be used once — click Authorize again for a fresh code"
-                                )
-                            with st.expander("Full error response"):
-                                st.json(r.json())
-                    except Exception as e:
-                        st.error(f"Request failed: {e}")
-
         st.divider()
-        st.markdown("#### Or — paste an existing Access Token directly")
-        st.caption("Use this if you already have a token from yesterday's login or another source.")
+
+        # ── Access Token (main action) ────────────────────────────────────
+        st.markdown("**Access Token**")
+        st.caption("Paste your daily access token here. Generate it from Upstox app or developer portal each morning.")
         uat = st.text_input(
             "Access Token",
             value=st.session_state.get("upstox_access_token",""),
             key="up_at",
             type="password",
             placeholder="eyJ0eXAiOiJKV1QiLCJhbGci...",
+            label_visibility="collapsed",
         )
-        if st.button("💾 Save & Activate Token", use_container_width=True, key="save_up_token"):
-            if uat.strip():
-                # Quick verify
-                try:
-                    rv = requests.get(
-                        f"{UPSTOX_BASE}/profile",
-                        headers={"Authorization": f"Bearer {uat.strip()}", "Accept": "application/json"},
-                        timeout=5,
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save & Activate", use_container_width=True, key="save_up_token"):
+                t = uat.strip()
+                if not t:
+                    st.warning("Paste your access token first.")
+                elif not t.startswith("eyJ"):
+                    st.error(
+                        "❌ This doesn't look like a valid Upstox token.\n\n"
+                        "A valid token starts with **eyJ** (it's a JWT string, ~500+ characters long).\n\n"
+                        "Make sure you copied the full token without any extra spaces."
                     )
-                    if rv.status_code == 200:
-                        pname = rv.json().get("data",{}).get("name","User")
-                        st.session_state.update({
-                            "upstox_access_token": uat.strip(),
-                            "broker":              "upstox",
-                            "broker_connected":    True,
-                        })
-                        st.cache_data.clear()
-                        st.success(f"✅ Connected as **{pname}**! Live data feed is active.")
-                        st.rerun()
-                    else:
-                        st.error(f"Token invalid ({rv.status_code}). Generate a fresh one above.")
-                except Exception as e:
-                    # If verify fails (network etc), save anyway
+                else:
                     st.session_state.update({
-                        "upstox_access_token": uat.strip(),
+                        "upstox_access_token": t,
+                        "upstox_api_key":      uak.strip() or st.session_state.get("upstox_api_key",""),
+                        "upstox_api_secret":   uaks.strip() or st.session_state.get("upstox_api_secret",""),
                         "broker":              "upstox",
                         "broker_connected":    True,
                     })
                     st.cache_data.clear()
-                    st.success("✅ Token saved! (Could not verify — check internet connection)")
+                    st.success(f"✅ Token saved! ({len(t)} chars) — Upstox live data feed is now ACTIVE.")
                     st.rerun()
-            else:
-                st.warning("Paste your access token first.")
+        with col2:
+            if _upstox_connected():
+                if st.button("🔌 Disconnect", use_container_width=True, key="btn_disconnect_up"):
+                    st.session_state.update({"upstox_access_token":"","broker":"none","broker_connected":False})
+                    st.cache_data.clear()
+                    st.info("Disconnected.")
+                    st.rerun()
 
-        # Disconnect button
-        if _upstox_connected():
-            if st.button("🔌 Disconnect", key="btn_disconnect_up", use_container_width=True):
-                st.session_state.update({
-                    "upstox_access_token": "",
-                    "broker": "none",
-                    "broker_connected": False,
-                })
-                st.cache_data.clear()
-                st.info("Disconnected. Switched back to yfinance.")
-                st.rerun()
+        st.divider()
+
+        # ── How to get token ──────────────────────────────────────────────
+        with st.expander("📖 How to generate a daily Access Token"):
+            st.markdown("""
+**Method 1 — Upstox Developer Portal (easiest)**
+1. Go to [upstox.com/developer](https://upstox.com/developer/api-documentation/)
+2. Login → scroll to **Access Token** section
+3. Click **Generate Token** → copy and paste above
+
+**Method 2 — OAuth flow**
+1. Open this URL in browser (replace YOUR_API_KEY):
+   `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=YOUR_API_KEY&redirect_uri=http://localhost:8501`
+2. Login to Upstox → authorize
+3. Copy the `code=` value from the redirect URL
+4. Run this in Python:
+```python
+import requests
+r = requests.post("https://api.upstox.com/v2/login/authorization/token",
+    data={"code":"PASTE_CODE","client_id":"YOUR_KEY",
+          "client_secret":"YOUR_SECRET",
+          "redirect_uri":"http://localhost:8501",
+          "grant_type":"authorization_code"})
+print(r.json()["access_token"])
+```
+5. Copy the token → paste above → Save & Activate
+            """)
 
     with tab_zerodha:
         st.markdown("### ⚡ Zerodha Kite")
