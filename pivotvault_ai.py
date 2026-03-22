@@ -6688,6 +6688,432 @@ def page_paper_trading():
     st.caption("⚠️ Paper trading uses virtual capital only. Not real trades. For strategy testing purposes only.")
 
 
+def page_backtest():
+    """
+    Backtest CPR/Pivot Boss signals on historical data from Upstox (or yfinance fallback).
+    Logic: For each historical candle, compute CPR + Pivots → check if signal conditions
+    match → simulate trade with fixed R:R → record result.
+    """
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">🔬</span>
+        <h1>Signal Backtester</h1>
+        <span style="margin-left:auto;background:#e4f5e8;border:1px solid #8dcc9a;
+                     color:#1a6b2e;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+            CPR · PIVOT BOSS · HISTORICAL
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    data_src = "📡 Upstox" if _upstox_connected() else "📊 yfinance"
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;color:#2e3d1a;"
+        f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
+        f"padding:0.5rem 0.9rem;margin-bottom:1rem;'>"
+        f"Data source: <b>{data_src}</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Config ────────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        symbol = st.selectbox("Symbol", [
+            "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
+            "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
+            "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
+        ], key="bt_sym")
+    with c2:
+        tf = st.selectbox("Timeframe", [
+            "15 Min", "1 Hour", "1 Day"
+        ], key="bt_tf")
+    with c3:
+        lookback = st.selectbox("Lookback Period", [
+            "1 Month","3 Months","6 Months","1 Year"
+        ], key="bt_lookback")
+    with c4:
+        rr_target = st.selectbox("R:R Target", ["1:1","1:2","1:3","1:4"], index=1, key="bt_rr")
+
+    c5, c6, c7 = st.columns(3)
+    with c5:
+        signal_type = st.radio("Signal Direction", ["Both","Bullish Only","Bearish Only"],
+                               horizontal=True, key="bt_dir")
+    with c6:
+        min_strength = st.slider("Min CPR Strength %", 0, 100, 60, key="bt_str")
+    with c7:
+        sl_method = st.selectbox("Stop Loss Method",
+                                  ["Previous Candle High/Low", "ATR-based (1.5x)", "CPR Width"],
+                                  key="bt_sl")
+
+    run_bt = st.button("▶ Run Backtest", use_container_width=True, key="btn_run_bt")
+
+    if not run_bt and not st.session_state.get("bt_results"):
+        st.markdown("""
+        <div style="text-align:center;padding:2.5rem;background:#f5f8ed;
+                    border:2px dashed #b8c89a;border-radius:12px;">
+            <div style="font-size:2rem;margin-bottom:0.5rem;">🔬</div>
+            <div style="font-family:DM Mono,monospace;font-size:0.9rem;
+                        color:#2e3d1a;font-weight:700;">Configure and run backtest</div>
+            <div style="font-size:0.8rem;color:#4a5e32;margin-top:0.4rem;">
+                Replays CPR + Pivot Boss signals on historical candles
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    if run_bt:
+        # ── Fetch historical data ─────────────────────────────────────────
+        tf_map = {
+            "15 Min": ("15m", "60d"),
+            "1 Hour": ("1h",  "180d"),
+            "1 Day":  ("1d",  "365d"),
+        }
+        lb_map = {
+            "1 Month":  30,  "3 Months": 90,
+            "6 Months": 180, "1 Year":   365,
+        }
+        interval, _ = tf_map[tf]
+        days         = lb_map[lookback]
+        rr_val       = int(rr_target.split(":")[1])
+
+        with st.spinner(f"Fetching {symbol} {tf} data ({lookback})..."):
+            from_dt = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            to_dt   = datetime.now().strftime("%Y-%m-%d")
+
+            if _upstox_connected():
+                df = upstox_get_historical(symbol, interval, from_dt, to_dt)
+            else:
+                df = pd.DataFrame()
+
+            if df.empty:
+                df = yf.Ticker(symbol+".NS").history(
+                    period=f"{days}d", interval=interval
+                )
+                if not df.empty:
+                    df.index = df.index.tz_localize(None)
+
+        if df.empty or len(df) < 30:
+            st.error("Not enough historical data. Try a longer period or different symbol.")
+            return
+
+        df = df.copy()
+        df.columns = [c.title() for c in df.columns]
+
+        # ── Run backtest logic ────────────────────────────────────────────
+        with st.spinner("Running backtest on historical signals..."):
+            results = _run_cpr_backtest(
+                df, symbol, interval, rr_val, signal_type, min_strength, sl_method
+            )
+
+        st.session_state["bt_results"] = results
+        st.session_state["bt_meta"]    = {
+            "symbol": symbol, "tf": tf, "lookback": lookback,
+            "rr": rr_target, "bars": len(df)
+        }
+
+    # ── Display results ───────────────────────────────────────────────────
+    results = st.session_state.get("bt_results", [])
+    meta    = st.session_state.get("bt_meta",    {})
+
+    if not results:
+        st.info("No signals found in this period. Try a longer lookback or lower strength filter.")
+        return
+
+    _render_backtest_results(results, meta)
+
+
+def _run_cpr_backtest(df: pd.DataFrame, symbol: str, interval: str,
+                       rr: int, direction: str, min_strength: int,
+                       sl_method: str) -> list:
+    """
+    Replay CPR + Pivot signals candle by candle.
+    For each candle i, use candles 0..i-1 to compute the signal,
+    then simulate the trade outcome using candles i..i+20.
+    """
+    results = []
+    candles = df.reset_index()
+
+    # Need at least 20 candles of history to compute pivots
+    for i in range(20, len(candles) - 5):
+        hist    = candles.iloc[:i].copy()
+        hist.index = hist.iloc[:, 0] if hist.columns[0] != "Open" else hist.index
+
+        try:
+            # Compute CPR on previous candles
+            cpr     = compute_cpr(hist)
+            pivots  = compute_pivot_points(hist, "Traditional")
+            ind_df  = compute_indicators(hist)
+            if ind_df.empty:
+                continue
+
+            last_close = float(hist["Close"].iloc[-1])
+            last_high  = float(hist["High"].iloc[-1])
+            last_low   = float(hist["Low"].iloc[-1])
+            atr        = float(ind_df["ATR"].iloc[-1]) if "ATR" in ind_df.columns else (last_high - last_low)
+
+            # CPR levels
+            pivot = cpr.get("pivot", 0)
+            bc    = cpr.get("bc",    0)
+            tc    = cpr.get("tc",    0)
+            cpr_w = abs(tc - bc) / max(pivot, 1) * 100 if pivot else 0
+
+            # Signal strength scoring (simplified from scanner)
+            score = 0
+            bias  = None
+
+            # Price vs CPR
+            if last_close > tc:
+                score += 25; bias = "Bullish"
+            elif last_close < bc:
+                score += 25; bias = "Bearish"
+
+            # RSI filter
+            rsi = float(ind_df["RSI"].iloc[-1]) if "RSI" in ind_df.columns else 50
+            if bias == "Bullish" and 50 < rsi < 75:  score += 20
+            elif bias == "Bearish" and 25 < rsi < 50: score += 20
+
+            # HMA direction
+            if "HMA" in ind_df.columns:
+                hma_vals = ind_df["HMA"].dropna()
+                if len(hma_vals) >= 2:
+                    if bias == "Bullish" and hma_vals.iloc[-1] > hma_vals.iloc[-2]: score += 20
+                    elif bias == "Bearish" and hma_vals.iloc[-1] < hma_vals.iloc[-2]: score += 20
+
+            # CPR width (narrow = stronger)
+            if cpr_w < 0.5:   score += 20
+            elif cpr_w < 1.0: score += 10
+
+            # Pivot proximity
+            r1 = pivots.get("R1", 0); s1 = pivots.get("S1", 0)
+            if bias == "Bullish" and last_close > pivot: score += 15
+            elif bias == "Bearish" and last_close < pivot: score += 15
+
+            if score < min_strength or not bias:
+                continue
+
+            # Direction filter
+            if direction == "Bullish Only" and bias != "Bullish": continue
+            if direction == "Bearish Only" and bias != "Bearish": continue
+
+            # Entry price = next candle open
+            if i >= len(candles) - 1: continue
+            entry_candle = candles.iloc[i]
+            entry_px     = float(entry_candle["Open"])
+
+            # Stop loss calculation
+            if sl_method == "Previous Candle High/Low":
+                sl = last_low * 0.999  if bias == "Bullish" else last_high * 1.001
+            elif sl_method == "ATR-based (1.5x)":
+                sl = entry_px - 1.5*atr if bias == "Bullish" else entry_px + 1.5*atr
+            else:  # CPR Width
+                sl = entry_px - (tc - bc) if bias == "Bullish" else entry_px + (tc - bc)
+
+            risk   = abs(entry_px - sl)
+            if risk < 0.01: continue
+            target = entry_px + rr * risk if bias == "Bullish" else entry_px - rr * risk
+
+            # Simulate outcome over next 20 candles
+            outcome = "OPEN"
+            exit_px = entry_px
+            exit_i  = min(i + 20, len(candles) - 1)
+            bars_held = 0
+
+            for j in range(i, exit_i + 1):
+                c     = candles.iloc[j]
+                c_hi  = float(c["High"])
+                c_lo  = float(c["Low"])
+                bars_held += 1
+
+                if bias == "Bullish":
+                    if c_lo <= sl:
+                        outcome = "LOSS"; exit_px = sl; break
+                    if c_hi >= target:
+                        outcome = "WIN";  exit_px = target; break
+                else:
+                    if c_hi >= sl:
+                        outcome = "LOSS"; exit_px = sl; break
+                    if c_lo <= target:
+                        outcome = "WIN";  exit_px = target; break
+
+            if outcome == "OPEN":
+                exit_px = float(candles.iloc[exit_i]["Close"])
+                pnl_pts = (exit_px - entry_px) if bias == "Bullish" else (entry_px - exit_px)
+                outcome = "WIN" if pnl_pts > 0 else "LOSS"
+
+            pnl_pts = (exit_px - entry_px) if bias == "Bullish" else (entry_px - exit_px)
+            pnl_pct = round(pnl_pts / entry_px * 100, 2)
+
+            trade_dt = str(candles.iloc[i].get("Datetime", candles.iloc[i].get("Date","")))[:16]
+
+            results.append({
+                "date":      trade_dt,
+                "bias":      bias,
+                "entry":     round(entry_px, 2),
+                "target":    round(target,   2),
+                "sl":        round(sl,       2),
+                "exit":      round(exit_px,  2),
+                "outcome":   outcome,
+                "pnl_pct":   pnl_pct,
+                "strength":  score,
+                "cpr_w":     round(cpr_w, 3),
+                "rsi":       round(rsi, 1),
+                "bars":      bars_held,
+            })
+
+        except Exception:
+            continue
+
+    return results
+
+
+def _render_backtest_results(results: list, meta: dict):
+    """Render backtest results with stats, equity curve and trade table."""
+    wins   = [r for r in results if r["outcome"] == "WIN"]
+    losses = [r for r in results if r["outcome"] == "LOSS"]
+    total  = len(results)
+    wr     = round(len(wins)/total*100, 1) if total else 0
+    avg_win  = round(sum(r["pnl_pct"] for r in wins)  / max(len(wins),  1), 2)
+    avg_loss = round(sum(r["pnl_pct"] for r in losses) / max(len(losses),1), 2)
+    pf       = round(abs(sum(r["pnl_pct"] for r in wins)) /
+                     max(abs(sum(r["pnl_pct"] for r in losses)), 0.01), 2)
+    tot_pnl  = round(sum(r["pnl_pct"] for r in results), 2)
+    exp      = round(tot_pnl / total, 2) if total else 0
+    max_dd   = _calc_max_drawdown(results)
+
+    # ── Summary metrics ───────────────────────────────────────────────────
+    sym  = meta.get("symbol",""); tf = meta.get("tf","")
+    bars = meta.get("bars", 0)
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
+        f"color:#2e3d1a;margin-bottom:0.5rem;'>"
+        f"<b>{sym}</b> · {tf} · {meta.get('lookback','')} · "
+        f"{bars} candles · R:R {meta.get('rr','')} · "
+        f"<b>{total}</b> signals</div>",
+        unsafe_allow_html=True,
+    )
+
+    m1,m2,m3,m4,m5,m6 = st.columns(6)
+    m1.metric("✅ Win Rate",      f"{wr}%",     f"{len(wins)}W / {len(losses)}L")
+    m2.metric("📈 Total P&L",     f"{tot_pnl:+.1f}%")
+    m3.metric("💰 Profit Factor", f"{pf}x")
+    m4.metric("📊 Expectancy",    f"{exp:+.2f}%")
+    m5.metric("🟢 Avg Win",       f"{avg_win:+.2f}%")
+    m6.metric("🔴 Avg Loss",      f"{avg_loss:+.2f}%")
+
+    # Max drawdown + streak
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+        f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
+        f"padding:0.5rem 1rem;margin:0.5rem 0;display:flex;gap:2rem;flex-wrap:wrap;'>"
+        f"<span>📉 Max Drawdown: <b style='color:#9e2018;'>{max_dd:.1f}%</b></span>"
+        f"<span>🏆 Best Trade: <b style='color:#1a6b2e;'>{max(r['pnl_pct'] for r in results):+.2f}%</b></span>"
+        f"<span>💀 Worst Trade: <b style='color:#9e2018;'>{min(r['pnl_pct'] for r in results):+.2f}%</b></span>"
+        f"<span>⏱️ Avg Bars Held: <b>{round(sum(r['bars'] for r in results)/total,1)}</b></span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Equity curve ──────────────────────────────────────────────────────
+    st.markdown("#### 📈 Equity Curve")
+    equity = []; cum = 0
+    for r in results:
+        cum += r["pnl_pct"]
+        equity.append({"Trade #": r["date"][:10], "Cumulative P&L %": round(cum, 2)})
+    eq_df = pd.DataFrame(equity)
+
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    colors = ["#1a6b2e" if v >= 0 else "#9e2018" for v in eq_df["Cumulative P&L %"]]
+    fig.add_trace(go.Scatter(
+        x=eq_df["Trade #"], y=eq_df["Cumulative P&L %"],
+        mode="lines+markers",
+        line=dict(color="#3d5a1c", width=2),
+        marker=dict(color=colors, size=5),
+        fill="tozeroy",
+        fillcolor="rgba(61,90,28,0.1)",
+        name="Equity"
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="#b8c89a", line_width=1)
+    fig.update_layout(
+        height=280, margin=dict(l=0,r=0,t=10,b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.5)",
+        font=dict(family="DM Mono", size=11, color="#0e1308"),
+        xaxis=dict(showgrid=False, tickangle=-45, nticks=10),
+        yaxis=dict(showgrid=True, gridcolor="#dae0cb", zeroline=False,
+                   tickformat="+.1f", ticksuffix="%"),
+        showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Win/Loss by direction ─────────────────────────────────────────────
+    bull_r = [r for r in results if r["bias"] == "Bullish"]
+    bear_r = [r for r in results if r["bias"] == "Bearish"]
+
+    if bull_r and bear_r:
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            bull_wr = round(sum(1 for r in bull_r if r["outcome"]=="WIN")/len(bull_r)*100,1)
+            st.markdown(
+                f"<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
+                f"border-radius:9px;padding:0.75rem 1rem;text-align:center;"
+                f"font-family:DM Mono,monospace;'>"
+                f"<div style='font-size:0.7rem;color:#1a6b2e;font-weight:700;'>▲ BULLISH SIGNALS</div>"
+                f"<div style='font-size:1.4rem;font-weight:800;color:#1a6b2e;'>{bull_wr}%</div>"
+                f"<div style='font-size:0.7rem;color:#2e3d1a;'>{len(bull_r)} trades · "
+                f"P&L {sum(r['pnl_pct'] for r in bull_r):+.1f}%</div>"
+                f"</div>", unsafe_allow_html=True)
+        with dc2:
+            bear_wr = round(sum(1 for r in bear_r if r["outcome"]=="WIN")/len(bear_r)*100,1)
+            st.markdown(
+                f"<div style='background:#fbe8e6;border:1.5px solid #dc9090;"
+                f"border-radius:9px;padding:0.75rem 1rem;text-align:center;"
+                f"font-family:DM Mono,monospace;'>"
+                f"<div style='font-size:0.7rem;color:#9e2018;font-weight:700;'>▼ BEARISH SIGNALS</div>"
+                f"<div style='font-size:1.4rem;font-weight:800;color:#9e2018;'>{bear_wr}%</div>"
+                f"<div style='font-size:0.7rem;color:#2e3d1a;'>{len(bear_r)} trades · "
+                f"P&L {sum(r['pnl_pct'] for r in bear_r):+.1f}%</div>"
+                f"</div>", unsafe_allow_html=True)
+
+    # ── Trade log table ───────────────────────────────────────────────────
+    st.markdown("#### 📋 Trade Log")
+    rows = []
+    for r in results:
+        rows.append({
+            "Date":      r["date"],
+            "Direction": "▲ BUY" if r["bias"]=="Bullish" else "▼ SELL",
+            "Entry":     f"₹{r['entry']:,.2f}",
+            "Target":    f"₹{r['target']:,.2f}",
+            "SL":        f"₹{r['sl']:,.2f}",
+            "Exit":      f"₹{r['exit']:,.2f}",
+            "P&L %":     f"{r['pnl_pct']:+.2f}%",
+            "Result":    "✅ WIN" if r["outcome"]=="WIN" else "❌ LOSS",
+            "Strength":  f"{r['strength']}%",
+            "RSI":       r["rsi"],
+            "Bars":      r["bars"],
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=320)
+
+    # Export
+    if st.button("📥 Export to CSV", key="bt_export"):
+        csv = pd.DataFrame(rows).to_csv(index=False)
+        st.download_button("⬇️ Download CSV", csv,
+                           file_name=f"backtest_{meta.get('symbol','sym')}_{meta.get('tf','tf')}.csv",
+                           mime="text/csv", key="bt_dl")
+
+    st.caption("⚠️ Backtest uses simplified CPR signal logic on historical data. Past performance does not guarantee future results. Not financial advice.")
+
+
+def _calc_max_drawdown(results: list) -> float:
+    """Calculate maximum drawdown from equity curve."""
+    cum = 0; peak = 0; max_dd = 0
+    for r in results:
+        cum  += r["pnl_pct"]
+        peak  = max(peak, cum)
+        dd    = peak - cum
+        max_dd = max(max_dd, dd)
+    return round(max_dd, 2)
+
+
 def render_sidebar():
     PAGES = [
         ("📊", "Market",     "Market Snapshot"),
