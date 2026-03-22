@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 try:
     from streamlit_autorefresh import st_autorefresh
     _HAS_AUTOREFRESH = True
@@ -56,52 +57,57 @@ if _MOBILE_PATCH:
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
 
 /* ═══════════════════════════════════════════════════════════
-   PIVOTVAULT AI — OLIVE TERMINAL THEME
-   Refined · Professional · Olive Green · Mobile-First
+   PIVOTVAULT AI — OLIVE THEME · HIGH CONTRAST MOBILE-FIRST
    ═══════════════════════════════════════════════════════════ */
 
 :root {
-    /* Olive palette */
-    --olive-900: #1a1f0e;
-    --olive-800: #2a3318;
-    --olive-700: #3a4a22;
-    --olive-600: #4e6130;
-    --olive-500: #617a3d;
-    --olive-400: #7a9651;
-    --olive-300: #9db46a;
-    --olive-200: #c4d49a;
-    --olive-100: #e8eddf;
-    --olive-50:  #f4f7ec;
+    /* Olive palette — darker for better contrast */
+    --olive-900: #141808;
+    --olive-800: #1e2c0d;
+    --olive-700: #2e4214;
+    --olive-600: #3d5a1c;
+    --olive-500: #4e6e26;
+    --olive-400: #638534;
+    --olive-300: #7da048;
+    --olive-200: #a8c070;
+    --olive-100: #d4e4a8;
+    --olive-50:  #eef5dc;
     /* Surfaces */
-    --bg:        #f2f5ec;
+    --bg:        #f0f4e8;
     --surface:   #ffffff;
-    --surface2:  #f7f9f2;
-    --border:    #dae0cb;
-    --border2:   #c8d4b4;
-    /* Text */
-    --text:      #1a1f0e;
-    --text-dim:  #5a6a48;
-    --text-muted:#8a9a78;
+    --surface2:  #f5f8ed;
+    --border:    #b8c89a;
+    --border2:   #9ab07a;
+    /* Text — high contrast */
+    --text:      #0e1308;
+    --text-dim:  #2e3d1a;
+    --text-muted:#4a5e32;
     /* Accents */
-    --bull:      #2d7a3a;
-    --bull-bg:   #edf7ee;
-    --bull-bdr:  #b8dfc0;
-    --bear:      #c0392b;
-    --bear-bg:   #fdf0ee;
-    --bear-bdr:  #f0c0b8;
-    --warn:      #b8860b;
-    --warn-bg:   #fdf9ec;
+    --bull:      #1a6b2e;
+    --bull-bg:   #e4f5e8;
+    --bull-bdr:  #8dcc9a;
+    --bear:      #9e2018;
+    --bear-bg:   #fbe8e6;
+    --bear-bdr:  #dc9090;
+    --warn:      #7a5800;
+    --warn-bg:   #fdf3d4;
     /* Shadows */
-    --shadow-sm: 0 1px 3px rgba(50,70,20,0.08);
-    --shadow-md: 0 4px 12px rgba(50,70,20,0.10);
-    --shadow-lg: 0 8px 24px rgba(50,70,20,0.12);
+    --shadow-sm: 0 1px 4px rgba(20,30,8,0.12);
+    --shadow-md: 0 4px 14px rgba(20,30,8,0.14);
+    --shadow-lg: 0 8px 28px rgba(20,30,8,0.16);
     /* Radius */
-    --r-sm: 6px;
-    --r-md: 10px;
+    --r-sm: 7px;
+    --r-md: 11px;
     --r-lg: 16px;
+    /* Font sizes — larger for mobile readability */
+    --fs-xs:   0.8rem;
+    --fs-sm:   0.875rem;
+    --fs-base: 1rem;
+    --fs-md:   1.0625rem;
+    --fs-lg:   1.2rem;
 }
 
 /* ── GLOBAL ────────────────────────────────────────────────── */
@@ -110,6 +116,8 @@ html, body {
     font-family: 'DM Sans', sans-serif !important;
     color: var(--text) !important;
     -webkit-font-smoothing: antialiased;
+    font-size: 16px !important;
+    line-height: 1.6 !important;
 }
 .stApp, .stApp > div,
 [data-testid="stAppViewContainer"],
@@ -120,7 +128,7 @@ html, body {
 [data-testid="stVerticalBlock"] { background: transparent !important; }
 .block-container {
     background: var(--bg) !important;
-    padding: 1.25rem 1.75rem 2rem !important;
+    padding: 1rem 1.25rem 2rem !important;
     max-width: 1440px !important;
 }
 #MainMenu, footer { visibility: hidden !important; }
@@ -129,206 +137,214 @@ header[data-testid="stHeader"] {
     border-bottom: none !important;
 }
 
-/* ── TYPOGRAPHY ────────────────────────────────────────────── */
+/* ── TYPOGRAPHY — mobile-first sizes ──────────────────────── */
 h1, h2, h3, h4 {
     font-family: 'DM Sans', sans-serif !important;
     color: var(--text) !important;
-    letter-spacing: -0.02em !important;
     font-weight: 700 !important;
+    letter-spacing: -0.01em !important;
+    line-height: 1.3 !important;
 }
-p, span, label, div, li, td, th {
+h1 { font-size: 1.6rem !important; }
+h2 { font-size: 1.35rem !important; }
+h3 { font-size: 1.15rem !important; }
+p, span, label, li, td, th {
+    font-family: 'DM Sans', sans-serif !important;
+    color: var(--text) !important;
+    font-size: var(--fs-base) !important;
+}
+div {
     font-family: 'DM Sans', sans-serif !important;
 }
-code, pre, .stCode,
-[class*="mono"] {
+code, pre, [class*="mono"] {
     font-family: 'DM Mono', monospace !important;
+    font-size: var(--fs-sm) !important;
 }
 
 /* ── SIDEBAR ───────────────────────────────────────────────── */
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div {
-    background: linear-gradient(180deg, var(--olive-900) 0%, var(--olive-800) 100%) !important;
-    border-right: 1px solid var(--olive-700) !important;
-    box-shadow: 2px 0 16px rgba(0,0,0,0.15) !important;
+    background: var(--olive-900) !important;
+    border-right: 2px solid var(--olive-700) !important;
+    box-shadow: 3px 0 16px rgba(0,0,0,0.2) !important;
 }
-section[data-testid="stSidebar"] * { color: var(--olive-100) !important; }
+section[data-testid="stSidebar"] * { color: #e8f0d0 !important; }
 section[data-testid="stSidebar"] hr { border-color: var(--olive-700) !important; }
-section[data-testid="stSidebar"] .stCaption,
 section[data-testid="stSidebar"] .stCaption p {
-    color: var(--olive-400) !important;
-    font-size: 0.72rem !important;
+    color: var(--olive-300) !important;
+    font-size: var(--fs-xs) !important;
     font-family: 'DM Mono', monospace !important;
 }
-/* Radio nav */
-section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
 section[data-testid="stSidebar"] .stRadio label {
     border-radius: var(--r-sm) !important;
-    padding: 0.6rem 0.85rem !important;
-    font-size: 0.87rem !important;
+    padding: 0.65rem 1rem !important;
+    font-size: var(--fs-sm) !important;
     font-weight: 500 !important;
-    color: var(--olive-200) !important;
-    transition: all 0.18s ease !important;
+    color: #c8dca0 !important;
     cursor: pointer !important;
     border-left: 3px solid transparent !important;
+    transition: all 0.15s !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
 }
 section[data-testid="stSidebar"] .stRadio label:hover {
-    background: rgba(255,255,255,0.07) !important;
-    color: var(--olive-50) !important;
-    border-left-color: var(--olive-400) !important;
+    background: rgba(255,255,255,0.08) !important;
+    color: #f0f8d8 !important;
+    border-left-color: var(--olive-300) !important;
 }
-/* Sidebar buttons */
 section[data-testid="stSidebar"] .stButton > div > button {
-    background: rgba(255,255,255,0.06) !important;
-    border: 1px solid var(--olive-700) !important;
-    color: var(--olive-200) !important;
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid var(--olive-600) !important;
+    color: #c8dca0 !important;
     border-radius: var(--r-sm) !important;
-    font-size: 0.82rem !important;
-}
-section[data-testid="stSidebar"] .stButton > div > button:hover {
-    background: rgba(255,255,255,0.12) !important;
-    border-color: var(--olive-400) !important;
-    color: var(--olive-50) !important;
+    font-size: var(--fs-sm) !important;
+    min-height: 44px !important;
 }
 
 /* ── METRIC CARDS ─────────────────────────────────────────── */
 div[data-testid="metric-container"] {
     background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: var(--r-md) !important;
-    padding: 1rem 1.25rem !important;
+    padding: 1rem 1.1rem !important;
     box-shadow: var(--shadow-sm) !important;
-    transition: box-shadow 0.2s, transform 0.2s !important;
     border-top: 3px solid var(--olive-400) !important;
-}
-div[data-testid="metric-container"]:hover {
-    box-shadow: var(--shadow-md) !important;
-    transform: translateY(-1px) !important;
 }
 div[data-testid="metric-container"] label {
     font-family: 'DM Mono', monospace !important;
-    font-size: 0.7rem !important;
-    letter-spacing: 0.08em !important;
+    font-size: var(--fs-xs) !important;
+    letter-spacing: 0.07em !important;
     text-transform: uppercase !important;
     color: var(--text-muted) !important;
+    font-weight: 600 !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
     font-family: 'DM Mono', monospace !important;
     font-size: 1.5rem !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     color: var(--text) !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
     font-family: 'DM Mono', monospace !important;
-    font-size: 0.8rem !important;
-    font-weight: 500 !important;
+    font-size: var(--fs-xs) !important;
+    font-weight: 600 !important;
 }
 
 /* ── BUTTONS ──────────────────────────────────────────────── */
 .stButton > div > button {
-    background: var(--olive-700) !important;
+    background: var(--olive-600) !important;
     border: none !important;
-    color: var(--olive-50) !important;
+    color: #ffffff !important;
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.82rem !important;
-    font-weight: 600 !important;
+    font-size: var(--fs-sm) !important;
+    font-weight: 700 !important;
     border-radius: var(--r-sm) !important;
-    padding: 0.5rem 1.1rem !important;
-    transition: all 0.2s ease !important;
-    box-shadow: 0 2px 4px rgba(50,70,20,0.2) !important;
-    letter-spacing: 0.02em !important;
+    padding: 0.6rem 1.2rem !important;
+    min-height: 46px !important;
+    transition: background 0.18s !important;
+    box-shadow: 0 2px 5px rgba(20,30,8,0.18) !important;
     cursor: pointer !important;
+    letter-spacing: 0.01em !important;
 }
 .stButton > div > button:hover {
-    background: var(--olive-600) !important;
-    box-shadow: 0 4px 12px rgba(50,70,20,0.25) !important;
-    transform: translateY(-1px) !important;
+    background: var(--olive-500) !important;
+    box-shadow: 0 4px 12px rgba(20,30,8,0.22) !important;
 }
 .stButton > div > button:active {
-    transform: translateY(0) !important;
-    box-shadow: 0 1px 2px rgba(50,70,20,0.2) !important;
+    background: var(--olive-700) !important;
+}
+
+/* ── INPUTS ───────────────────────────────────────────────── */
+input[type="text"], input[type="password"], input[type="number"],
+.stTextInput input, .stNumberInput input {
+    background: var(--surface) !important;
+    border: 2px solid var(--border) !important;
+    border-radius: var(--r-sm) !important;
+    color: var(--text) !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 16px !important;
+    min-height: 48px !important;
+    padding: 0.5rem 0.75rem !important;
+}
+input:focus {
+    border-color: var(--olive-500) !important;
+    box-shadow: 0 0 0 3px rgba(78,110,38,0.18) !important;
+    outline: none !important;
+}
+input::placeholder { color: var(--text-muted) !important; }
+/* Labels above inputs */
+.stTextInput label, .stNumberInput label,
+.stSelectbox label, .stMultiSelect label,
+.stSlider label, .stRadio label {
+    font-size: var(--fs-sm) !important;
+    font-weight: 600 !important;
+    color: var(--text-dim) !important;
 }
 
 /* ── SELECTBOXES ──────────────────────────────────────────── */
 div[data-baseweb="select"] > div {
     background: var(--surface) !important;
-    border: 1.5px solid var(--border2) !important;
+    border: 2px solid var(--border) !important;
     border-radius: var(--r-sm) !important;
     color: var(--text) !important;
     font-family: 'DM Sans', sans-serif !important;
-    transition: border-color 0.18s !important;
-}
-div[data-baseweb="select"] > div:focus-within {
-    border-color: var(--olive-500) !important;
-    box-shadow: 0 0 0 3px rgba(97,122,61,0.15) !important;
+    min-height: 48px !important;
+    font-size: var(--fs-sm) !important;
 }
 div[data-baseweb="select"] span,
 div[data-baseweb="select"] div { color: var(--text) !important; background: transparent !important; }
 ul[data-baseweb="menu"],
 div[data-baseweb="popover"] > div {
     background: var(--surface) !important;
-    border: 1.5px solid var(--border2) !important;
+    border: 2px solid var(--border) !important;
     border-radius: var(--r-md) !important;
     box-shadow: var(--shadow-lg) !important;
-    overflow: hidden !important;
 }
 li[role="option"] {
     background: transparent !important;
     color: var(--text) !important;
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.85rem !important;
-    padding: 0.5rem 0.9rem !important;
-    transition: background 0.12s !important;
+    font-size: var(--fs-sm) !important;
+    padding: 0.65rem 1rem !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
 }
-li[role="option"]:hover { background: var(--olive-50) !important; color: var(--olive-700) !important; }
-li[aria-selected="true"] { background: var(--olive-100) !important; color: var(--olive-800) !important; font-weight: 600 !important; }
-
-/* ── TEXT INPUTS ──────────────────────────────────────────── */
-input[type="text"], input[type="password"], .stTextInput input {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border2) !important;
-    border-radius: var(--r-sm) !important;
-    color: var(--text) !important;
-    font-family: 'DM Mono', monospace !important;
-    font-size: 0.87rem !important;
-    transition: border-color 0.18s, box-shadow 0.18s !important;
+li[role="option"]:hover { background: var(--olive-50) !important; }
+li[aria-selected="true"] {
+    background: var(--olive-100) !important;
+    color: var(--olive-800) !important;
+    font-weight: 700 !important;
 }
-input:focus {
-    border-color: var(--olive-500) !important;
-    box-shadow: 0 0 0 3px rgba(97,122,61,0.15) !important;
-    outline: none !important;
-}
-input::placeholder { color: var(--text-muted) !important; }
 
 /* ── DATAFRAMES ───────────────────────────────────────────── */
 .stDataFrame {
-    font-family: 'DM Mono', monospace !important;
-    font-size: 0.8rem !important;
     border-radius: var(--r-md) !important;
     overflow: hidden !important;
     box-shadow: var(--shadow-sm) !important;
+    font-size: var(--fs-xs) !important;
 }
 [data-testid="stDataFrameContainer"] {
     background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: var(--r-md) !important;
 }
 
 /* ── EXPANDER ─────────────────────────────────────────────── */
 [data-testid="stExpander"] {
     background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: var(--r-md) !important;
     box-shadow: var(--shadow-sm) !important;
-    overflow: hidden !important;
-}
-[data-testid="stExpander"] > div:first-child {
-    border-radius: var(--r-md) !important;
 }
 [data-testid="stExpander"] summary {
     color: var(--text) !important;
     font-family: 'DM Sans', sans-serif !important;
-    font-weight: 600 !important;
-    padding: 0.75rem 1rem !important;
+    font-weight: 700 !important;
+    font-size: var(--fs-sm) !important;
+    padding: 0.85rem 1rem !important;
+    min-height: 48px !important;
 }
 
 /* ── TABS ─────────────────────────────────────────────────── */
@@ -336,208 +352,237 @@ input::placeholder { color: var(--text-muted) !important; }
     background: var(--surface2) !important;
     border-bottom: 2px solid var(--border) !important;
     gap: 0 !important;
-    padding: 0 0.5rem !important;
-    border-radius: var(--r-md) var(--r-md) 0 0 !important;
+    padding: 0 0.25rem !important;
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
     border: none !important;
     color: var(--text-dim) !important;
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.84rem !important;
-    font-weight: 500 !important;
-    padding: 0.65rem 1.1rem !important;
-    border-bottom: 2px solid transparent !important;
+    font-size: var(--fs-sm) !important;
+    font-weight: 600 !important;
+    padding: 0.7rem 1rem !important;
+    border-bottom: 3px solid transparent !important;
     margin-bottom: -2px !important;
-    transition: all 0.18s !important;
+    min-height: 46px !important;
 }
 .stTabs [data-baseweb="tab"]:hover {
     color: var(--olive-600) !important;
-    background: rgba(97,122,61,0.06) !important;
+    background: rgba(78,110,38,0.06) !important;
 }
 .stTabs [aria-selected="true"] {
     color: var(--olive-700) !important;
     border-bottom-color: var(--olive-500) !important;
-    font-weight: 700 !important;
-    background: transparent !important;
+    font-weight: 800 !important;
 }
 .stTabs [data-baseweb="tab-panel"] {
     background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-top: none !important;
     border-radius: 0 0 var(--r-md) var(--r-md) !important;
     padding: 1rem !important;
 }
 
-/* ── CHECKBOXES & RADIO ───────────────────────────────────── */
-.stCheckbox label, .stRadio label {
+/* ── RADIO & CHECKBOX ─────────────────────────────────────── */
+.stRadio label, .stCheckbox label {
     color: var(--text) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.87rem !important;
+    font-size: var(--fs-sm) !important;
+    font-weight: 500 !important;
+    min-height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
 }
 
 /* ── ALERTS ───────────────────────────────────────────────── */
-[data-testid="stInfo"]    { background: #eef6f0 !important; border-left: 4px solid var(--olive-400) !important; border-radius: var(--r-sm) !important; }
-[data-testid="stSuccess"] { background: var(--bull-bg) !important; border-left: 4px solid var(--bull) !important; border-radius: var(--r-sm) !important; }
-[data-testid="stWarning"] { background: var(--warn-bg) !important; border-left: 4px solid var(--warn) !important; border-radius: var(--r-sm) !important; }
-[data-testid="stError"]   { background: var(--bear-bg) !important; border-left: 4px solid var(--bear) !important; border-radius: var(--r-sm) !important; }
-.stCaption, .stCaption p  { color: var(--text-muted) !important; font-family: 'DM Mono', monospace !important; font-size: 0.75rem !important; }
+[data-testid="stInfo"]    {
+    background: #e8f5e4 !important;
+    border-left: 4px solid var(--olive-500) !important;
+    border-radius: var(--r-sm) !important;
+    color: var(--olive-800) !important;
+}
+[data-testid="stSuccess"] {
+    background: var(--bull-bg) !important;
+    border-left: 4px solid var(--bull) !important;
+    border-radius: var(--r-sm) !important;
+}
+[data-testid="stWarning"] {
+    background: var(--warn-bg) !important;
+    border-left: 4px solid var(--warn) !important;
+    border-radius: var(--r-sm) !important;
+}
+[data-testid="stError"] {
+    background: var(--bear-bg) !important;
+    border-left: 4px solid var(--bear) !important;
+    border-radius: var(--r-sm) !important;
+}
+/* Alert text always dark */
+[data-testid="stInfo"] p,
+[data-testid="stSuccess"] p,
+[data-testid="stWarning"] p,
+[data-testid="stError"] p {
+    color: var(--text) !important;
+    font-size: var(--fs-sm) !important;
+    font-weight: 500 !important;
+}
+.stCaption, .stCaption p {
+    color: var(--text-muted) !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: var(--fs-xs) !important;
+}
 
 /* ── DIVIDERS ─────────────────────────────────────────────── */
-hr { border-color: var(--border) !important; margin: 0.75rem 0 !important; }
+hr { border-color: var(--border) !important; margin: 0.75rem 0 !important; border-width: 1.5px !important; }
 
 /* ── COMPONENT CLASSES ────────────────────────────────────── */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
 @keyframes slideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
-@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
 
 .live-dot {
     display: inline-block;
-    width: 8px; height: 8px;
+    width: 9px; height: 9px;
     background: var(--bull);
     border-radius: 50%;
     margin-right: 6px;
     animation: pulse 1.8s ease-in-out infinite;
-    box-shadow: 0 0 6px rgba(45,122,58,0.5);
+    box-shadow: 0 0 6px rgba(26,107,46,0.5);
+    flex-shrink: 0;
 }
 .title-bar {
     display: flex; align-items: center; gap: 0.75rem;
-    margin-bottom: 1.25rem;
-    animation: slideIn 0.3s ease;
+    margin-bottom: 1rem;
+    animation: slideIn 0.25s ease;
+    flex-wrap: wrap;
 }
 .title-bar h1 {
-    margin: 0 !important; font-size: 1.4rem !important;
-    color: var(--text) !important; font-weight: 700 !important;
+    margin: 0 !important;
+    font-size: 1.4rem !important;
+    color: var(--text) !important;
+    font-weight: 800 !important;
 }
-.title-bar .ts {
-    margin-left: auto;
-    font-family: 'DM Mono', monospace;
-    font-size: 0.7rem; color: var(--text-muted);
-}
-
-/* Card components */
-.pb-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    padding: 1rem 1.25rem;
-    margin-bottom: 0.75rem;
-    box-shadow: var(--shadow-sm);
-    transition: box-shadow 0.2s, transform 0.2s;
-    animation: slideIn 0.25s ease;
-}
-.pb-card:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
-}
-.pb-card-title {
-    font-family: 'DM Mono', monospace;
-    font-size: 0.66rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 0.4rem;
-}
-.pb-card-value { font-family: 'DM Mono', monospace; font-size: 1.05rem; font-weight: 600; }
-.pb-bull { color: var(--bull) !important; }
-.pb-bear { color: var(--bear) !important; }
-.pb-neut { color: var(--warn) !important; }
 
 /* Signal badges */
 .signal-badge {
     display: inline-block;
     font-family: 'DM Mono', monospace;
-    font-size: 0.7rem; font-weight: 700;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    padding: 0.22rem 0.7rem;
-    border-radius: 4px; margin: 0.12rem 0.08rem;
-    transition: transform 0.15s;
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.7rem;
+    border-radius: 5px;
+    margin: 0.1rem;
 }
-.signal-badge:hover { transform: scale(1.04); }
-.sig-bull { background: var(--bull-bg); color: var(--bull); border: 1px solid var(--bull-bdr); }
-.sig-bear { background: var(--bear-bg); color: var(--bear); border: 1px solid var(--bear-bdr); }
-.sig-neut { background: var(--warn-bg); color: var(--warn); border: 1px solid #f0d898; }
+.sig-bull { background: var(--bull-bg); color: var(--bull); border: 1.5px solid var(--bull-bdr); }
+.sig-bear { background: var(--bear-bg); color: var(--bear); border: 1.5px solid var(--bear-bdr); }
+.sig-neut { background: var(--warn-bg); color: var(--warn); border: 1.5px solid #e0c060; }
 
-/* Watchlist pills */
-.wl-pill {
-    display: inline-block;
-    background: var(--olive-100);
-    border: 1px solid var(--olive-200);
-    color: var(--olive-800);
-    font-family: 'DM Mono', monospace;
-    font-size: 0.78rem; font-weight: 600;
-    padding: 0.2rem 0.65rem;
-    border-radius: 20px; margin: 0.2rem;
-    transition: all 0.15s;
+/* Multiselect tags */
+[data-baseweb="tag"] {
+    background: var(--olive-100) !important;
+    border-radius: 5px !important;
+    color: var(--olive-800) !important;
+    font-size: var(--fs-xs) !important;
+    font-weight: 600 !important;
 }
-.wl-pill:hover {
-    background: var(--olive-200);
-    box-shadow: var(--shadow-sm);
+
+/* Progress bar */
+.stProgress > div > div > div {
+    background: var(--olive-500) !important;
+    border-radius: 4px !important;
 }
 
 /* Scrollbars */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: var(--surface2); }
 ::-webkit-scrollbar-thumb { background: var(--olive-300); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--olive-400); }
 
-/* ── MOBILE ────────────────────────────────────────────────── */
+/* Nav button overrides */
+.nav-btn > div > button {
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 3px solid transparent !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: var(--text-dim) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: var(--fs-xs) !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 0.2rem !important;
+    min-height: 48px !important;
+    transition: color 0.15s, border-color 0.15s !important;
+    white-space: nowrap !important;
+}
+.nav-btn > div > button:hover {
+    color: var(--olive-700) !important;
+    border-bottom-color: var(--olive-400) !important;
+    background: rgba(78,110,38,0.05) !important;
+}
+.nav-btn-active > div > button {
+    color: var(--olive-700) !important;
+    border-bottom-color: var(--olive-600) !important;
+    font-weight: 800 !important;
+    background: rgba(78,110,38,0.07) !important;
+}
+
+/* ── MOBILE SPECIFIC ───────────────────────────────────────── */
 @media (max-width: 768px) {
+    :root {
+        --fs-xs:   0.85rem;
+        --fs-sm:   0.95rem;
+        --fs-base: 1rem;
+    }
     .block-container {
-        padding: 0.75rem 0.75rem 1rem !important;
+        padding: 0.5rem 0.6rem 1rem !important;
         max-width: 100vw !important;
     }
-    /* Sidebar on mobile */
-    section[data-testid="stSidebar"] {
-        min-width: 78vw !important;
-        max-width: 84vw !important;
+    /* Bigger touch targets */
+    .stButton > div > button {
+        min-height: 52px !important;
+        font-size: 1rem !important;
+        font-weight: 700 !important;
+        padding: 0.75rem 1rem !important;
     }
-    section[data-testid="stSidebar"] .stRadio label {
+    div[data-baseweb="select"] > div { min-height: 52px !important; }
+    input { font-size: 16px !important; min-height: 52px !important; }
+    /* Tabs bigger on mobile */
+    .stTabs [data-baseweb="tab"] {
+        padding: 0.75rem 0.75rem !important;
+        font-size: 0.9rem !important;
         min-height: 50px !important;
-        font-size: 0.95rem !important;
-        display: flex !important;
-        align-items: center !important;
     }
-    /* Touch targets */
-    .stButton > div > button { min-height: 44px !important; font-size: 0.85rem !important; }
-    div[data-baseweb="select"] > div { min-height: 44px !important; }
-    input { font-size: 16px !important; min-height: 44px !important; }
-    * { touch-action: manipulation; }
+    /* Metric values bigger */
+    div[data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1.6rem !important;
+    }
+    div[data-testid="metric-container"] label {
+        font-size: 0.75rem !important;
+    }
+    /* Nav buttons on mobile */
+    .nav-btn > div > button,
+    .nav-btn-active > div > button {
+        font-size: 0.72rem !important;
+        padding: 0.4rem 0.1rem !important;
+        min-height: 48px !important;
+    }
+    /* Hide sidebar on mobile */
+    section[data-testid="stSidebar"]       { display: none !important; }
+    [data-testid="collapsedControl"]        { display: none !important; }
+    button[data-testid="baseButton-header"] { display: none !important; }
+    /* Touch handling */
+    * { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     body { overscroll-behavior-y: none; }
+    /* Card padding tighter on mobile */
+    [data-testid="stExpander"] summary { padding: 0.75rem 0.75rem !important; }
 }
 
-/* ── DESKTOP REFINEMENTS ───────────────────────────────────── */
+/* ── DESKTOP ───────────────────────────────────────────────── */
 @media (min-width: 769px) {
-    .block-container { padding: 1.5rem 2rem 2rem !important; }
-}
-
-/* ── PROGRESS BAR ─────────────────────────────────────────── */
-.stProgress > div > div > div {
-    background: linear-gradient(90deg, var(--olive-500), var(--olive-300)) !important;
-    border-radius: 4px !important;
-}
-
-/* ── MULTISELECT ──────────────────────────────────────────── */
-[data-baseweb="tag"] {
-    background: var(--olive-100) !important;
-    border-radius: 4px !important;
-    color: var(--olive-800) !important;
-}
-[data-baseweb="tag"] span { color: var(--olive-700) !important; font-family: 'DM Sans', sans-serif !important; }
-
-/* Mobile nav selectbox styling */
-.mob-nav .stSelectbox > div > div {
-    background: var(--olive-800) !important;
-    border: 1px solid var(--olive-600) !important;
-    color: var(--olive-50) !important;
-    font-size: 0.9rem !important;
-    min-height: 46px !important;
-}
-.mob-nav { display: none; }
-@media (max-width: 768px) {
-    .mob-nav { display: block !important; }
-    section[data-testid="stSidebar"]  { display: none !important; }
-    [data-testid="collapsedControl"]   { display: none !important; }
+    .block-container { padding: 1.25rem 2rem 2rem !important; }
+    div[data-testid="metric-container"]:hover {
+        box-shadow: var(--shadow-md) !important;
+        transform: translateY(-1px) !important;
+        transition: all 0.2s !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1934,170 +1979,134 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
 #  PAGES
 # ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
-#  TEST USERS (5 demo accounts — replace with real DB later)
+#  USER CREDENTIALS — 5 demo accounts
 # ══════════════════════════════════════════════════════════════
 
-TEST_USERS = {
+USERS = {
     "admin@pivotvault.ai":   {"pin": "1234", "name": "Admin User",    "phone": "9876543210"},
     "trader@pivotvault.ai":  {"pin": "2345", "name": "Rahul Sharma",  "phone": "9123456780"},
     "analyst@pivotvault.ai": {"pin": "3456", "name": "Priya Patel",   "phone": "9234567891"},
     "demo@pivotvault.ai":    {"pin": "4567", "name": "Demo Account",  "phone": "9345678902"},
     "test@pivotvault.ai":    {"pin": "5678", "name": "Test User",     "phone": "9456789013"},
 }
-# Also allow login by phone number
-_PHONE_TO_EMAIL = {v["phone"]: k for k, v in TEST_USERS.items()}
-
-
-def hash_pin(pin: str) -> str:
-        return hashlib.sha256(pin.strip().encode()).hexdigest()
-
+_PHONE_MAP = {v["phone"]: k for k, v in USERS.items()}
 
 def generate_otp() -> str:
-    import secrets
     return str(secrets.randbelow(900000) + 100000)
-
 
 def verify_login(identifier: str, pin: str) -> tuple:
     idf = identifier.strip().lower()
-    # Allow login by email or phone
-    if idf in _PHONE_TO_EMAIL:
-        idf = _PHONE_TO_EMAIL[idf]
-    user = TEST_USERS.get(idf)
-    if user and user["pin"] == pin.strip():
-        return True, {"id": idf, "name": user["name"],
-                      "email": idf, "phone": user["phone"]}
+    if idf in _PHONE_MAP:
+        idf = _PHONE_MAP[idf]
+    u = USERS.get(idf)
+    if u and u["pin"] == pin.strip():
+        return True, {"id": idf, "name": u["name"], "email": idf, "phone": u["phone"]}
     return False, {}
 
-
 def get_user_by_email(email: str) -> dict:
-    user = TEST_USERS.get(email.lower().strip(), {})
-    if user:
-        return {"id": email, "name": user["name"],
-                "email": email, "phone": user["phone"]}
+    u = USERS.get(email.lower().strip())
+    if u:
+        return {"id": email, "name": u["name"], "email": email, "phone": u["phone"]}
     return {}
 
+# Stub functions — keep API compatible so rest of code doesn't break
+def create_user(name, email, phone, pin, google_id=None):
+    return False, "Sign-up disabled in demo mode. Use one of the 5 accounts below."
 
-def create_user(name, email, phone, pin, google_id=None) -> tuple:
-    # Registration disabled in demo mode
-    return False, "Registration disabled in demo mode. Use one of the test accounts below."
-
-
-def reset_pin(email: str, new_pin: str) -> tuple:
+def reset_pin(email, new_pin):
     return False, "PIN reset disabled in demo mode."
 
+def db_watchlist_get(user_id):   return []
+def db_watchlist_add(user_id, symbol): return False
+def db_watchlist_remove(user_id, symbol): return False
+def db_save_signals(user_id, signals): pass
 
-# ══════════════════════════════════════════════════════════════
-#  AUTH PAGE — Login · Sign Up · Forgot · OTP · PIN
-# ══════════════════════════════════════════════════════════════
 
 def page_login():
-    """Auth page — Login with test accounts."""
+    """Login page with 5 demo credentials."""
 
-    # ── Branding ─────────────────────────────────────────────
     st.markdown("""
-    <div style="text-align:center;padding:2.5rem 1rem 1.5rem;">
-        <div style="font-size:3rem;margin-bottom:0.5rem;">🏦</div>
-        <div style="font-family:'DM Sans',sans-serif;font-size:2.2rem;
-                    font-weight:800;color:#1a1f0e;letter-spacing:-0.03em;">
+    <div style="text-align:center;padding:2rem 1rem 1.5rem;">
+        <div style="font-size:2.8rem;margin-bottom:0.4rem;">🏦</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:2rem;font-weight:800;
+                    color:#1a1f0e;letter-spacing:-0.03em;">
             PivotVault <span style="color:#4e6130;">AI</span>
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:0.72rem;
-                    color:#8a9a78;letter-spacing:0.12em;text-transform:uppercase;margin-top:6px;">
+        <div style="font-family:'DM Mono',monospace;font-size:0.7rem;color:#8a9a78;
+                    letter-spacing:0.12em;text-transform:uppercase;margin-top:4px;">
             Indian Equity Intelligence · Pivot Boss Methodology
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Centered card ─────────────────────────────────────────
     _, col, _ = st.columns([1, 2, 1])
     with col:
 
-        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Test Accounts"])
+        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Accounts"])
 
-        # ════════════════════════════
-        #  LOGIN TAB
-        # ════════════════════════════
+        # ── Sign In ───────────────────────────────────────────────
         with tab_login:
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-            mode = st.session_state.get("auth_mode", "pin")
+            method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
+                              horizontal=True, label_visibility="collapsed",
+                              key="login_method")
 
-            # Toggle: PIN or OTP
-            auth_method = st.radio(
-                "Login method",
-                ["🔢 PIN Login", "📱 OTP Login"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="auth_method_radio",
-            )
+            if "PIN" in method:
+                identifier = st.text_input("Email or Phone",
+                    placeholder="email  or  phone number", key="login_id")
+                pin = st.text_input("4-Digit PIN", type="password",
+                    max_chars=4, placeholder="••••", key="login_pin")
 
-            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-
-            if "PIN" in auth_method:
-                # ── PIN Login ─────────────────────────────────
-                identifier = st.text_input(
-                    "Email or Phone",
-                    placeholder="demo@pivotvault.ai  or  9876543210",
-                    key="login_id",
-                )
-                pin = st.text_input(
-                    "4-Digit PIN",
-                    type="password",
-                    max_chars=4,
-                    placeholder="Enter your 4-digit PIN",
-                    key="login_pin",
-                )
-                if st.button("🔓 Sign In", use_container_width=True, key="btn_pin_login"):
+                if st.button("🔓 Sign In", use_container_width=True, key="btn_login"):
                     if not identifier or not pin:
-                        st.error("Please enter email/phone and PIN.")
+                        st.error("Enter email/phone and PIN.")
                     else:
                         ok, user = verify_login(identifier, pin)
                         if ok:
-                            st.session_state["logged_in"] = True
-                            st.session_state["username"]  = user["name"]
-                            st.session_state["user_email"]= user["email"]
-                            st.session_state["user_phone"]= user.get("phone","")
-                            st.success(f"Welcome, {user['name']}! 🎉")
+                            st.session_state["logged_in"]  = True
+                            st.session_state["username"]   = user["name"]
+                            st.session_state["user_id"]    = user["email"]
+                            st.session_state["user_email"] = user["email"]
+                            st.session_state["user_phone"] = user.get("phone","")
                             st.rerun()
                         else:
-                            st.error("❌ Invalid email/phone or PIN. Check the Test Accounts tab.")
+                            st.error("❌ Wrong email/phone or PIN. See Accounts tab.")
 
             else:
-                # ── OTP Login ─────────────────────────────────
+                # OTP flow
                 if not st.session_state.get("otp_code"):
-                    otp_id = st.text_input(
-                        "Email or Phone",
-                        placeholder="demo@pivotvault.ai  or  9876543210",
-                        key="otp_id_input",
-                    )
-                    if st.button("📨 Send OTP", use_container_width=True, key="btn_send_otp"):
+                    otp_id = st.text_input("Email or Phone",
+                        placeholder="email  or  phone number", key="otp_input")
+                    if st.button("📨 Send OTP", use_container_width=True, key="btn_otp"):
                         idf = otp_id.strip().lower()
-                        if idf in _PHONE_TO_EMAIL:
-                            idf = _PHONE_TO_EMAIL[idf]
-                        if idf in TEST_USERS:
+                        if idf in _PHONE_MAP:
+                            idf = _PHONE_MAP[idf]
+                        if idf in USERS:
                             otp = generate_otp()
                             st.session_state["otp_code"]   = otp
                             st.session_state["otp_target"] = otp_id.strip()
                             st.session_state["otp_email"]  = idf
-                            st.success(f"OTP sent! (Demo mode — OTP is: **{otp}**)")
+                            st.success(f"OTP generated: **{otp}**  (demo — shown here)")
                             st.rerun()
                         else:
-                            st.error("Email/Phone not found in test accounts.")
+                            st.error("Email/phone not found. See Accounts tab.")
                 else:
-                    st.info(f"OTP sent to: **{st.session_state.get('otp_target','')}**")
-                    entered = st.text_input("Enter 6-digit OTP", max_chars=6,
-                                            placeholder="______", key="otp_input")
+                    st.info(f"OTP sent to: {st.session_state.get('otp_target','')}")
+                    entered = st.text_input("Enter 6-digit OTP",
+                        max_chars=6, placeholder="______", key="otp_entered")
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button("✅ Verify", use_container_width=True, key="btn_verify_otp"):
-                            if entered.strip() == st.session_state["otp_code"]:
+                        if st.button("✅ Verify", use_container_width=True, key="btn_verify"):
+                            if entered.strip() == st.session_state.get("otp_code",""):
                                 em   = st.session_state["otp_email"]
                                 user = get_user_by_email(em)
-                                st.session_state["logged_in"] = True
-                                st.session_state["username"]  = user["name"]
-                                st.session_state["user_email"]= user["email"]
-                                st.session_state["user_phone"]= user.get("phone","")
-                                st.session_state["otp_code"]  = ""
+                                st.session_state.update({
+                                    "logged_in": True, "username": user["name"],
+                                    "user_id": em, "user_email": em,
+                                    "user_phone": user.get("phone",""),
+                                    "otp_code": "",
+                                })
                                 st.rerun()
                             else:
                                 st.error("Wrong OTP.")
@@ -2106,40 +2115,39 @@ def page_login():
                             st.session_state["otp_code"] = ""
                             st.rerun()
 
-        # ════════════════════════════
-        #  TEST ACCOUNTS TAB
-        # ════════════════════════════
+        # ── Accounts tab ──────────────────────────────────────────
         with tab_accounts:
-            st.markdown("""
-            <div style="font-family:'DM Mono',monospace;font-size:0.75rem;
-                        color:#5a6a48;margin:0.5rem 0 1rem;">
-            Use any of these accounts to log in:
-            </div>
-            """, unsafe_allow_html=True)
-
-            for email, u in TEST_USERS.items():
+            st.markdown(
+                "<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+                "color:#5a6a48;margin:0.5rem 0 1rem;'>"
+                "Use any of these accounts to sign in:</div>",
+                unsafe_allow_html=True,
+            )
+            for email, u in USERS.items():
+                if st.button(
+                    f"👤 {u['name']}",
+                    key=f"quick_{email}",
+                    use_container_width=True,
+                ):
+                    st.session_state.update({
+                        "logged_in": True,
+                        "username":  u["name"],
+                        "user_id":   email,
+                        "user_email": email,
+                        "user_phone": u["phone"],
+                    })
+                    st.rerun()
                 st.markdown(
-                    f"<div style='background:#f7f9f2;border:1px solid #dae0cb;"
-                    f"border-left:4px solid #4e6130;border-radius:8px;"
-                    f"padding:0.65rem 1rem;margin-bottom:0.5rem;"
-                    f"font-family:DM Mono,monospace;font-size:0.78rem;'>"
-                    f"<b style='color:#1a1f0e;font-size:0.85rem;'>{u['name']}</b><br>"
-                    f"<span style='color:#5a6a48;'>📧 {email}</span><br>"
-                    f"<span style='color:#5a6a48;'>📱 {u['phone']}</span>"
-                    f"&nbsp;&nbsp;"
+                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                    f"color:#5a6a48;margin:-0.4rem 0 0.5rem;padding:0.5rem 0.75rem;"
+                    f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:6px;'>"
+                    f"📧 {email}  &nbsp;&nbsp;"
                     f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
-                    f"padding:2px 8px;font-weight:700;'>PIN: {u['pin']}</span>"
+                    f"padding:1px 7px;font-weight:700;'>PIN: {u['pin']}</span>"
+                    f"&nbsp;&nbsp; 📱 {u['phone']}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
-
-            st.markdown("""
-            <div style="font-family:'DM Mono',monospace;font-size:0.7rem;
-                        color:#8a9a78;margin-top:0.75rem;padding:0.6rem;
-                        background:#fff8e8;border-radius:6px;border:1px solid #f0d898;">
-            💡 Copy any email + PIN above → paste in Sign In tab → click Sign In
-            </div>
-            """, unsafe_allow_html=True)
 
 
 def page_market_snapshot(nse500: pd.DataFrame):
