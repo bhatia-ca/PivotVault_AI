@@ -5835,49 +5835,69 @@ def page_broker_settings():
                     st.warning("Select your redirect URI above.")
                 else:
                     try:
-                        import base64
-                        credentials = base64.b64encode(f"{uak}:{uaks}".encode()).decode()
+                        # Upstox v2 token endpoint uses client_id + client_secret in body
+                        # NOT Basic Auth — that was the bug
                         payload = {
-                            "code":         auth_code.strip(),
-                            "grant_type":   "authorization_code",
-                            "redirect_uri": redir_uri,
+                            "code":          auth_code.strip(),
+                            "client_id":     uak.strip(),
+                            "client_secret": uaks.strip(),
+                            "redirect_uri":  redir_uri.strip(),
+                            "grant_type":    "authorization_code",
                         }
-                        # Show exactly what we're sending for debugging
-                        with st.expander("🔍 Debug — request payload"):
-                            st.code(f"client_id: {uak[:8]}...\nredirect_uri: {redir_uri}\ncode: {auth_code.strip()[:10]}...")
+
+                        # Show debug info BEFORE the request
+                        st.info(
+                            f"Sending request with:\n"
+                            f"• client_id: `{uak.strip()}`\n"
+                            f"• redirect_uri: `{redir_uri.strip()}`\n"
+                            f"• code length: {len(auth_code.strip())} chars"
+                        )
 
                         r = requests.post(
                             "https://api.upstox.com/v2/login/authorization/token",
                             headers={
-                                "Authorization": f"Basic {credentials}",
-                                "Content-Type":  "application/x-www-form-urlencoded",
-                                "Accept":        "application/json",
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                "Accept":       "application/json",
                             },
                             data=payload,
                             timeout=10,
                         )
+
                         if r.status_code == 200:
-                            token = r.json().get("access_token", "")
+                            resp = r.json()
+                            token = resp.get("access_token", "")
                             if token:
                                 st.session_state.update({
                                     "upstox_access_token": token,
-                                    "upstox_api_key":      uak,
-                                    "upstox_api_secret":   uaks,
+                                    "upstox_api_key":      uak.strip(),
+                                    "upstox_api_secret":   uaks.strip(),
                                     "broker":              "upstox",
                                     "broker_connected":    True,
                                 })
                                 st.cache_data.clear()
-                                st.success("✅ Token generated! Live data feed is now ACTIVE.")
+                                st.success("✅ Token generated! Upstox live data feed is now ACTIVE.")
                                 st.rerun()
                             else:
-                                st.error(f"No token in response: {r.json()}")
+                                st.error(f"Token missing in response: {resp}")
                         else:
-                            err = r.json()
-                            st.error(
-                                f"❌ Error {r.status_code}: {err.get('errors',[{}])[0].get('message','Unknown error')}"
-                                f"\n\n**Fix:** Make sure the redirect URI **`{redir_uri}`** is registered "
-                                f"exactly in your Upstox app settings."
-                            )
+                            try:
+                                err  = r.json()
+                                emsg = err.get("errors",[{}])[0].get("message","Unknown")
+                                ecode= err.get("errors",[{}])[0].get("errorCode","")
+                            except Exception:
+                                emsg = r.text[:300]
+                                ecode = ""
+                            st.error(f"❌ {ecode}: {emsg}")
+                            if "UDAPI100068" in ecode:
+                                st.warning(
+                                    "**UDAPI100068 fix checklist:**\n"
+                                    "1. Copy API Key from Upstox developer portal — paste it fresh (no spaces)\n"
+                                    "2. The redirect URI here must match **character-for-character** what's in Upstox app\n"
+                                    "3. The auth code expires in ~60 seconds — generate a new one\n"
+                                    "4. Each code can only be used once — click Authorize again for a fresh code"
+                                )
+                            with st.expander("Full error response"):
+                                st.json(r.json())
                     except Exception as e:
                         st.error(f"Request failed: {e}")
 
