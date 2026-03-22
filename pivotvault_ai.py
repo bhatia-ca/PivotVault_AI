@@ -39,6 +39,133 @@ from email.mime.text import MIMEText
 import streamlit.components.v1 as _stc
 
 # ══════════════════════════════════════════════════════════════
+#  STRATEGY NAMING ENGINE
+#  Generates a unique, readable strategy name from signal params
+# ══════════════════════════════════════════════════════════════
+
+def _build_strategy_name(s: dict) -> str:
+    """
+    Build a unique strategy name from signal parameters.
+    Format: [SIDE]-[CPR_ZONE]-[CANDLE]-[RSI_ZONE]-[HMA]-[VOL]-[TF]
+    Example: BUY · CPR Breakout · Hammer · RSI Momentum · HMA Rising · Vol Surge · 15M
+    """
+    parts = []
+
+    side    = s.get("side", "BUY")
+    candle  = s.get("candle", "—")
+    rsi     = float(s.get("rsi", 50) or 50)
+    hma     = str(s.get("hma", "—"))
+    vol     = str(s.get("vol", "—"))
+    cpr_w   = float(s.get("cpr_w", 1.0) or 1.0)
+    strength= int(s.get("strength", 60) or 60)
+    rr      = float(s.get("rr1", 2.0) or 2.0)
+    ltp     = float(s.get("ltp", 0) or 0)
+    entry   = float(s.get("entry", 0) or 0)
+    tf      = s.get("tf", "")
+
+    # ── CPR Zone ─────────────────────────────────────────────────────────
+    if cpr_w < 0.3:
+        cpr_zone = "Narrow CPR"
+    elif cpr_w < 0.8:
+        cpr_zone = "CPR Breakout"
+    elif cpr_w < 1.5:
+        cpr_zone = "CPR Expansion"
+    else:
+        cpr_zone = "Wide CPR"
+
+    # ── RSI Zone ─────────────────────────────────────────────────────────
+    if side == "BUY":
+        if rsi >= 60:    rsi_zone = "RSI Momentum"
+        elif rsi >= 50:  rsi_zone = "RSI Bullish"
+        elif rsi >= 40:  rsi_zone = "RSI Recovery"
+        else:            rsi_zone = "RSI Oversold"
+    else:
+        if rsi <= 40:    rsi_zone = "RSI Momentum"
+        elif rsi <= 50:  rsi_zone = "RSI Bearish"
+        elif rsi <= 60:  rsi_zone = "RSI Rejection"
+        else:            rsi_zone = "RSI Overbought"
+
+    # ── HMA signal ───────────────────────────────────────────────────────
+    hma_tag = ""
+    if "Rising" in hma or "↑" in hma or "above" in hma.lower():
+        hma_tag = "HMA↑"
+    elif "Falling" in hma or "↓" in hma or "below" in hma.lower():
+        hma_tag = "HMA↓"
+
+    # ── Volume ───────────────────────────────────────────────────────────
+    vol_tag = ""
+    if "Surge" in vol or "High" in vol or "surge" in vol.lower():
+        vol_tag = "VolSurge"
+    elif "Above" in vol or "above" in vol.lower():
+        vol_tag = "VolUp"
+
+    # ── Candle tag ────────────────────────────────────────────────────────
+    candle_short = {
+        "Hammer":           "Hammer",
+        "Inverted Hammer":  "Inv.Hammer",
+        "Bullish Engulfing":"Bull.Engulf",
+        "Bearish Engulfing":"Bear.Engulf",
+        "Doji":             "Doji",
+        "Morning Star":     "MorningStar",
+        "Evening Star":     "EveningStar",
+        "Shooting Star":    "ShootStar",
+        "Hanging Man":      "HangingMan",
+        "Piercing Line":    "PiercingLine",
+        "Dark Cloud Cover": "DarkCloud",
+        "Bullish Harami":   "Bull.Harami",
+        "Bearish Harami":   "Bear.Harami",
+    }.get(candle, candle[:10] if candle != "—" else "")
+
+    # ── Timeframe short ───────────────────────────────────────────────────
+    tf_short = {"⚡ 15 Min": "15M", "🕐 1 Hour": "1H"}.get(tf, tf[:3])
+
+    # ── R:R tier ─────────────────────────────────────────────────────────
+    if   rr >= 3.0: rr_tag = "RR3+"
+    elif rr >= 2.0: rr_tag = "RR2+"
+    else:           rr_tag = "RR1+"
+
+    # ── Strength tier ────────────────────────────────────────────────────
+    if   strength >= 85: grade = "A+"
+    elif strength >= 75: grade = "A"
+    elif strength >= 65: grade = "B+"
+    elif strength >= 55: grade = "B"
+    else:                grade = "C"
+
+    # ── Assemble strategy ID ─────────────────────────────────────────────
+    core = f"{side} · {cpr_zone} · {rsi_zone}"
+    if candle_short: core += f" · {candle_short}"
+    extras = [x for x in [hma_tag, vol_tag] if x]
+    if extras:       core += " · " + " + ".join(extras)
+    core += f" [{tf_short}] [{rr_tag}] [Grade:{grade}]"
+
+    return core
+
+
+def _strategy_short_id(s: dict) -> str:
+    """Short 2-3 word strategy ID for use in button labels and headers."""
+    side   = s.get("side","BUY")
+    cpr_w  = float(s.get("cpr_w", 1.0) or 1.0)
+    candle = s.get("candle","")
+    rsi    = float(s.get("rsi", 50) or 50)
+
+    if cpr_w < 0.5:   cpr_part = "NarrowCPR"
+    elif cpr_w < 1.0: cpr_part = "CPRBreak"
+    else:             cpr_part = "WideCPR"
+
+    candle_map = {
+        "Hammer":"HMR","Inverted Hammer":"IHMR","Bullish Engulfing":"BENG",
+        "Bearish Engulfing":"BENG","Doji":"DOJI","Morning Star":"MSTR",
+        "Evening Star":"ESTR","Shooting Star":"SSTR","Dark Cloud Cover":"DCC",
+    }
+    c_tag = candle_map.get(candle, "")
+
+    rsi_tag = "MOM" if (side=="BUY" and rsi>=60) or (side=="SELL" and rsi<=40) else "NEUT"
+
+    parts = [p for p in [cpr_part, c_tag, rsi_tag] if p]
+    return f"{side[:1]}-{'-'.join(parts)}"
+
+
+# ══════════════════════════════════════════════════════════════
 #  UPSTOX FREE DATA FEED
 #  Free tier: Historical OHLCV + Market quotes (no WebSocket)
 #  Docs: https://upstox.com/developer/api-documentation/
@@ -3768,6 +3895,91 @@ def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
 
 
 @st.cache_data(ttl=900)
+def _build_strategy_name(row: dict) -> str:
+    """
+    Build a unique, human-readable strategy name from signal parameters.
+    Format: [Timeframe] [CPR Type] [Candle] [Direction] — [Key Indicators]
+    Examples:
+      "15M · Narrow CPR · Hammer · BUY — RSI Oversold + HMA↑"
+      "1H · Virgin CPR · Bearish Engulfing · SELL — Osc Cross + Vol Surge"
+      "15M · Wide CPR · No Pattern · BUY — Pivot R1 Break + HMA↑"
+    """
+    tf        = row.get("tf_label", "")
+    cpr_type  = row.get("CPR Type",  "CPR")
+    candle    = row.get("Candle",    "—")
+    pattern   = row.get("Pattern",  "Bullish")
+    rsi       = float(row.get("RSI", 50))
+    hma       = str(row.get("HMA",  "—"))
+    vol       = str(row.get("Vol Surge", "—"))
+    osc       = str(row.get("Osc Cross", "—"))
+    cpr_w     = float(row.get("CPR Width%", 0))
+    strength  = int(row.get("Strength%", 0))
+    virgin    = row.get("Virgin", False)
+
+    side = "BUY" if pattern == "Bullish" else "SELL"
+
+    # ── Part 1: Timeframe prefix ──────────────────────────────────────────
+    tf_short = tf.replace("⚡ ", "").replace("🕐 ", "").replace(" Min","M").replace(" Hour","H")
+
+    # ── Part 2: CPR descriptor ────────────────────────────────────────────
+    if virgin:
+        cpr_desc = "Virgin CPR"
+    elif cpr_w < 0.25:
+        cpr_desc = "Narrow CPR"
+    elif cpr_w < 0.5:
+        cpr_desc = "Moderate CPR"
+    else:
+        cpr_desc = "Wide CPR"
+
+    # ── Part 3: Candle pattern (short) ───────────────────────────────────
+    candle_short = candle if candle not in ("—", "", None) else "No Pattern"
+
+    # ── Part 4: Indicator confluence ─────────────────────────────────────
+    confluences = []
+    if pattern == "Bullish":
+        if rsi < 40:             confluences.append("RSI Oversold")
+        elif 50 < rsi < 70:      confluences.append("RSI Momentum")
+    else:
+        if rsi > 60:             confluences.append("RSI Overbought")
+        elif 30 < rsi < 50:      confluences.append("RSI Momentum")
+
+    if "▲" in hma and pattern == "Bullish":   confluences.append("HMA↑")
+    elif "▼" in hma and pattern == "Bearish": confluences.append("HMA↓")
+
+    if "🔼" in osc and pattern == "Bullish":  confluences.append("Osc Cross↑")
+    elif "🔽" in osc and pattern == "Bearish":confluences.append("Osc Cross↓")
+
+    if "✅" in vol: confluences.append("Vol Surge")
+
+    # Strength tier
+    if strength >= 85:   tier = "A+"
+    elif strength >= 75: tier = "A"
+    elif strength >= 65: tier = "B"
+    else:                tier = "C"
+
+    conf_str = " + ".join(confluences[:3]) if confluences else "CPR Signal"
+
+    name = f"{tf_short} · {cpr_desc} · {candle_short} · {side} [{tier}] — {conf_str}"
+    return name
+
+
+def _get_strategy_description(strategy_name: str) -> str:
+    """Return a one-line explanation of what this strategy tests."""
+    parts = strategy_name.split(" · ")
+    if len(parts) < 3: return "CPR Pivot Boss signal backtest."
+
+    descs = {
+        "Narrow CPR":   "Narrow CPR = trending day setup. High probability breakout.",
+        "Virgin CPR":   "Virgin CPR = untested level. Strong magnetic reaction expected.",
+        "Moderate CPR": "Moderate CPR = balanced day. Breakout or pullback both valid.",
+        "Wide CPR":     "Wide CPR = sideways/consolidation. Lower probability setup.",
+    }
+    for k, v in descs.items():
+        if k in strategy_name:
+            return v
+    return "CPR Pivot Boss signal backtest."
+
+
 def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
     """
@@ -3927,11 +4139,26 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
             cpr_type = "Narrow" if width < 0.25 else ("Moderate" if width < 0.5 else "Wide")
 
+            # Build unique strategy name for this signal
+            strat_name = _build_strategy_name({
+                "tf_label":   interval,
+                "CPR Type":   cpr_type,
+                "Candle":     candle_name,
+                "Pattern":    pattern_main,
+                "RSI":        round(rsi, 1),
+                "HMA":        "▲" if hma_up else "▼",
+                "Vol Surge":  "✅" if vol_surge else "—",
+                "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
+                "CPR Width%": round(width, 3),
+                "Strength%":  min(strength, 100),
+            })
+
             rows.append({
                 "Symbol":     sym,
                 "LTP":        round(ltp, 2),
                 "CPR Width%": round(width, 3),
                 "CPR Type":   cpr_type,
+                "Strategy":   strat_name,
                 "TC":         round(TC, 2),
                 "BC":         round(BC, 2),
                 "Pivot P":    round(P, 2),
@@ -5324,7 +5551,7 @@ def page_trade_signals(nse500: pd.DataFrame):
         if not df.empty:
             scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
             for _, r in df.iterrows():
-                all_signals.append({
+                _sig = {
                     "tf":       label,
                     "tf_color": color,
                     "symbol":   r["Symbol"],
@@ -5344,7 +5571,10 @@ def page_trade_signals(nse500: pd.DataFrame):
                     "vol":      r.get("Vol Surge", "—"),
                     "cpr_w":    r.get("CPR Width%", 0),
                     "atr":      r.get("ATR", 0),
-                })
+                }
+                _sig["strategy_name"] = _build_strategy_name(_sig)
+                _sig["strategy_id"]   = _strategy_short_id(_sig)
+                all_signals.append(_sig)
 
     # ── Status bar ────────────────────────────────────────────────────────
     if not all_signals:
@@ -5450,9 +5680,16 @@ def page_trade_signals(nse500: pd.DataFrame):
             padding:1rem 1.1rem;border-top:4px solid {ac};
             box-shadow:0 2px 10px rgba(50,70,20,0.07);
             animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
+  <!-- Strategy name badge -->
+  <div style="font-family:DM Mono,monospace;font-size:0.68rem;font-weight:700;
+              color:{ac};background:{bg};border:1px solid {bdr};
+              border-radius:6px;padding:3px 8px;margin-bottom:7px;
+              letter-spacing:0.03em;line-height:1.4;">
+    🎯 {s.get('strategy_name','—')}
+  </div>
   <!-- Header row -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-    <div style="display:flex;align-items:center;gap:8px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
       <span style="background:{bg};color:{ac};border:1px solid {bdr};
                    border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
@@ -5466,6 +5703,15 @@ def page_trade_signals(nse500: pd.DataFrame):
     <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
       LTP ₹{s['ltp']:,.2f}
     </span>
+  </div>
+  <!-- Strategy name banner -->
+  <div style="background:{'rgba(26,107,46,0.07)' if bull else 'rgba(158,32,24,0.07)'};
+              border-left:3px solid {ac};border-radius:0 6px 6px 0;
+              padding:4px 10px;margin-bottom:8px;
+              font-family:DM Mono,monospace;font-size:0.68rem;
+              color:{ac};font-weight:700;letter-spacing:0.02em;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+    🎯 {s.get('strategy_name','—')}
   </div>
   <!-- Level pills -->
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
@@ -5879,7 +6125,7 @@ def page_trade_signals(nse500: pd.DataFrame):
         if not df.empty:
             scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
             for _, r in df.iterrows():
-                all_signals.append({
+                _sig = {
                     "tf":       label,
                     "tf_color": color,
                     "symbol":   r["Symbol"],
@@ -5899,7 +6145,10 @@ def page_trade_signals(nse500: pd.DataFrame):
                     "vol":      r.get("Vol Surge", "—"),
                     "cpr_w":    r.get("CPR Width%", 0),
                     "atr":      r.get("ATR", 0),
-                })
+                }
+                _sig["strategy_name"] = _build_strategy_name(_sig)
+                _sig["strategy_id"]   = _strategy_short_id(_sig)
+                all_signals.append(_sig)
 
     # ── Status bar ────────────────────────────────────────────────────────
     if not all_signals:
@@ -6005,9 +6254,16 @@ def page_trade_signals(nse500: pd.DataFrame):
             padding:1rem 1.1rem;border-top:4px solid {ac};
             box-shadow:0 2px 10px rgba(50,70,20,0.07);
             animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
+  <!-- Strategy name badge -->
+  <div style="font-family:DM Mono,monospace;font-size:0.68rem;font-weight:700;
+              color:{ac};background:{bg};border:1px solid {bdr};
+              border-radius:6px;padding:3px 8px;margin-bottom:7px;
+              letter-spacing:0.03em;line-height:1.4;">
+    🎯 {s.get('strategy_name','—')}
+  </div>
   <!-- Header row -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-    <div style="display:flex;align-items:center;gap:8px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
       <span style="background:{bg};color:{ac};border:1px solid {bdr};
                    border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
@@ -6021,6 +6277,15 @@ def page_trade_signals(nse500: pd.DataFrame):
     <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
       LTP ₹{s['ltp']:,.2f}
     </span>
+  </div>
+  <!-- Strategy name banner -->
+  <div style="background:{'rgba(26,107,46,0.07)' if bull else 'rgba(158,32,24,0.07)'};
+              border-left:3px solid {ac};border-radius:0 6px 6px 0;
+              padding:4px 10px;margin-bottom:8px;
+              font-family:DM Mono,monospace;font-size:0.68rem;
+              color:{ac};font-weight:700;letter-spacing:0.02em;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+    🎯 {s.get('strategy_name','—')}
   </div>
   <!-- Level pills -->
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
@@ -6276,19 +6541,20 @@ def _trade_buttons(s: dict):
                 st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
 
     # ── Backtest this signal ─────────────────────────────────────────────
+    strat_id   = s.get("strategy_id",   _strategy_short_id(s))
+    strat_name = s.get("strategy_name", _build_strategy_name(s))
     if st.button(
-        f"🔬 Backtest {sym} on {s['tf']}",
+        f"🔬 Backtest — {strat_id}",
         key=f"bt_{sym}_{s['side']}_{s['tf']}",
         use_container_width=True,
+        help=strat_name,
     ):
-        # Map signal timeframe to backtest params
         tf_map = {
             "⚡ 15 Min": ("15 Min", "3 Months"),
             "🕐 1 Hour": ("1 Hour", "6 Months"),
         }
         bt_tf, bt_lb = tf_map.get(s.get("tf","⚡ 15 Min"), ("15 Min","3 Months"))
 
-        # Pre-fill backtest params from signal
         rr_val = s.get("rr1", 2.0)
         if   rr_val >= 3.5: rr_str = "1:4"
         elif rr_val >= 2.5: rr_str = "1:3"
@@ -6296,18 +6562,23 @@ def _trade_buttons(s: dict):
         else:               rr_str = "1:1"
 
         direction = "Bullish Only" if s["side"] == "BUY" else "Bearish Only"
-        strength  = max(0, s.get("strength", 60) - 10)  # slightly looser for more samples
+        strength  = max(0, s.get("strength", 60) - 10)
 
         st.session_state.update({
-            "bt_prefill_sym":  sym,
-            "bt_prefill_tf":   bt_tf,
-            "bt_prefill_lb":   bt_lb,
-            "bt_prefill_rr":   rr_str,
-            "bt_prefill_dir":  direction,
-            "bt_prefill_str":  strength,
-            "bt_results":      [],   # clear old results
-            "bt_meta":         {},
-            "current_page":    "Backtest",
+            "bt_prefill_sym":      sym,
+            "bt_prefill_tf":       bt_tf,
+            "bt_prefill_lb":       bt_lb,
+            "bt_prefill_rr":       rr_str,
+            "bt_prefill_dir":      direction,
+            "bt_prefill_str":      strength,
+            "bt_prefill_strategy": strat_name,
+            "bt_prefill_candle":   s.get("candle","—"),
+            "bt_prefill_cpr_w":    s.get("cpr_w", 1.0),
+            "bt_prefill_rsi_ref":  s.get("rsi",   50),
+            "bt_results":          [],
+            "bt_meta":             {},
+            "bt_launched_from":    None,
+            "current_page":        "Backtest",
         })
         st.rerun()
 
@@ -6752,29 +7023,49 @@ def page_backtest():
     )
 
     # ── Read prefilled values from signal card ───────────────────────────
-    pf_sym = st.session_state.pop("bt_prefill_sym", None)
-    pf_tf  = st.session_state.pop("bt_prefill_tf",  None)
-    pf_lb  = st.session_state.pop("bt_prefill_lb",  None)
-    pf_rr  = st.session_state.pop("bt_prefill_rr",  None)
-    pf_dir = st.session_state.pop("bt_prefill_dir", None)
-    pf_str = st.session_state.pop("bt_prefill_str", None)
+    pf_sym      = st.session_state.pop("bt_prefill_sym",      None)
+    pf_tf       = st.session_state.pop("bt_prefill_tf",       None)
+    pf_lb       = st.session_state.pop("bt_prefill_lb",       None)
+    pf_rr       = st.session_state.pop("bt_prefill_rr",       None)
+    pf_dir      = st.session_state.pop("bt_prefill_dir",      None)
+    pf_str      = st.session_state.pop("bt_prefill_str",      None)
+    pf_strategy = st.session_state.pop("bt_prefill_strategy", None)
+    pf_candle   = st.session_state.pop("bt_prefill_candle",   None)
+    pf_cpr_w    = st.session_state.pop("bt_prefill_cpr_w",    None)
+    pf_rsi_ref  = st.session_state.pop("bt_prefill_rsi_ref",  None)
 
-    # Show signal source banner if launched from signal card
+    # Store for display
     if pf_sym:
         st.session_state["bt_launched_from"] = {
-            "sym": pf_sym, "tf": pf_tf, "dir": pf_dir, "rr": pf_rr
+            "sym":      pf_sym,
+            "tf":       pf_tf,
+            "dir":      pf_dir,
+            "rr":       pf_rr,
+            "strategy": pf_strategy,
+            "candle":   pf_candle,
+            "cpr_w":    pf_cpr_w,
+            "rsi_ref":  pf_rsi_ref,
         }
 
     launched = st.session_state.get("bt_launched_from")
-    if launched:
+    if launched and launched.get("strategy"):
         st.markdown(
             f"<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
-            f"border-radius:9px;padding:0.6rem 1rem;margin-bottom:0.75rem;"
-            f"font-family:DM Mono,monospace;font-size:0.8rem;'>"
-            f"🔬 Backtesting signal: <b>{launched['sym']}</b> · "
-            f"{launched['tf']} · {launched['dir']} · R:R {launched['rr']}"
-            f"<span style='float:right;cursor:pointer;color:#9e2018;' "
-            f"onclick=''>✕ <small>clear</small></span></div>",
+            f"border-radius:10px;padding:0.75rem 1.1rem;margin-bottom:1rem;"
+            f"font-family:DM Mono,monospace;'>"
+            f"<div style='font-size:0.7rem;color:#1a6b2e;font-weight:700;"
+            f"text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;'>"
+            f"🎯 Strategy Being Backtested</div>"
+            f"<div style='font-size:0.88rem;font-weight:800;color:#0e1308;"
+            f"margin-bottom:6px;'>{launched['strategy']}</div>"
+            f"<div style='display:flex;gap:12px;flex-wrap:wrap;font-size:0.72rem;color:#2e3d1a;'>"
+            f"<span>📍 Symbol: <b>{launched['sym']}</b></span>"
+            f"<span>⏱ TF: <b>{launched['tf']}</b></span>"
+            f"<span>📐 R:R: <b>{launched['rr']}</b></span>"
+            f"<span>🕯 Candle: <b>{launched.get('candle','—')}</b></span>"
+            f"<span>📊 CPR Width: <b>{launched.get('cpr_w','—')}%</b></span>"
+            f"<span>📈 RSI Ref: <b>{launched.get('rsi_ref','—')}</b></span>"
+            f"</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -6880,10 +7171,17 @@ def page_backtest():
                 df, symbol, interval, rr_val, signal_type, min_strength, sl_method
             )
 
+        launched_now = st.session_state.get("bt_launched_from", {})
         st.session_state["bt_results"] = results
         st.session_state["bt_meta"]    = {
-            "symbol": symbol, "tf": tf, "lookback": lookback,
-            "rr": rr_target, "bars": len(df)
+            "symbol":   symbol,
+            "tf":       tf,
+            "lookback": lookback,
+            "rr":       rr_target,
+            "bars":     len(df),
+            "strategy": launched_now.get("strategy","Custom Backtest"),
+            "candle":   launched_now.get("candle","—"),
+            "direction":signal_type,
         }
 
     # ── Display results ───────────────────────────────────────────────────
@@ -7056,14 +7354,31 @@ def _render_backtest_results(results: list, meta: dict):
     max_dd   = _calc_max_drawdown(results)
 
     # ── Summary metrics ───────────────────────────────────────────────────
-    sym  = meta.get("symbol",""); tf = meta.get("tf","")
-    bars = meta.get("bars", 0)
+    sym      = meta.get("symbol","")
+    tf       = meta.get("tf","")
+    bars     = meta.get("bars", 0)
+    strategy = meta.get("strategy","—")
+    candle   = meta.get("candle","—")
+
+    # Strategy name header
     st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
-        f"color:#2e3d1a;margin-bottom:0.5rem;'>"
-        f"<b>{sym}</b> · {tf} · {meta.get('lookback','')} · "
-        f"{bars} candles · R:R {meta.get('rr','')} · "
-        f"<b>{total}</b> signals</div>",
+        f"<div style='background:#f0f4e8;border:1.5px solid #b8c89a;"
+        f"border-radius:10px;padding:0.75rem 1.1rem;margin-bottom:0.75rem;"
+        f"font-family:DM Mono,monospace;'>"
+        f"<div style='font-size:0.68rem;color:#4a5e32;font-weight:700;"
+        f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;'>"
+        f"🔬 Backtest Results — Strategy</div>"
+        f"<div style='font-size:0.9rem;font-weight:800;color:#0e1308;margin-bottom:5px;'>"
+        f"{strategy}</div>"
+        f"<div style='font-size:0.72rem;color:#2e3d1a;display:flex;gap:14px;flex-wrap:wrap;'>"
+        f"<span>📍 <b>{sym}</b></span>"
+        f"<span>⏱ <b>{tf}</b></span>"
+        f"<span>📅 <b>{meta.get('lookback','')}</b></span>"
+        f"<span>📊 <b>{bars}</b> candles</span>"
+        f"<span>📐 R:R <b>{meta.get('rr','')}</b></span>"
+        f"<span>🕯 <b>{candle}</b></span>"
+        f"<span>🔢 <b>{total}</b> signals found</span>"
+        f"</div></div>",
         unsafe_allow_html=True,
     )
 
