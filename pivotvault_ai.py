@@ -440,530 +440,116 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-/* ═══════════════════════════════════════════════════════════
-   PIVOTVAULT AI — OLIVE THEME · HIGH CONTRAST MOBILE-FIRST
-   ═══════════════════════════════════════════════════════════ */
+/* ── GLOBAL ── */
+html,body{font-family:'DM Sans',sans-serif !important;background:#f0f4e8 !important;color:#0e1308 !important;}
+.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:#f0f4e8 !important;}
+[data-testid="stVerticalBlock"]{background:transparent !important;}
+.block-container{background:#f0f4e8 !important;padding:0.3rem 0.75rem 2rem !important;max-width:1440px !important;}
+#MainMenu,footer{visibility:hidden !important;}
+header[data-testid="stHeader"]{background:transparent !important;border-bottom:none !important;}
+section[data-testid="stSidebar"]{display:none !important;}
+[data-testid="collapsedControl"]{display:none !important;}
+button[data-testid="baseButton-header"]{display:none !important;}
 
-:root {
-    /* Olive palette — darker for better contrast */
-    --olive-900: #141808;
-    --olive-800: #1e2c0d;
-    --olive-700: #2e4214;
-    --olive-600: #3d5a1c;
-    --olive-500: #4e6e26;
-    --olive-400: #638534;
-    --olive-300: #7da048;
-    --olive-200: #a8c070;
-    --olive-100: #d4e4a8;
-    --olive-50:  #eef5dc;
-    /* Surfaces */
-    --bg:        #f0f4e8;
-    --surface:   #ffffff;
-    --surface2:  #f5f8ed;
-    --border:    #b8c89a;
-    --border2:   #9ab07a;
-    /* Text — high contrast */
-    --text:      #0e1308;
-    --text-dim:  #2e3d1a;
-    --text-muted:#4a5e32;
-    /* Accents */
-    --bull:      #1a6b2e;
-    --bull-bg:   #e4f5e8;
-    --bull-bdr:  #8dcc9a;
-    --bear:      #9e2018;
-    --bear-bg:   #fbe8e6;
-    --bear-bdr:  #dc9090;
-    --warn:      #7a5800;
-    --warn-bg:   #fdf3d4;
-    /* Shadows */
-    --shadow-sm: 0 1px 4px rgba(20,30,8,0.12);
-    --shadow-md: 0 4px 14px rgba(20,30,8,0.14);
-    --shadow-lg: 0 8px 28px rgba(20,30,8,0.16);
-    /* Radius */
-    --r-sm: 7px;
-    --r-md: 11px;
-    --r-lg: 16px;
-    /* Font sizes — larger for mobile readability */
-    --fs-xs:   0.8rem;
-    --fs-sm:   0.875rem;
-    --fs-base: 1rem;
-    --fs-md:   1.0625rem;
-    --fs-lg:   1.2rem;
-}
+/* ── TYPOGRAPHY ── */
+h1,h2,h3,h4{font-family:'DM Sans',sans-serif !important;color:#0e1308 !important;font-weight:700 !important;}
+p,span,label,li,td,th,div{font-family:'DM Sans',sans-serif !important;}
+code,pre,[class*="mono"]{font-family:'DM Mono',monospace !important;}
 
-/* ── GLOBAL ────────────────────────────────────────────────── */
-html, body {
-    background: var(--bg) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    color: var(--text) !important;
-    -webkit-font-smoothing: antialiased;
-    font-size: 16px !important;
-    line-height: 1.6 !important;
-}
-.stApp, .stApp > div,
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-[data-testid="stMainBlockContainer"] {
-    background: var(--bg) !important;
-}
-[data-testid="stVerticalBlock"] { background: transparent !important; }
-.block-container {
-    background: var(--bg) !important;
-    padding: 1rem 1.25rem 2rem !important;
-    max-width: 1440px !important;
-}
-#MainMenu, footer { visibility: hidden !important; }
-header[data-testid="stHeader"] {
-    background: transparent !important;
-    border-bottom: none !important;
-}
-
-/* ── TYPOGRAPHY — mobile-first sizes ──────────────────────── */
-h1, h2, h3, h4 {
-    font-family: 'DM Sans', sans-serif !important;
-    color: var(--text) !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.01em !important;
-    line-height: 1.3 !important;
-}
-h1 { font-size: 1.6rem !important; }
-h2 { font-size: 1.35rem !important; }
-h3 { font-size: 1.15rem !important; }
-p, span, label, li, td, th {
-    font-family: 'DM Sans', sans-serif !important;
-    color: var(--text) !important;
-    font-size: var(--fs-base) !important;
-}
-div {
-    font-family: 'DM Sans', sans-serif !important;
-}
-code, pre, [class*="mono"] {
-    font-family: 'DM Mono', monospace !important;
-    font-size: var(--fs-sm) !important;
-}
-
-/* ── SIDEBAR ───────────────────────────────────────────────── */
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div {
-    background: var(--olive-900) !important;
-    border-right: 2px solid var(--olive-700) !important;
-    box-shadow: 3px 0 16px rgba(0,0,0,0.2) !important;
-}
-section[data-testid="stSidebar"] * { color: #e8f0d0 !important; }
-section[data-testid="stSidebar"] hr { border-color: var(--olive-700) !important; }
-section[data-testid="stSidebar"] .stCaption p {
-    color: var(--olive-300) !important;
-    font-size: var(--fs-xs) !important;
-    font-family: 'DM Mono', monospace !important;
-}
-section[data-testid="stSidebar"] .stRadio label {
-    border-radius: var(--r-sm) !important;
-    padding: 0.65rem 1rem !important;
-    font-size: var(--fs-sm) !important;
-    font-weight: 500 !important;
-    color: #c8dca0 !important;
-    cursor: pointer !important;
-    border-left: 3px solid transparent !important;
-    transition: all 0.15s !important;
-    min-height: 44px !important;
-    display: flex !important;
-    align-items: center !important;
-}
-section[data-testid="stSidebar"] .stRadio label:hover {
-    background: rgba(255,255,255,0.08) !important;
-    color: #f0f8d8 !important;
-    border-left-color: var(--olive-300) !important;
-}
-section[data-testid="stSidebar"] .stButton > div > button {
-    background: rgba(255,255,255,0.08) !important;
-    border: 1px solid var(--olive-600) !important;
-    color: #c8dca0 !important;
-    border-radius: var(--r-sm) !important;
-    font-size: var(--fs-sm) !important;
-    min-height: 44px !important;
-}
-
-/* ── METRIC CARDS ─────────────────────────────────────────── */
-div[data-testid="metric-container"] {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    padding: 1rem 1.1rem !important;
-    box-shadow: var(--shadow-sm) !important;
-    border-top: 3px solid var(--olive-400) !important;
-}
-div[data-testid="metric-container"] label {
-    font-family: 'DM Mono', monospace !important;
-    font-size: var(--fs-xs) !important;
-    letter-spacing: 0.07em !important;
-    text-transform: uppercase !important;
-    color: var(--text-muted) !important;
-    font-weight: 600 !important;
-}
-div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-    font-family: 'DM Mono', monospace !important;
-    font-size: 1.5rem !important;
-    font-weight: 700 !important;
-    color: var(--text) !important;
-}
-div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
-    font-family: 'DM Mono', monospace !important;
-    font-size: var(--fs-xs) !important;
-    font-weight: 600 !important;
-}
-
-/* ── BUTTONS ──────────────────────────────────────────────── */
+/* ── BUTTONS — light olive, NOT dark ── */
 .stButton > div > button {
-    background: var(--olive-600) !important;
-    border: none !important;
-    color: #ffffff !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: var(--fs-sm) !important;
-    font-weight: 700 !important;
-    border-radius: var(--r-sm) !important;
-    padding: 0.6rem 1.2rem !important;
-    min-height: 46px !important;
-    transition: background 0.18s !important;
-    box-shadow: 0 2px 5px rgba(20,30,8,0.18) !important;
-    cursor: pointer !important;
-    letter-spacing: 0.01em !important;
+    background    : #ffffff !important;
+    border        : 1.5px solid #b8c89a !important;
+    color         : #2e3d1a !important;
+    font-family   : 'DM Sans',sans-serif !important;
+    font-size     : 0.85rem !important;
+    font-weight   : 600 !important;
+    border-radius : 7px !important;
+    padding       : 0.45rem 0.9rem !important;
+    min-height    : 38px !important;
+    cursor        : pointer !important;
+    box-shadow    : none !important;
+    transition    : background 0.15s,border-color 0.15s !important;
 }
 .stButton > div > button:hover {
-    background: var(--olive-500) !important;
-    box-shadow: 0 4px 12px rgba(20,30,8,0.22) !important;
+    background    : #dce8c4 !important;
+    border-color  : #638534 !important;
+    color         : #1e2c0d !important;
 }
-.stButton > div > button:active {
-    background: var(--olive-700) !important;
-}
+.stButton > div > button:active {background:#c8d8a8 !important;}
 
-/* ── INPUTS ───────────────────────────────────────────────── */
-input[type="text"], input[type="password"], input[type="number"],
-.stTextInput input, .stNumberInput input {
-    background: var(--surface) !important;
-    border: 2px solid var(--border) !important;
-    border-radius: var(--r-sm) !important;
-    color: var(--text) !important;
-    font-family: 'DM Mono', monospace !important;
-    font-size: 16px !important;
-    min-height: 48px !important;
-    padding: 0.5rem 0.75rem !important;
+/* ── INPUTS ── */
+input[type="text"],input[type="password"],input[type="number"],
+.stTextInput input,.stNumberInput input {
+    background:#fff !important;border:1.5px solid #b8c89a !important;
+    border-radius:7px !important;color:#0e1308 !important;
+    font-family:'DM Mono',monospace !important;font-size:15px !important;min-height:40px !important;
 }
-input:focus {
-    border-color: var(--olive-500) !important;
-    box-shadow: 0 0 0 3px rgba(78,110,38,0.18) !important;
-    outline: none !important;
-}
-input::placeholder { color: var(--text-muted) !important; }
-/* Labels above inputs */
-.stTextInput label, .stNumberInput label,
-.stSelectbox label, .stMultiSelect label,
-.stSlider label, .stRadio label {
-    font-size: var(--fs-sm) !important;
-    font-weight: 600 !important;
-    color: var(--text-dim) !important;
-}
+input:focus{border-color:#3d5a1c !important;box-shadow:0 0 0 2px rgba(61,90,28,0.15) !important;outline:none !important;}
 
-/* ── SELECTBOXES ──────────────────────────────────────────── */
+/* ── SELECTBOX ── */
 div[data-baseweb="select"] > div {
-    background: var(--surface) !important;
-    border: 2px solid var(--border) !important;
-    border-radius: var(--r-sm) !important;
-    color: var(--text) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    min-height: 48px !important;
-    font-size: var(--fs-sm) !important;
+    background:#fff !important;border:1.5px solid #b8c89a !important;
+    border-radius:7px !important;color:#0e1308 !important;min-height:40px !important;
 }
-div[data-baseweb="select"] span,
-div[data-baseweb="select"] div { color: var(--text) !important; background: transparent !important; }
-ul[data-baseweb="menu"],
-div[data-baseweb="popover"] > div {
-    background: var(--surface) !important;
-    border: 2px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    box-shadow: var(--shadow-lg) !important;
-}
-li[role="option"] {
-    background: transparent !important;
-    color: var(--text) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: var(--fs-sm) !important;
-    padding: 0.65rem 1rem !important;
-    min-height: 44px !important;
-    display: flex !important;
-    align-items: center !important;
-}
-li[role="option"]:hover { background: var(--olive-50) !important; }
-li[aria-selected="true"] {
-    background: var(--olive-100) !important;
-    color: var(--olive-800) !important;
-    font-weight: 700 !important;
-}
+div[data-baseweb="select"] span,div[data-baseweb="select"] div{color:#0e1308 !important;background:transparent !important;}
+ul[data-baseweb="menu"],div[data-baseweb="popover"] > div{background:#fff !important;border:1.5px solid #b8c89a !important;border-radius:9px !important;}
+li[role="option"]{background:transparent !important;color:#0e1308 !important;font-size:0.85rem !important;min-height:38px !important;}
+li[role="option"]:hover{background:#f0f4e8 !important;}
+li[aria-selected="true"]{background:#e4f0d0 !important;font-weight:700 !important;}
 
-/* ── DATAFRAMES ───────────────────────────────────────────── */
-.stDataFrame {
-    border-radius: var(--r-md) !important;
-    overflow: hidden !important;
-    box-shadow: var(--shadow-sm) !important;
-    font-size: var(--fs-xs) !important;
+/* ── METRICS ── */
+div[data-testid="metric-container"]{
+    background:#fff !important;border:1.5px solid #b8c89a !important;
+    border-radius:10px !important;padding:0.85rem 1rem !important;
+    border-top:3px solid #638534 !important;
 }
-[data-testid="stDataFrameContainer"] {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-}
+div[data-testid="metric-container"] label{font-family:'DM Mono',monospace !important;font-size:0.72rem !important;color:#4a5e32 !important;text-transform:uppercase !important;letter-spacing:0.06em !important;}
+div[data-testid="metric-container"] [data-testid="stMetricValue"]{font-family:'DM Mono',monospace !important;font-size:1.4rem !important;font-weight:700 !important;color:#0e1308 !important;}
 
-/* ── EXPANDER ─────────────────────────────────────────────── */
-[data-testid="stExpander"] {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    box-shadow: var(--shadow-sm) !important;
-}
-[data-testid="stExpander"] summary {
-    color: var(--text) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: var(--fs-sm) !important;
-    padding: 0.85rem 1rem !important;
-    min-height: 48px !important;
-}
+/* ── TABS ── */
+.stTabs [data-baseweb="tab-list"]{background:#e8f0d8 !important;border-bottom:2px solid #b8c89a !important;border-radius:9px 9px 0 0 !important;}
+.stTabs [data-baseweb="tab"]{background:transparent !important;border:none !important;color:#4a5e32 !important;font-size:0.85rem !important;font-weight:600 !important;padding:0.6rem 1rem !important;border-bottom:3px solid transparent !important;min-height:42px !important;}
+.stTabs [data-baseweb="tab"]:hover{color:#1e2c0d !important;background:rgba(61,90,28,0.05) !important;}
+.stTabs [aria-selected="true"]{color:#1e2c0d !important;border-bottom-color:#3d5a1c !important;font-weight:700 !important;}
+.stTabs [data-baseweb="tab-panel"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-top:none !important;border-radius:0 0 9px 9px !important;padding:1rem !important;}
 
-/* ── TABS ─────────────────────────────────────────────────── */
-.stTabs [data-baseweb="tab-list"] {
-    background: var(--surface2) !important;
-    border-bottom: 2px solid var(--border) !important;
-    gap: 0 !important;
-    padding: 0 0.25rem !important;
-}
-.stTabs [data-baseweb="tab"] {
-    background: transparent !important;
-    border: none !important;
-    color: var(--text-dim) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: var(--fs-sm) !important;
-    font-weight: 600 !important;
-    padding: 0.7rem 1rem !important;
-    border-bottom: 3px solid transparent !important;
-    margin-bottom: -2px !important;
-    min-height: 46px !important;
-}
-.stTabs [data-baseweb="tab"]:hover {
-    color: var(--olive-600) !important;
-    background: rgba(78,110,38,0.06) !important;
-}
-.stTabs [aria-selected="true"] {
-    color: var(--olive-700) !important;
-    border-bottom-color: var(--olive-500) !important;
-    font-weight: 800 !important;
-}
-.stTabs [data-baseweb="tab-panel"] {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-top: none !important;
-    border-radius: 0 0 var(--r-md) var(--r-md) !important;
-    padding: 1rem !important;
-}
+/* ── DATAFRAME ── */
+[data-testid="stDataFrameContainer"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-radius:9px !important;}
 
-/* ── RADIO & CHECKBOX ─────────────────────────────────────── */
-.stRadio label, .stCheckbox label {
-    color: var(--text) !important;
-    font-size: var(--fs-sm) !important;
-    font-weight: 500 !important;
-    min-height: 40px !important;
-    display: flex !important;
-    align-items: center !important;
-}
+/* ── EXPANDER ── */
+[data-testid="stExpander"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-radius:9px !important;}
+[data-testid="stExpander"] summary{color:#0e1308 !important;font-weight:600 !important;font-size:0.88rem !important;min-height:42px !important;}
 
-/* ── ALERTS ───────────────────────────────────────────────── */
-[data-testid="stInfo"]    {
-    background: #e8f5e4 !important;
-    border-left: 4px solid var(--olive-500) !important;
-    border-radius: var(--r-sm) !important;
-    color: var(--olive-800) !important;
-}
-[data-testid="stSuccess"] {
-    background: var(--bull-bg) !important;
-    border-left: 4px solid var(--bull) !important;
-    border-radius: var(--r-sm) !important;
-}
-[data-testid="stWarning"] {
-    background: var(--warn-bg) !important;
-    border-left: 4px solid var(--warn) !important;
-    border-radius: var(--r-sm) !important;
-}
-[data-testid="stError"] {
-    background: var(--bear-bg) !important;
-    border-left: 4px solid var(--bear) !important;
-    border-radius: var(--r-sm) !important;
-}
-/* Alert text always dark */
-[data-testid="stInfo"] p,
-[data-testid="stSuccess"] p,
-[data-testid="stWarning"] p,
-[data-testid="stError"] p {
-    color: var(--text) !important;
-    font-size: var(--fs-sm) !important;
-    font-weight: 500 !important;
-}
-.stCaption, .stCaption p {
-    color: var(--text-muted) !important;
-    font-family: 'DM Mono', monospace !important;
-    font-size: var(--fs-xs) !important;
-}
+/* ── ALERTS ── */
+[data-testid="stInfo"]{background:#e4f0d0 !important;border-left:4px solid #3d5a1c !important;border-radius:7px !important;}
+[data-testid="stSuccess"]{background:#e4f5e8 !important;border-left:4px solid #1a6b2e !important;border-radius:7px !important;}
+[data-testid="stWarning"]{background:#fdf3d4 !important;border-left:4px solid #7a5800 !important;border-radius:7px !important;}
+[data-testid="stError"]{background:#fbe8e6 !important;border-left:4px solid #9e2018 !important;border-radius:7px !important;}
 
-/* ── DIVIDERS ─────────────────────────────────────────────── */
-hr { border-color: var(--border) !important; margin: 0.75rem 0 !important; border-width: 1.5px !important; }
+/* ── MULTISELECT ── */
+[data-baseweb="tag"]{background:#e4f0d0 !important;border-radius:5px !important;color:#1e2c0d !important;}
 
-/* ── COMPONENT CLASSES ────────────────────────────────────── */
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-@keyframes slideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+/* ── DIVIDERS ── */
+hr{border-color:#b8c89a !important;margin:0.75rem 0 !important;}
 
-.live-dot {
-    display: inline-block;
-    width: 9px; height: 9px;
-    background: var(--bull);
-    border-radius: 50%;
-    margin-right: 6px;
-    animation: pulse 1.8s ease-in-out infinite;
-    box-shadow: 0 0 6px rgba(26,107,46,0.5);
-    flex-shrink: 0;
-}
-.title-bar {
-    display: flex; align-items: center; gap: 0.75rem;
-    margin-bottom: 1rem;
-    animation: slideIn 0.25s ease;
-    flex-wrap: wrap;
-}
-.title-bar h1 {
-    margin: 0 !important;
-    font-size: 1.4rem !important;
-    color: var(--text) !important;
-    font-weight: 800 !important;
-}
+/* ── ANIMATIONS ── */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.live-dot{display:inline-block;width:8px;height:8px;background:#1a6b2e;border-radius:50%;margin-right:6px;animation:pulse 1.8s infinite;}
+.title-bar{display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;animation:slideIn 0.25s ease;}
+.title-bar h1{margin:0 !important;font-size:1.35rem !important;color:#0e1308 !important;font-weight:800 !important;}
 
-/* Signal badges */
-.signal-badge {
-    display: inline-block;
-    font-family: 'DM Mono', monospace;
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    padding: 0.25rem 0.7rem;
-    border-radius: 5px;
-    margin: 0.1rem;
-}
-.sig-bull { background: var(--bull-bg); color: var(--bull); border: 1.5px solid var(--bull-bdr); }
-.sig-bear { background: var(--bear-bg); color: var(--bear); border: 1.5px solid var(--bear-bdr); }
-.sig-neut { background: var(--warn-bg); color: var(--warn); border: 1.5px solid #e0c060; }
+/* ── SCROLLBARS ── */
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:#e8f0d8;}
+::-webkit-scrollbar-thumb{background:#8da86e;border-radius:4px;}
 
-/* Multiselect tags */
-[data-baseweb="tag"] {
-    background: var(--olive-100) !important;
-    border-radius: 5px !important;
-    color: var(--olive-800) !important;
-    font-size: var(--fs-xs) !important;
-    font-weight: 600 !important;
-}
-
-/* Progress bar */
-.stProgress > div > div > div {
-    background: var(--olive-500) !important;
-    border-radius: 4px !important;
-}
-
-/* Scrollbars */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: var(--surface2); }
-::-webkit-scrollbar-thumb { background: var(--olive-300); border-radius: 4px; }
-
-/* Nav button overrides */
-.nav-btn > div > button {
-    background: transparent !important;
-    border: none !important;
-    border-bottom: 3px solid transparent !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    color: var(--text-dim) !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: var(--fs-xs) !important;
-    font-weight: 600 !important;
-    padding: 0.5rem 0.2rem !important;
-    min-height: 48px !important;
-    transition: color 0.15s, border-color 0.15s !important;
-    white-space: nowrap !important;
-}
-.nav-btn > div > button:hover {
-    color: var(--olive-700) !important;
-    border-bottom-color: var(--olive-400) !important;
-    background: rgba(78,110,38,0.05) !important;
-}
-.nav-btn-active > div > button {
-    color: var(--olive-700) !important;
-    border-bottom-color: var(--olive-600) !important;
-    font-weight: 800 !important;
-    background: rgba(78,110,38,0.07) !important;
-}
-
-/* ── MOBILE SPECIFIC ───────────────────────────────────────── */
-@media (max-width: 768px) {
-    :root {
-        --fs-xs:   0.85rem;
-        --fs-sm:   0.95rem;
-        --fs-base: 1rem;
-    }
-    .block-container {
-        padding: 0.5rem 0.6rem 1rem !important;
-        max-width: 100vw !important;
-    }
-    /* Bigger touch targets */
-    .stButton > div > button {
-        min-height: 52px !important;
-        font-size: 1rem !important;
-        font-weight: 700 !important;
-        padding: 0.75rem 1rem !important;
-    }
-    div[data-baseweb="select"] > div { min-height: 52px !important; }
-    input { font-size: 16px !important; min-height: 52px !important; }
-    /* Tabs bigger on mobile */
-    .stTabs [data-baseweb="tab"] {
-        padding: 0.75rem 0.75rem !important;
-        font-size: 0.9rem !important;
-        min-height: 50px !important;
-    }
-    /* Metric values bigger */
-    div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-        font-size: 1.6rem !important;
-    }
-    div[data-testid="metric-container"] label {
-        font-size: 0.75rem !important;
-    }
-    /* Nav buttons on mobile */
-    .nav-btn > div > button,
-    .nav-btn-active > div > button {
-        font-size: 0.72rem !important;
-        padding: 0.4rem 0.1rem !important;
-        min-height: 48px !important;
-    }
-    /* Hide sidebar on mobile */
-    section[data-testid="stSidebar"]       { display: none !important; }
-    [data-testid="collapsedControl"]        { display: none !important; }
-    button[data-testid="baseButton-header"] { display: none !important; }
-    /* Touch handling */
-    * { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-    body { overscroll-behavior-y: none; }
-    /* Card padding tighter on mobile */
-    [data-testid="stExpander"] summary { padding: 0.75rem 0.75rem !important; }
-}
-
-/* ── DESKTOP ───────────────────────────────────────────────── */
-@media (min-width: 769px) {
-    .block-container { padding: 1.25rem 2rem 2rem !important; }
-    div[data-testid="metric-container"]:hover {
-        box-shadow: var(--shadow-md) !important;
-        transform: translateY(-1px) !important;
-        transition: all 0.2s !important;
-    }
+/* ── MOBILE ── */
+@media(max-width:768px){
+    .block-container{padding:0.3rem 0.5rem 1rem !important;}
+    .stButton > div > button{min-height:44px !important;font-size:0.9rem !important;}
+    input{font-size:16px !important;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -6243,7 +5829,7 @@ def _trade_buttons(s: dict):
             "bt_results":          [],
             "bt_meta":             {},
             "bt_launched_from":    None,
-            "current_page":        "Backtest",
+            "current_page":        "Forward Test",
         })
         st.rerun()
 
@@ -7243,1190 +6829,524 @@ def _save_paper_trades():
         pass
 
 
-def page_paper_trading():
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">📝</span>
-        <h1 style="color:#1a1f0e;">Test Trading</h1>
-        <span style="margin-left:auto;background:#fdf9ec;border:1px solid #f0d898;
-                     color:#b8860b;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            PAPER TRADING · VIRTUAL CAPITAL
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+import json as _json
+_FT_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_fwdtest.json")
 
-    # ── Load persisted trades from local file ────────────────────────────
-    _journal_file = os.path.join(os.path.expanduser("~"), ".pivotvault_trades.json")
-    if not st.session_state.get("paper_trades_loaded"):
-        try:
-            import json as _json
-            if os.path.exists(_journal_file):
-                with open(_journal_file) as _f:
-                    saved = _json.load(_f)
-                    st.session_state["paper_trades"]   = saved.get("trades", [])
-                    st.session_state["paper_balance"]  = saved.get("balance", 100000.0)
-        except Exception:
-            pass
-        st.session_state["paper_trades_loaded"] = True
+def _ft_load():
+    try:
+        if os.path.exists(_FT_FILE):
+            with open(_FT_FILE) as f:
+                return _json.load(f)
+    except Exception:
+        pass
+    return {"trades": [], "balance": 100000.0, "starting": 100000.0}
 
-    balance   = st.session_state.get("paper_balance", 100000.0)
-    trades    = st.session_state.get("paper_trades", [])
-    closed    = [t for t in trades if t.get("status") == "CLOSED"]
-    open_tr   = [t for t in trades if t.get("status") == "OPEN"]
-    wins      = [t for t in closed if t.get("pnl",0) > 0]
-    losses    = [t for t in closed if t.get("pnl",0) <= 0]
-    win_rate  = round(len(wins)/len(closed)*100) if closed else 0
-    total_pnl = sum(t.get("pnl",0) for t in closed)
+def _ft_save(data):
+    try:
+        with open(_FT_FILE, "w") as f:
+            _json.dump(data, f, indent=2, default=str)
+    except Exception:
+        pass
 
-    mc1,mc2,mc3,mc4,mc5 = st.columns(5)
-    mc1.metric("💰 Virtual Balance",  f"₹{balance:,.0f}")
-    mc2.metric("📈 Total P&L",        f"₹{total_pnl:+,.0f}")
-    mc3.metric("🔄 Open Trades",      len(open_tr))
-    mc4.metric("✅ Win Rate",         f"{win_rate}%", f"{len(wins)}W/{len(losses)}L")
-    mc5.metric("📊 Total Trades",     len(trades))
-    st.divider()
+def _ft_ltp(symbol):
+    try:
+        if _upstox_connected():
+            v = upstox_get_ltp(symbol)
+            if v: return v
+        return round(float(yf.Ticker(symbol + ".NS").fast_info.last_price), 2)
+    except Exception:
+        return 0.0
 
-    # ── Place new trade ───────────────────────────────────────────────────
-    with st.expander("➕ Place Paper Trade", expanded=len(trades)==0):
-        syms = ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","HINDUNILVR","SBIN",
-                "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
-                "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","NTPC","ADANIENT"]
-        pc1,pc2,pc3 = st.columns(3)
-        with pc1:
-            sym  = st.selectbox("Symbol", syms, key="pt_sym")
-            side = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="pt_side")
-        with pc2:
-            try:    live = round(float(yf.Ticker(sym+".NS").fast_info.last_price),2)
-            except: live = 0.0
-            entry  = st.number_input("Entry ₹",  value=live,                  step=0.05, key="pt_entry")
-            qty    = st.number_input("Quantity",  value=1, min_value=1,        step=1,    key="pt_qty")
-        with pc3:
-            target = st.number_input("Target ₹", value=round(live*1.03,2),    step=0.05, key="pt_tgt")
-            sl     = st.number_input("Stop Loss ₹",value=round(live*0.98,2),  step=0.05, key="pt_sl")
-
-        risk   = max(abs(entry-sl)*qty, 0.01)
-        reward = abs(target-entry)*qty
-        rr     = round(reward/risk,2)
-        cost   = round(entry*qty,2)
-        st.markdown(
-            f"<div style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
-            f"padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-            f"display:flex;gap:1.5rem;flex-wrap:wrap;margin:0.5rem 0;'>"
-            f"<span>💰 Cost <b>₹{cost:,.0f}</b></span>"
-            f"<span>⚠️ Risk <b>₹{round(risk,0):,.0f}</b></span>"
-            f"<span>🎯 Reward <b>₹{round(reward,0):,.0f}</b></span>"
-            f"<span>📊 R:R <b>{rr}x</b></span></div>",
-            unsafe_allow_html=True)
-
-        if st.button("📝 Place Paper Trade", use_container_width=True, key="pt_place"):
-            if cost > balance:
-                st.error(f"Insufficient balance. Need ₹{cost:,.0f}, have ₹{balance:,.0f}")
-            else:
-                trade = {"id":len(trades)+1,"symbol":sym,"side":side,"entry":entry,
-                         "qty":qty,"target":target,"sl":sl,"rr":rr,"cost":cost,
-                         "status":"OPEN","pnl":0.0,"exit_px":None,
-                         "source":"Manual","time":datetime.now().strftime("%d %b %H:%M")}
-                st.session_state["paper_trades"].append(trade)
-                st.session_state["paper_balance"] -= cost
-                st.success(f"✅ Opened: {side} {qty}×{sym} @ ₹{entry}")
-                st.rerun()
-
-    # ── Open positions ────────────────────────────────────────────────────
-    if open_tr:
-        st.markdown("### 📂 Open Positions")
-        for t in open_tr:
-            try:
-                if _upstox_connected():
-                    _batch = upstox_get_live_ltp_batch([t["symbol"]])
-                    cur = _batch.get(t["symbol"]) or round(float(yf.Ticker(t["symbol"]+".NS").fast_info.last_price),2)
-                else:
-                    cur = round(float(yf.Ticker(t["symbol"]+".NS").fast_info.last_price),2)
-            except:
-                cur = t["entry"]
-            upnl = round((cur-t["entry"])*t["qty"] if t["side"]=="BUY" else (t["entry"]-cur)*t["qty"],2)
-            pct  = round(upnl/t["cost"]*100,2)
-            col  = "#2d7a3a" if upnl>=0 else "#c0392b"
-            flag = " 🎯 TARGET" if (t["side"]=="BUY" and cur>=t["target"]) or (t["side"]=="SELL" and cur<=t["target"])                    else (" 🛑 SL HIT" if (t["side"]=="BUY" and cur<=t["sl"]) or (t["side"]=="SELL" and cur>=t["sl"]) else "")
-            st.markdown(
-                f"<div style='background:#fff;border:1px solid #dae0cb;border-radius:10px;"
-                f"padding:0.9rem 1.1rem;margin-bottom:0.5rem;"
-                f"border-left:4px solid {'#2d7a3a' if t['side']=='BUY' else '#c0392b'};'>"
-                f"<div style='font-family:DM Mono,monospace;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
-                f"<b style='font-size:1rem;color:#1a1f0e;'>{t['symbol']}</b>"
-                f"<span style='background:{'#edf7ee' if t['side']=='BUY' else '#fdf0ee'};"
-                f"color:{'#2d7a3a' if t['side']=='BUY' else '#c0392b'};"
-                f"border-radius:20px;padding:1px 8px;font-size:0.7rem;font-weight:700;'>{t['side']}</span>"
-                f"<span style='font-size:0.8rem;color:#5a6a48;'>{t['qty']}× ₹{t['entry']} → ₹{cur}</span>"
-                f"<span style='font-weight:700;color:{col};'>{'+'if upnl>=0 else''}₹{upnl:,.2f} ({pct:+.1f}%){flag}</span>"
-                f"<span style='font-size:0.7rem;color:#8a9a78;'>T:₹{t['target']} SL:₹{t['sl']} R:R {t['rr']}x</span>"
-                f"</div></div>", unsafe_allow_html=True)
-            ec1,ec2 = st.columns([3,1])
-            with ec1:
-                xpx = st.number_input(f"Exit price (#{t['id']})", value=cur, step=0.05, key=f"xpx_{t['id']}")
-            with ec2:
-                st.markdown("<div style='padding-top:1.7rem;'>", unsafe_allow_html=True)
-                if st.button("Close", key=f"close_{t['id']}", use_container_width=True):
-                    for j,tt in enumerate(st.session_state["paper_trades"]):
-                        if tt["id"]==t["id"] and tt["status"]=="OPEN":
-                            fpnl = round((xpx-tt["entry"])*tt["qty"] if tt["side"]=="BUY" else (tt["entry"]-xpx)*tt["qty"],2)
-                            st.session_state["paper_trades"][j].update({"status":"CLOSED","pnl":fpnl,"exit_px":xpx})
-                            st.session_state["paper_balance"] += tt["cost"]+fpnl
-                            _save_paper_trades()
-                            (st.success if fpnl>=0 else st.error)(f"Closed {tt['symbol']}: {'+'if fpnl>=0 else''}₹{fpnl:,.2f}")
-                            st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── Closed trade history ──────────────────────────────────────────────
-    if closed:
-        st.markdown("### 📋 Trade History")
-        avg_win  = round(sum(t["pnl"] for t in wins)/max(len(wins),1),2)
-        avg_loss = round(sum(t["pnl"] for t in losses)/max(len(losses),1),2)
-        pf       = round(abs(sum(t["pnl"] for t in wins))/max(abs(sum(t["pnl"] for t in losses)),0.01),2)
-        exp      = round(total_pnl/len(closed),2)
-        sc1,sc2,sc3,sc4 = st.columns(4)
-        sc1.metric("Avg Win",      f"₹{avg_win:+,.0f}")
-        sc2.metric("Avg Loss",     f"₹{avg_loss:+,.0f}")
-        sc3.metric("Profit Factor",f"{pf}x")
-        sc4.metric("Expectancy",   f"₹{exp:+,.0f}")
-        rows = [{"#":t["id"],"Symbol":t["symbol"],"Side":t["side"],"Qty":t["qty"],
-                 "Entry":f"₹{t['entry']:,.2f}","Exit":f"₹{t['exit_px']:,.2f}" if t["exit_px"] else "—",
-                 "P&L":f"{'+'if t['pnl']>=0 else''}₹{t['pnl']:,.2f}",
-                 "R:R":f"{t['rr']}x","Source":t.get("source","Manual"),"Time":t.get("time","—")}
-                for t in reversed(closed)]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        if len(closed)>=2:
-            cum,run = [],0
-            for t in closed:
-                run+=t["pnl"]; cum.append({"Trade":t["id"],"Cumulative P&L":round(run,2)})
-            st.line_chart(pd.DataFrame(cum).set_index("Trade"), color="#4e6130", use_container_width=True)
-
-    st.divider()
-    if st.button("🔄 Reset Paper Account (₹1,00,000)", use_container_width=True, key="reset_paper"):
-        st.session_state.update({"paper_trades":[],"paper_balance":100000.0,"paper_positions":{}})
-        st.success("Paper account reset!"); st.rerun()
-    st.caption("⚠️ Paper trading uses virtual capital only. Not real trades. For strategy testing purposes only.")
+def _ft_check_triggers(data):
+    """Check open positions against live price — auto-trigger SL/Target."""
+    changed = False
+    for t in data["trades"]:
+        if t["status"] != "OPEN":
+            continue
+        ltp = _ft_ltp(t["symbol"])
+        if not ltp:
+            continue
+        t["ltp"] = ltp
+        side = t["side"]
+        if side == "BUY":
+            if ltp >= t["target"]:
+                t["status"]    = "TARGET HIT"
+                t["exit_px"]   = t["target"]
+                t["pnl"]       = round((t["target"] - t["entry"]) * t["qty"], 2)
+                t["pnl_pct"]   = round((t["target"] - t["entry"]) / t["entry"] * 100, 2)
+                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
+                data["balance"] += t["cost"] + t["pnl"]
+                changed = True
+            elif ltp <= t["sl"]:
+                t["status"]    = "SL HIT"
+                t["exit_px"]   = t["sl"]
+                t["pnl"]       = round((t["sl"] - t["entry"]) * t["qty"], 2)
+                t["pnl_pct"]   = round((t["sl"] - t["entry"]) / t["entry"] * 100, 2)
+                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
+                data["balance"] += t["cost"] + t["pnl"]
+                changed = True
+        else:  # SELL
+            if ltp <= t["target"]:
+                t["status"]    = "TARGET HIT"
+                t["exit_px"]   = t["target"]
+                t["pnl"]       = round((t["entry"] - t["target"]) * t["qty"], 2)
+                t["pnl_pct"]   = round((t["entry"] - t["target"]) / t["entry"] * 100, 2)
+                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
+                data["balance"] += t["cost"] + t["pnl"]
+                changed = True
+            elif ltp >= t["sl"]:
+                t["status"]    = "SL HIT"
+                t["exit_px"]   = t["sl"]
+                t["pnl"]       = round((t["entry"] - t["sl"]) * t["qty"], 2)
+                t["pnl_pct"]   = round((t["entry"] - t["sl"]) / t["entry"] * 100, 2)
+                t["exit_time"] = datetime.now().strftime("%d %b %H:%M:%S")
+                data["balance"] += t["cost"] + t["pnl"]
+                changed = True
+    return data, changed
 
 
-# ══════════════════════════════════════════════════════════════
-#  STRATEGY DEFINITIONS — Single source of truth
-#  Used by: Strategy tab · Signal Cards · Backtester
-# ══════════════════════════════════════════════════════════════
-
-STRATEGIES = [
-    {
-        "id":          "cpr_narrow_breakout",
-        "direction":  "Both",
-        "name":        "CPR Narrow Breakout",
-        "emoji":       "⚡",
-        "category":    "Intraday",
-        "timeframes":  ["15 Min","1 Hour"],
-        "author":      "Frank Ochoa — Pivot Boss",
-        "description": (
-            "When the Central Pivot Range (CPR) is very narrow (< 0.5% of price), "
-            "the market is coiling for a breakout. A close above TC = Bullish, "
-            "below BC = Bearish. High probability intraday setup."
-        ),
-        "conditions": [
-            "CPR Width < 0.5% of price",
-            "Price closes above TC (Bullish) or below BC (Bearish)",
-            "RSI between 50–75 (Bull) or 25–50 (Bear)",
-            "HMA trending in signal direction",
-            "Volume Surge ≥ 1.2x average",
-        ],
-        "entry":  "Next candle open after breakout confirmation",
-        "sl":     "Opposite side of CPR (BC for Bull, TC for Bear)",
-        "target": "R1 for Bull (T1), R2 for Bull (T2) / S1 for Bear (T1)",
-        "rr_min": 1.5,
-        "strength_threshold": 70,
-        "win_rate_expectation": "60–70%",
-        "best_stocks": ["RELIANCE","HDFCBANK","INFY","TCS","ICICIBANK"],
-        "color":  "#1a6b2e",
-        "bg":     "#e4f5e8",
-        "border": "#8dcc9a",
-    },
-    {
-        "id":          "cpr_virgin_pivot",
-        "direction":  "Both",
-        "name":        "Virgin CPR Bounce",
-        "emoji":       "🌟",
-        "category":    "Swing",
-        "timeframes":  ["1 Hour","1 Day"],
-        "author":      "Frank Ochoa — Pivot Boss",
-        "description": (
-            "A Virgin CPR is one that has never been tested (price never traded through it). "
-            "When price revisits an untested CPR, it acts as a strong support/resistance. "
-            "First touch = high probability reversal zone."
-        ),
-        "conditions": [
-            "CPR from a previous session was never tested (virgin)",
-            "Price approaches the virgin CPR from above (Bull) or below (Bear)",
-            "RSI shows oversold (Bull) or overbought (Bear) near CPR",
-            "Candlestick reversal pattern at CPR (Hammer, Engulfing, Doji)",
-            "3/10 Oscillator shows momentum exhaustion",
-        ],
-        "entry":  "On reversal candle close at virgin CPR level",
-        "sl":     "Beyond the CPR range (TC+ATR for short, BC-ATR for long)",
-        "target": "Previous session high/low or next pivot level",
-        "rr_min": 2.0,
-        "strength_threshold": 65,
-        "win_rate_expectation": "65–75%",
-        "best_stocks": ["SBIN","BHARTIARTL","LT","BAJFINANCE","KOTAKBANK"],
-        "color":  "#7c3aed",
-        "bg":     "#f3effe",
-        "border": "#c8a0f0",
-    },
-    {
-        "id":          "pivot_level_bounce",
-        "direction":  "Both",
-        "name":        "Pivot Level Support/Resistance",
-        "emoji":       "🎯",
-        "category":    "Intraday",
-        "timeframes":  ["15 Min","1 Hour"],
-        "author":      "Frank Ochoa — Pivot Boss",
-        "description": (
-            "Price respects traditional pivot levels (P, R1, R2, S1, S2) as key "
-            "support/resistance. When price approaches a pivot level with momentum, "
-            "it either bounces or breaks. Trade the reaction."
-        ),
-        "conditions": [
-            "Price within 0.1% of a key pivot level (P, R1, R2, S1, S2)",
-            "RSI confirming direction (not in extreme zone)",
-            "HMA pointing away from level (trend continuation)",
-            "Volume confirms at the pivot level",
-            "CPR is above pivot for Bull setups (Bullish market structure)",
-        ],
-        "entry":  "On first candle close away from the pivot level",
-        "sl":     "Through the pivot level by ATR/2",
-        "target": "Next pivot level in direction of trade",
-        "rr_min": 1.5,
-        "strength_threshold": 60,
-        "win_rate_expectation": "55–65%",
-        "best_stocks": ["NIFTY","BANKNIFTY","MARUTI","TITAN","AXISBANK"],
-        "color":  "#d97706",
-        "bg":     "#fdf3d4",
-        "border": "#f0c060",
-    },
-    {
-        "id":          "hma_trend_follow",
-        "direction":  "Both",
-        "name":        "HMA Trend Follower",
-        "emoji":       "📈",
-        "category":    "Swing",
-        "timeframes":  ["1 Hour","1 Day"],
-        "author":      "PivotVault AI",
-        "description": (
-            "Hull Moving Average (HMA-20) is one of the fastest trend indicators with "
-            "minimal lag. When price pulls back to HMA in a trending market and bounces, "
-            "it signals trend continuation. Combined with CPR above/below to confirm bias."
-        ),
-        "conditions": [
-            "HMA-20 clearly trending (3 consecutive higher/lower values)",
-            "Price pulls back to touch HMA-20",
-            "Bounce candle closes back above/below HMA (Bull/Bear)",
-            "CPR is above price (Bullish) or below price (Bearish)",
-            "RSI pulled back from overbought/oversold and recovering",
-        ],
-        "entry":  "Close of bounce candle off HMA",
-        "sl":     "Below HMA by ATR × 0.5",
-        "target": "Previous swing high/low or R1/S1",
-        "rr_min": 2.0,
-        "strength_threshold": 65,
-        "win_rate_expectation": "60–70%",
-        "best_stocks": ["TCS","WIPRO","HCLTECH","INFY","SUNPHARMA"],
-        "color":  "#0369a1",
-        "bg":     "#e0f2fe",
-        "border": "#7dd3fc",
-    },
-    {
-        "id":          "rsi_cpr_confluence",
-        "direction":  "Both",
-        "name":        "RSI + CPR Confluence",
-        "emoji":       "🔄",
-        "category":    "Intraday",
-        "timeframes":  ["15 Min","1 Hour"],
-        "author":      "PivotVault AI",
-        "description": (
-            "Combines RSI momentum signal with CPR position. When RSI crosses 50 "
-            "(upward for Bull, downward for Bear) AND price is on the right side of CPR, "
-            "a high-probability trade setup forms. Two indicators agreeing = higher conviction."
-        ),
-        "conditions": [
-            "RSI crosses above 50 (Bull) or below 50 (Bear)",
-            "Price is above TC (Bull) or below BC (Bear)",
-            "CPR width < 1% of price (not too wide)",
-            "Candle close confirms direction",
-            "Volume at or above 20-period average",
-        ],
-        "entry":  "Next candle open after RSI cross + CPR confirmation",
-        "sl":     "CPR midpoint (pivot) for Bull / CPR midpoint for Bear",
-        "target": "R1 (T1), R2 (T2) for Bull / S1 (T1), S2 (T2) for Bear",
-        "rr_min": 1.5,
-        "strength_threshold": 55,
-        "win_rate_expectation": "58–68%",
-        "best_stocks": ["RELIANCE","SBIN","HDFCBANK","ASIANPAINT","NTPC"],
-        "color":  "#dc2626",
-        "bg":     "#fbe8e6",
-        "border": "#f0a0a0",
-    },
-    {
-        "id":          "candlestick_cpr",
-        "direction":  "Both",
-        "name":        "Candlestick Pattern + CPR",
-        "emoji":       "🕯️",
-        "category":    "Intraday",
-        "timeframes":  ["15 Min","1 Hour","1 Day"],
-        "author":      "PivotVault AI",
-        "description": (
-            "Candlestick reversal patterns (Hammer, Bullish Engulfing, Morning Star, "
-            "Shooting Star, Bearish Engulfing) carry much more weight when they form "
-            "exactly at a CPR level or pivot. The combination creates a precise, "
-            "high-probability trade entry with a tight stop."
-        ),
-        "conditions": [
-            "Reversal candlestick pattern forms at CPR (TC, BC, or Pivot)",
-            "Pattern is at a key pivot level (R1, R2, S1, S2)",
-            "Volume surge on the pattern candle (> 1.5x average)",
-            "RSI not at extreme (not overbought/oversold entering trade)",
-            "Trend in direction of trade (HMA confirms)",
-        ],
-        "entry":  "Next candle open after pattern confirmation",
-        "sl":     "Below pattern low (Bull) or above pattern high (Bear)",
-        "target": "Next pivot/CPR level in direction",
-        "rr_min": 1.5,
-        "strength_threshold": 60,
-        "win_rate_expectation": "62–72%",
-        "best_stocks": ["BAJFINANCE","KOTAKBANK","TITAN","MARUTI","LT"],
-        "color":  "#059669",
-        "bg":     "#d1fae5",
-        "border": "#6ee7b7",
-    },
-]
+def _fwd_get_ltp(symbol: str) -> float:
+    """Get live LTP — Upstox if connected, else yfinance."""
+    try:
+        if _upstox_connected():
+            ltp = upstox_get_ltp(symbol)
+            if ltp and ltp > 0:
+                return round(ltp, 2)
+        return round(float(yf.Ticker(symbol+".NS").fast_info.last_price), 2)
+    except Exception:
+        return 0.0
 
 
-def page_strategy():
-    """Strategy Library — all signal strategies with backtest launcher."""
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">📚</span>
-        <h1>Strategy Library</h1>
-        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
-                     color:#3c3489;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            FRANK OCHOA · CPR · PIVOT BOSS
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(
-        "<div style='font-family:DM Mono,monospace;font-size:0.82rem;color:#2e3d1a;"
-        "margin-bottom:1rem;'>All signal generation logic used in the CPR Scanner and "
-        "Trade Signals tab. Click <b>🔬 Backtest</b> on any strategy to test it on "
-        "any stock.</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Filters ───────────────────────────────────────────────────────────
-    fc1, fc2, fc3 = st.columns(3)
-    with fc1:
-        cat_filter = st.multiselect(
-            "Category",
-            ["Intraday","Swing"],
-            default=[],
-            placeholder="All categories",
-            key="sl_cat",
-            label_visibility="collapsed",
-        )
-    with fc2:
-        dir_filter = st.radio("Direction", ["All","Bullish","Bearish"],
-                              horizontal=True, key="sl_dir", label_visibility="collapsed")
-    with fc3:
-        tf_filter = st.multiselect(
-            "Timeframe",
-            ["15 Min","1 Hour","1 Day"],
-            default=[],
-            placeholder="All timeframes",
-            key="sl_tf",
-            label_visibility="collapsed",
-        )
-
-    # Apply filters
-    filtered = STRATEGIES
-    if cat_filter:
-        filtered = [s for s in filtered if s["category"] in cat_filter]
-    if dir_filter != "All":
-        filtered = [s for s in filtered if s.get("direction","Both") in (dir_filter, "Both")]
-    if tf_filter:
-        filtered = [s for s in filtered if any(t in s["timeframes"] for t in tf_filter)]
-
-    st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-        f"color:#4a5e32;margin-bottom:0.75rem;'>"
-        f"Showing <b>{len(filtered)}</b> of {len(STRATEGIES)} strategies</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Strategy cards ────────────────────────────────────────────────────
-    for strat in filtered:
-        bull   = strat.get("direction","Both") == "Bullish"
-        bear   = strat.get("direction","Both") == "Bearish"
-        s_col  = strat.get("color","#3d5a1c")
-        s_bg   = strat.get("bg","#f5f8ed")
-        s_bdr  = strat.get("border","#b8c89a")
-        s_icon = strat.get("icon", strat.get("emoji","📊"))
-
-        # Card container
-        st.markdown(
-            f"<div style='background:#fff;border:1.5px solid {s_bdr};"
-            f"border-radius:12px;padding:1rem 1.1rem 0.75rem;margin-bottom:1rem;"
-            f"border-left:5px solid {s_col};'>"
-
-            # Header
-            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;'>"
-            f"<span style='font-size:1.2rem;'>{s_icon}</span>"
-            f"<span style='font-family:DM Sans,sans-serif;font-size:1rem;"
-            f"font-weight:800;color:#0e1308;'>{strat['name']}</span>"
-            f"<span style='margin-left:auto;background:{s_bg};"
-            f"color:{s_col};border:1px solid {s_bdr};"
-            f"border-radius:20px;padding:2px 10px;font-size:0.68rem;"
-            f"font-family:DM Mono,monospace;font-weight:700;'>{strat['category']}</span>"
-            f"{'<span style="background:#e4f5e8;color:#1a6b2e;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▲ BULL</span>' if bull else ''}"
-            f"{'<span style="background:#fbe8e6;color:#9e2018;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▼ BEAR</span>' if bear else ''}"
-            f"{'<span style="background:#fdf3d4;color:#7a5800;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">↕ BOTH</span>' if not bull and not bear else ''}"
-            f"</div>"
-
-            # Description
-            f"<div style='font-size:0.85rem;color:#2e3d1a;margin-bottom:0.6rem;"
-            f"line-height:1.5;'>{strat['description']}</div>"
-
-            # Timeframes + tags
-            f"<div style='display:flex;flex-wrap:wrap;gap:5px;margin-bottom:0.6rem;'>"
-            + "".join(
-                f"<span style='background:#f0f4e8;border:1px solid #b8c89a;"
-                f"border-radius:5px;padding:1px 7px;font-size:0.65rem;"
-                f"font-family:DM Mono,monospace;color:#2e3d1a;'>⏱ {t}</span>"
-                for t in strat["timeframes"]
-            )
-            + "".join(
-                f"<span style='background:#f5f8ed;border:1px solid #dae0cb;"
-                f"border-radius:5px;padding:1px 7px;font-size:0.65rem;"
-                f"font-family:DM Mono,monospace;color:#4a5e32;'>{tag}</span>"
-                for tag in strat.get("tags", strat.get("best_stocks",[]))
-            )
-            + f"</div></div>",
-            unsafe_allow_html=True,
-        )
-
-        # Expandable conditions + trade plan
-        with st.expander(f"📋 Entry Conditions & Trade Plan — {strat['name']}"):
-            cc1, cc2 = st.columns([3, 2])
-            with cc1:
-                st.markdown("**Entry Conditions:**")
-                for cond in strat.get("conditions",[]):
-                    bg_c  = strat.get("bg","#f5f8ed")
-                    col_c = strat.get("color","#3d5a1c")
-                    st.markdown(
-                        f"<div style='display:flex;gap:8px;margin-bottom:4px;"
-                        f"font-family:DM Sans,sans-serif;font-size:0.83rem;'>"
-                        f"<span style='color:{col_c};font-weight:700;flex-shrink:0;'>✓</span>"
-                        f"<span style='color:#2e3d1a;'>{cond}</span></div>",
-                        unsafe_allow_html=True,
-                    )
-            with cc2:
-                st.markdown("**Trade Plan:**")
-                details = [
-                    ("🎯 Entry",    strat["entry"]),
-                    ("🛑 Stop Loss", strat.get("stop_loss", strat.get("sl","—"))),
-                    ("💰 Targets",  strat.get("targets", strat.get("target","—"))),
-                    ("📊 R:R",      strat.get("rr", "Min " + str(strat.get("rr_min",1.5)) + ":1")),
-                    ("⭐ Min Strength", str(strat.get("score_max", strat.get("strength_threshold",60))) + "%"),
-                ]
-                for label, val in details:
-                    st.markdown(
-                        f"<div style='margin-bottom:5px;font-size:0.82rem;'>"
-                        f"<span style='font-family:DM Mono,monospace;font-weight:700;"
-                        f"color:#0e1308;'>{label}:</span> "
-                        f"<span style='color:#2e3d1a;'>{val}</span></div>",
-                        unsafe_allow_html=True,
-                    )
-
-        # Backtest button row
-        _strategy_backtest_launcher(strat)
-
-    st.caption("📚 Strategies based on Frank Ochoa's Pivot Boss methodology. "
-               "CPR = Central Pivot Range. For educational purposes only.")
-
-
-def _strategy_backtest_launcher(strat: dict):
-    """Render stock selector + backtest button for a strategy card."""
-    sid = strat["id"]
-
-    ALL_SYMS = [
-        "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
-        "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
-        "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
-        "POWERGRID","ULTRACEMCO","NESTLEIND","TATAMOTORS","JSWSTEEL",
-        "HINDALCO","COALINDIA","BPCL","INDUSINDBK","CIPLA",
-    ]
-
-    c1, c2, c3, c4 = st.columns([2, 1.5, 1.5, 1.5])
-    with c1:
-        sym = st.selectbox(
-            "Stock",
-            ALL_SYMS,
-            key=f"sl_sym_{sid}",
-            label_visibility="collapsed",
-        )
-    with c2:
-        tf_opts = strat["timeframes"]
-        tf = st.selectbox(
-            "TF",
-            tf_opts,
-            key=f"sl_tf_{sid}",
-            label_visibility="collapsed",
-        )
-    with c3:
-        lb = st.selectbox(
-            "Lookback",
-            ["1 Month","3 Months","6 Months","1 Year"],
-            index=1,
-            key=f"sl_lb_{sid}",
-            label_visibility="collapsed",
-        )
-    with c4:
-        if st.button(
-            f"🔬 Backtest",
-            key=f"bt_strat_{sid}",
-            use_container_width=True,
-        ):
-            # Map strategy direction to backtest direction filter
-            dir_map = {"Bullish": "Bullish Only", "Bearish": "Bearish Only", "Both": "Both"}
-            bt_dir  = dir_map.get(strat.get("direction","Both"), "Both")
-
-            # Map R:R string
-            rr_str = "1:2"
-            _strat_rr_str = strat.get("rr", "Min " + str(strat.get("rr_min",1.5)) + ":1")
-            if "1:3" in _strat_rr_str: rr_str = "1:3"
-            elif "1:4" in _strat_rr_str: rr_str = "1:4"
-            elif "1:1" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:1"
-
-            st.session_state.update({
-                "bt_prefill_sym":      sym,
-                "bt_prefill_tf":       tf,
-                "bt_prefill_lb":       lb,
-                "bt_prefill_rr":       rr_str,
-                "bt_prefill_dir":      bt_dir,
-                "bt_prefill_str":      50,
-                "bt_prefill_strat":    strat["name"],
-                "bt_results":          [],
-                "bt_meta":             {},
-                "bt_launched_from": {
-                    "sym": sym, "tf": tf,
-                    "dir": bt_dir, "rr": rr_str,
-                    "strat": strat["name"],
-                },
-                "current_page":        "Backtest",
-            })
-            st.rerun()
-
-
-def page_backtest():
+def _fwd_check_triggers(trades: list) -> list:
     """
-    Backtest CPR/Pivot Boss signals on historical data from Upstox (or yfinance fallback).
-    Logic: For each historical candle, compute CPR + Pivots → check if signal conditions
-    match → simulate trade with fixed R:R → record result.
+    Live trigger checker — called on every page refresh.
+    Checks each open forward test position against live LTP.
+    Updates status to HIT_TARGET / HIT_SL / RUNNING.
+    Returns updated trades list.
     """
-    st.markdown("""
-    <div class="title-bar">
-        <span style="font-size:1.5rem;">🔬</span>
-        <h1>Signal Backtester</h1>
-        <span style="margin-left:auto;background:#e4f5e8;border:1px solid #8dcc9a;
-                     color:#1a6b2e;padding:3px 12px;border-radius:20px;
-                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-            CPR · PIVOT BOSS · HISTORICAL
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    data_src = "📡 Upstox" if _upstox_connected() else "📊 yfinance (delayed ~15min)"
-
-    upstox_on = _upstox_connected()
-    DATA_AVAIL = {
-        "15 Min":  ("30 min candles",   "1 Year",    "Upstox") if upstox_on else ("15 min",  "60 Days",  "yfinance"),
-        "30 Min":  ("30 min candles",   "1 Year",    "Upstox") if upstox_on else ("30 min",  "60 Days",  "yfinance"),
-        "1 Hour":  ("60 min candles",   "1 Year",    "Upstox") if upstox_on else ("1 hour",  "2 Years",  "yfinance"),
-        "1 Day":   ("Daily candles",    "10+ Years", "Upstox") if upstox_on else ("Daily",   "10 Years", "yfinance"),
-    }
-
-    sel_tf   = st.session_state.get("bt_tf","15 Min")
-    avail    = DATA_AVAIL.get(sel_tf, DATA_AVAIL["15 Min"])
-
-    st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
-        f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-        f"padding:0.55rem 1rem;margin-bottom:0.75rem;"
-        f"display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;'>"
-        f"<span>📡 Data: <b>{avail[2]}</b></span>"
-        f"<span>📊 Resolution: <b>{avail[0]}</b></span>"
-        f"<span>📅 Max history: <b>{avail[1]}</b></span>"
-        f"{'<span style="color:#1a6b2e;">✅ Live feed active</span>' if _upstox_connected() else '<span style="color:#7a5800;">⚠️ Connect Upstox for better data</span>'}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Read prefilled values from signal card ───────────────────────────
-    pf_sym      = st.session_state.pop("bt_prefill_sym",      None)
-    pf_tf       = st.session_state.pop("bt_prefill_tf",       None)
-    pf_lb       = st.session_state.pop("bt_prefill_lb",       None)
-    pf_rr       = st.session_state.pop("bt_prefill_rr",       None)
-    pf_dir      = st.session_state.pop("bt_prefill_dir",      None)
-    pf_str      = st.session_state.pop("bt_prefill_str",      None)
-    pf_strategy = st.session_state.pop("bt_prefill_strategy", None)
-    pf_candle   = st.session_state.pop("bt_prefill_candle",   None)
-    pf_cpr_w    = st.session_state.pop("bt_prefill_cpr_w",    None)
-    pf_rsi_ref  = st.session_state.pop("bt_prefill_rsi_ref",  None)
-
-    # Store for display
-    if pf_sym:
-        st.session_state["bt_launched_from"] = {
-            "sym":      pf_sym,
-            "tf":       pf_tf,
-            "dir":      pf_dir,
-            "rr":       pf_rr,
-            "strategy": pf_strategy,
-            "candle":   pf_candle,
-            "cpr_w":    pf_cpr_w,
-            "rsi_ref":  pf_rsi_ref,
-        }
-
-    launched = st.session_state.get("bt_launched_from")
-    if launched and launched.get("strategy"):
-        st.markdown(
-            f"<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
-            f"border-radius:10px;padding:0.75rem 1.1rem;margin-bottom:1rem;"
-            f"font-family:DM Mono,monospace;'>"
-            f"<div style='font-size:0.7rem;color:#1a6b2e;font-weight:700;"
-            f"text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;'>"
-            f"🎯 Strategy Being Backtested</div>"
-            f"<div style='font-size:0.88rem;font-weight:800;color:#0e1308;"
-            f"margin-bottom:6px;'>{launched['strategy']}</div>"
-            f"<div style='display:flex;gap:12px;flex-wrap:wrap;font-size:0.72rem;color:#2e3d1a;'>"
-            f"<span>📍 Symbol: <b>{launched['sym']}</b></span>"
-            f"<span>⏱ TF: <b>{launched['tf']}</b></span>"
-            f"<span>📐 R:R: <b>{launched['rr']}</b></span>"
-            f"<span>🕯 Candle: <b>{launched.get('candle','—')}</b></span>"
-            f"<span>📊 CPR Width: <b>{launched.get('cpr_w','—')}%</b></span>"
-            f"<span>📈 RSI Ref: <b>{launched.get('rsi_ref','—')}</b></span>"
-            f"</div></div>",
-            unsafe_allow_html=True,
-        )
-
-    # Symbol list
-    ALL_SYMS = [
-        "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
-        "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
-        "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
-    ]
-
-    # ── Config ────────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        sym_default = ALL_SYMS.index(pf_sym) if pf_sym and pf_sym in ALL_SYMS else 0
-        symbol = st.selectbox("Symbol", ALL_SYMS, index=sym_default, key="bt_sym")
-    with c2:
-        tf_opts = ["15 Min","30 Min","1 Hour","1 Day"]
-        tf_default = tf_opts.index(pf_tf) if pf_tf and pf_tf in tf_opts else 0
-        tf = st.selectbox("Timeframe", tf_opts, index=tf_default, key="bt_tf")
-    with c3:
-        lb_opts = ["1 Month","3 Months","6 Months","1 Year"]
-        lb_default = lb_opts.index(pf_lb) if pf_lb and pf_lb in lb_opts else 1
-        lookback = st.selectbox("Lookback Period", lb_opts, index=lb_default, key="bt_lookback")
-    with c4:
-        rr_opts = ["1:1","1:2","1:3","1:4"]
-        rr_default = rr_opts.index(pf_rr) if pf_rr and pf_rr in rr_opts else 1
-        rr_target = st.selectbox("R:R Target", rr_opts, index=rr_default, key="bt_rr")
-
-    c5, c6, c7 = st.columns(3)
-    with c5:
-        dir_opts = ["Both","Bullish Only","Bearish Only"]
-        dir_default = dir_opts.index(pf_dir) if pf_dir and pf_dir in dir_opts else 0
-        signal_type = st.radio("Signal Direction", dir_opts,
-                               index=dir_default, horizontal=True, key="bt_dir")
-    with c6:
-        min_strength = st.slider("Min CPR Strength %", 0, 100,
-                                  pf_str if pf_str is not None else 60,
-                                  key="bt_str")
-    with c7:
-        sl_method = st.selectbox("Stop Loss Method",
-                                  ["Previous Candle High/Low","ATR-based (1.5x)","CPR Width"],
-                                  key="bt_sl")
-
-    # Auto-run if launched from signal card
-    auto_run = pf_sym is not None
-    run_bt   = st.button("▶ Run Backtest", use_container_width=True, key="btn_run_bt") or auto_run
-
-    if not run_bt and not st.session_state.get("bt_results"):
-        st.markdown("""
-        <div style="text-align:center;padding:2.5rem;background:#f5f8ed;
-                    border:2px dashed #b8c89a;border-radius:12px;">
-            <div style="font-size:2rem;margin-bottom:0.5rem;">🔬</div>
-            <div style="font-family:DM Mono,monospace;font-size:0.9rem;
-                        color:#2e3d1a;font-weight:700;">Configure and run backtest</div>
-            <div style="font-size:0.8rem;color:#4a5e32;margin-top:0.4rem;">
-                Replays CPR + Pivot Boss signals on historical candles
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    if run_bt:
-        # ── Fetch historical data ─────────────────────────────────────────
-        tf_map = {
-            "15 Min": ("15m",  "60d"),
-            "30 Min": ("30m",  "90d"),
-            "1 Hour": ("1h",   "180d"),
-            "1 Day":  ("1d",   "365d"),
-        }
-        lb_map = {
-            "1 Month":  30,  "3 Months": 90,
-            "6 Months": 180, "1 Year":   365,
-        }
-        interval, _ = tf_map[tf]
-        days         = lb_map[lookback]
-        rr_val       = int(rr_target.split(":")[1])
-
-        from_dt = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        to_dt   = datetime.now().strftime("%Y-%m-%d")
-        source  = "Upstox" if _upstox_connected() else "yfinance"
-
-        with st.spinner(f"Fetching {symbol} {tf} data via {source} ({lookback})..."):
-            df = pd.DataFrame()
-            if _upstox_connected():
-                df = upstox_get_historical(symbol, interval, from_dt, to_dt)
-                if df.empty:
-                    st.warning(
-                        f"⚠️ Upstox returned no data for **{symbol}** ({interval}). "
-                        f"This may mean the symbol is not in the ISIN map or the interval "
-                        f"is not available. Falling back to yfinance."
-                    )
-
-            if df.empty:
-                source = "yfinance (fallback)"
-                try:
-                    df = yf.Ticker(symbol+".NS").history(period=f"{days}d", interval=interval)
-                    if not df.empty:
-                        df.index = df.index.tz_localize(None)
-                except Exception as e:
-                    st.error(f"yfinance fetch failed: {e}")
-
-            if not df.empty:
-                st.caption(f"✅ {len(df)} candles fetched from **{source}**")
-
-        if df.empty or len(df) < 30:
-            st.error("Not enough historical data. Try a longer period or different symbol.")
-            return
-
-        df = df.copy()
-        df.columns = [c.title() for c in df.columns]
-
-        # ── Run backtest logic ────────────────────────────────────────────
-        with st.spinner("Running backtest on historical signals..."):
-            results = _run_cpr_backtest(
-                df, symbol, interval, rr_val, signal_type, min_strength, sl_method
-            )
-
-        launched_now = st.session_state.get("bt_launched_from", {})
-        st.session_state["bt_results"] = results
-        st.session_state["bt_meta"]    = {
-            "symbol":   symbol,
-            "tf":       tf,
-            "lookback": lookback,
-            "rr":       rr_target,
-            "bars":     len(df),
-            "strategy": launched_now.get("strategy","Custom Backtest"),
-            "candle":   launched_now.get("candle","—"),
-            "direction":signal_type,
-        }
-
-    # ── Display results ───────────────────────────────────────────────────
-    results = st.session_state.get("bt_results", [])
-    meta    = st.session_state.get("bt_meta",    {})
-
-    if not results:
-        st.info("No signals found in this period. Try a longer lookback or lower strength filter.")
-        return
-
-    _render_backtest_results(results, meta)
-
-
-def _run_cpr_backtest(df: pd.DataFrame, symbol: str, interval: str,
-                       rr: int, direction: str, min_strength: int,
-                       sl_method: str) -> list:
-    """
-    Replay CPR + Pivot signals candle by candle.
-    For each candle i, use candles 0..i-1 to compute the signal,
-    then simulate the trade outcome using candles i..i+20.
-    """
-    results = []
-    candles = df.reset_index()
-
-    # Need at least 20 candles of history to compute pivots
-    for i in range(20, len(candles) - 5):
-        hist    = candles.iloc[:i].copy()
-        hist.index = hist.iloc[:, 0] if hist.columns[0] != "Open" else hist.index
-
-        try:
-            # Compute CPR on previous candles
-            cpr     = compute_cpr(hist)
-            pivots  = compute_pivot_points(hist, "Traditional")
-            ind_df  = compute_indicators(hist)
-            if ind_df.empty:
-                continue
-
-            last_close = float(hist["Close"].iloc[-1])
-            last_high  = float(hist["High"].iloc[-1])
-            last_low   = float(hist["Low"].iloc[-1])
-            atr        = float(ind_df["ATR"].iloc[-1]) if "ATR" in ind_df.columns else (last_high - last_low)
-
-            # CPR levels
-            pivot = cpr.get("pivot", 0)
-            bc    = cpr.get("bc",    0)
-            tc    = cpr.get("tc",    0)
-            cpr_w = abs(tc - bc) / max(pivot, 1) * 100 if pivot else 0
-
-            # Signal strength scoring (simplified from scanner)
-            score = 0
-            bias  = None
-
-            # Price vs CPR
-            if last_close > tc:
-                score += 25; bias = "Bullish"
-            elif last_close < bc:
-                score += 25; bias = "Bearish"
-
-            # RSI filter
-            rsi = float(ind_df["RSI"].iloc[-1]) if "RSI" in ind_df.columns else 50
-            if bias == "Bullish" and 50 < rsi < 75:  score += 20
-            elif bias == "Bearish" and 25 < rsi < 50: score += 20
-
-            # HMA direction
-            if "HMA" in ind_df.columns:
-                hma_vals = ind_df["HMA"].dropna()
-                if len(hma_vals) >= 2:
-                    if bias == "Bullish" and hma_vals.iloc[-1] > hma_vals.iloc[-2]: score += 20
-                    elif bias == "Bearish" and hma_vals.iloc[-1] < hma_vals.iloc[-2]: score += 20
-
-            # CPR width (narrow = stronger)
-            if cpr_w < 0.5:   score += 20
-            elif cpr_w < 1.0: score += 10
-
-            # Pivot proximity
-            r1 = pivots.get("R1", 0); s1 = pivots.get("S1", 0)
-            if bias == "Bullish" and last_close > pivot: score += 15
-            elif bias == "Bearish" and last_close < pivot: score += 15
-
-            if score < min_strength or not bias:
-                continue
-
-            # Direction filter
-            if direction == "Bullish Only" and bias != "Bullish": continue
-            if direction == "Bearish Only" and bias != "Bearish": continue
-
-            # Entry price = next candle open
-            if i >= len(candles) - 1: continue
-            entry_candle = candles.iloc[i]
-            entry_px     = float(entry_candle["Open"])
-
-            # Stop loss calculation
-            if sl_method == "Previous Candle High/Low":
-                sl = last_low * 0.999  if bias == "Bullish" else last_high * 1.001
-            elif sl_method == "ATR-based (1.5x)":
-                sl = entry_px - 1.5*atr if bias == "Bullish" else entry_px + 1.5*atr
-            else:  # CPR Width
-                sl = entry_px - (tc - bc) if bias == "Bullish" else entry_px + (tc - bc)
-
-            risk   = abs(entry_px - sl)
-            if risk < 0.01: continue
-            target = entry_px + rr * risk if bias == "Bullish" else entry_px - rr * risk
-
-            # Simulate outcome over next 20 candles
-            outcome = "OPEN"
-            exit_px = entry_px
-            exit_i  = min(i + 20, len(candles) - 1)
-            bars_held = 0
-
-            for j in range(i, exit_i + 1):
-                c     = candles.iloc[j]
-                c_hi  = float(c["High"])
-                c_lo  = float(c["Low"])
-                bars_held += 1
-
-                if bias == "Bullish":
-                    if c_lo <= sl:
-                        outcome = "LOSS"; exit_px = sl; break
-                    if c_hi >= target:
-                        outcome = "WIN";  exit_px = target; break
-                else:
-                    if c_hi >= sl:
-                        outcome = "LOSS"; exit_px = sl; break
-                    if c_lo <= target:
-                        outcome = "WIN";  exit_px = target; break
-
-            if outcome == "OPEN":
-                exit_px = float(candles.iloc[exit_i]["Close"])
-                pnl_pts = (exit_px - entry_px) if bias == "Bullish" else (entry_px - exit_px)
-                outcome = "WIN" if pnl_pts > 0 else "LOSS"
-
-            pnl_pts = (exit_px - entry_px) if bias == "Bullish" else (entry_px - exit_px)
-            pnl_pct = round(pnl_pts / entry_px * 100, 2)
-
-            trade_dt = str(candles.iloc[i].get("Datetime", candles.iloc[i].get("Date","")))[:16]
-
-            results.append({
-                "date":      trade_dt,
-                "bias":      bias,
-                "entry":     round(entry_px, 2),
-                "target":    round(target,   2),
-                "sl":        round(sl,       2),
-                "exit":      round(exit_px,  2),
-                "outcome":   outcome,
-                "pnl_pct":   pnl_pct,
-                "strength":  score,
-                "cpr_w":     round(cpr_w, 3),
-                "rsi":       round(rsi, 1),
-                "bars":      bars_held,
-            })
-
-        except Exception:
+    updated = False
+    for i, t in enumerate(trades):
+        if t["status"] != "OPEN":
+            continue
+        ltp = _fwd_get_ltp(t["symbol"])
+        if not ltp:
             continue
 
-    return results
+        side   = t["side"]
+        target = t["target"]
+        sl     = t["sl"]
+        entry  = t["entry"]
+
+        if side == "BUY":
+            if ltp >= target:
+                trades[i].update({
+                    "status":   "TARGET HIT ✅",
+                    "exit_px":  target,
+                    "pnl":      round((target - entry) * t["qty"], 2),
+                    "pnl_pct":  round((target - entry) / entry * 100, 2),
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                })
+                updated = True
+            elif ltp <= sl:
+                trades[i].update({
+                    "status":   "SL HIT ❌",
+                    "exit_px":  sl,
+                    "pnl":      round((sl - entry) * t["qty"], 2),
+                    "pnl_pct":  round((sl - entry) / entry * 100, 2),
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                })
+                updated = True
+            else:
+                trades[i]["live_ltp"] = ltp
+                trades[i]["live_pnl"] = round((ltp - entry) * t["qty"], 2)
+                trades[i]["live_pct"] = round((ltp - entry) / entry * 100, 2)
+        else:  # SELL
+            if ltp <= target:
+                trades[i].update({
+                    "status":   "TARGET HIT ✅",
+                    "exit_px":  target,
+                    "pnl":      round((entry - target) * t["qty"], 2),
+                    "pnl_pct":  round((entry - target) / entry * 100, 2),
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                })
+                updated = True
+            elif ltp >= sl:
+                trades[i].update({
+                    "status":   "SL HIT ❌",
+                    "exit_px":  sl,
+                    "pnl":      round((entry - sl) * t["qty"], 2),
+                    "pnl_pct":  round((entry - sl) / entry * 100, 2),
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                })
+                updated = True
+            else:
+                trades[i]["live_ltp"] = ltp
+                trades[i]["live_pnl"] = round((entry - ltp) * t["qty"], 2)
+                trades[i]["live_pct"] = round((entry - ltp) / entry * 100, 2)
+
+    if updated:
+        _save_paper_trades()
+    return trades
 
 
-def _render_backtest_results(results: list, meta: dict):
-    """Render backtest results with stats, equity curve, walk-forward split, trade table."""
-    if not results:
-        st.warning("No trades generated. Try lowering Min Strength or longer lookback.")
-        return
+def page_forward_test():
+    """
+    Forward Testing Simulator.
+    - All scanner signals auto-flow in as forward test positions
+    - Live SL / Target triggers checked on every refresh via Upstox/yfinance LTP
+    - Full P&L report at top: daily summary, win rate, drawdown, strategy breakdown
+    - Manual entry also supported
+    """
+    from datetime import timezone
 
-    wins   = [r for r in results if r["outcome"] == "WIN"]
-    losses = [r for r in results if r["outcome"] == "LOSS"]
-    total  = len(results)
-    wr     = round(len(wins)/total*100, 1) if total else 0
-    avg_win  = round(sum(r["pnl_pct"] for r in wins)  / max(len(wins),  1), 2)
-    avg_loss = round(sum(r["pnl_pct"] for r in losses) / max(len(losses),1), 2)
-    pf       = round(abs(sum(r["pnl_pct"] for r in wins)) /
-                     max(abs(sum(r["pnl_pct"] for r in losses)), 0.01), 2)
-    tot_pnl  = round(sum(r["pnl_pct"] for r in results), 2)
-    exp      = round(tot_pnl / total, 2) if total else 0
-    max_dd   = _calc_max_drawdown(results)
+    IST = timezone(timedelta(hours=5, minutes=30))
 
-    # ── Summary metrics ───────────────────────────────────────────────────
-    sym      = meta.get("symbol","")
-    tf       = meta.get("tf","")
-    bars     = meta.get("bars", 0)
-    strategy = meta.get("strategy","—")
-    candle   = meta.get("candle","—")
+    # ── Auto-refresh every 15s during market hours ────────────────────────
+    if _HAS_AUTOREFRESH and is_market_open():
+        st_autorefresh(interval=15_000, limit=None, key="fwd_autorefresh")
 
-    # Strategy name header
+    # ── Load + trigger-check trades ───────────────────────────────────────
+    trades = st.session_state.get("paper_trades", [])
+    trades = _fwd_check_triggers(trades)
+    st.session_state["paper_trades"] = trades
+
+    today      = datetime.now(IST).strftime("%Y-%m-%d")
+    closed     = [t for t in trades if t.get("status","") != "OPEN"]
+    open_tr    = [t for t in trades if t.get("status","") == "OPEN"]
+    today_cl   = [t for t in closed if str(t.get("opened_at","")).startswith(today)
+                  or str(t.get("time","")).startswith(today[:6])]
+    wins       = [t for t in closed if t.get("pnl", 0) > 0]
+    losses     = [t for t in closed if t.get("pnl", 0) <= 0]
+    today_wins = [t for t in today_cl if t.get("pnl", 0) > 0]
+    today_loss = [t for t in today_cl if t.get("pnl", 0) <= 0]
+
+    balance    = st.session_state.get("paper_balance", 100000.0)
+    total_pnl  = sum(t.get("pnl", 0) for t in closed)
+    today_pnl  = sum(t.get("pnl", 0) for t in today_cl)
+    live_pnl   = sum(t.get("live_pnl", 0) for t in open_tr)
+    win_rate   = round(len(wins)/max(len(closed),1)*100, 1)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  TOP: P&L REPORT DASHBOARD
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.4rem;">🧪</span>
+        <h1>Forward Testing Simulator</h1>
+        <span style="margin-left:auto;background:#e4f5e8;border:1px solid #8dcc9a;
+                     color:#1a6b2e;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
+            LIVE TRIGGER ENGINE
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Market status ─────────────────────────────────────────────────────
+    mkt = is_market_open()
+    data_src = "📡 Upstox Live" if _upstox_connected() else "📊 yfinance (15min delay)"
     st.markdown(
-        f"<div style='background:#f0f4e8;border:1.5px solid #b8c89a;"
-        f"border-radius:10px;padding:0.75rem 1.1rem;margin-bottom:0.75rem;"
-        f"font-family:DM Mono,monospace;'>"
-        f"<div style='font-size:0.68rem;color:#4a5e32;font-weight:700;"
-        f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;'>"
-        f"🔬 Backtest Results — Strategy</div>"
-        f"<div style='font-size:0.9rem;font-weight:800;color:#0e1308;margin-bottom:5px;'>"
-        f"{strategy}</div>"
-        f"<div style='font-size:0.72rem;color:#2e3d1a;display:flex;gap:14px;flex-wrap:wrap;'>"
-        f"<span>📍 <b>{sym}</b></span>"
-        f"<span>⏱ <b>{tf}</b></span>"
-        f"<span>📅 <b>{meta.get('lookback','')}</b></span>"
-        f"<span>📊 <b>{bars}</b> candles</span>"
-        f"<span>📐 R:R <b>{meta.get('rr','')}</b></span>"
-        f"<span>🕯 <b>{candle}</b></span>"
-        f"<span>🔢 <b>{total}</b> signals found</span>"
-        f"</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    m1,m2,m3,m4,m5,m6 = st.columns(6)
-    m1.metric("✅ Win Rate",      f"{wr}%",     f"{len(wins)}W / {len(losses)}L")
-    m2.metric("📈 Total P&L",     f"{tot_pnl:+.1f}%")
-    m3.metric("💰 Profit Factor", f"{pf}x")
-    m4.metric("📊 Expectancy",    f"{exp:+.2f}%")
-    m5.metric("🟢 Avg Win",       f"{avg_win:+.2f}%")
-    m6.metric("🔴 Avg Loss",      f"{avg_loss:+.2f}%")
-
-    # Max drawdown + streak
-    st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
-        f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-        f"padding:0.5rem 1rem;margin:0.5rem 0;display:flex;gap:2rem;flex-wrap:wrap;'>"
-        f"<span>📉 Max Drawdown: <b style='color:#9e2018;'>{max_dd:.1f}%</b></span>"
-        f"<span>🏆 Best Trade: <b style='color:#1a6b2e;'>{max(r['pnl_pct'] for r in results):+.2f}%</b></span>"
-        f"<span>💀 Worst Trade: <b style='color:#9e2018;'>{min(r['pnl_pct'] for r in results):+.2f}%</b></span>"
-        f"<span>⏱️ Avg Bars Held: <b>{round(sum(r['bars'] for r in results)/total,1)}</b></span>"
+        f"<div style='font-family:DM Mono,monospace;font-size:0.73rem;"
+        f"color:{'#1a6b2e' if mkt else '#7a5800'};"
+        f"background:{'#e4f5e8' if mkt else '#fdf3d4'};"
+        f"border:1px solid {'#8dcc9a' if mkt else '#e0c060'};"
+        f"border-radius:7px;padding:5px 12px;margin-bottom:0.75rem;'>"
+        f"{'🟢 Market OPEN' if mkt else '🟡 Market Closed'} "
+        f"· Data: {data_src} "
+        f"· Triggers check every {'15s' if mkt else 'manual refresh only'}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    # ── Equity curve ──────────────────────────────────────────────────────
-    st.markdown("#### 📈 Equity Curve")
-    equity = []; cum = 0
-    for r in results:
-        cum += r["pnl_pct"]
-        equity.append({"Trade #": r["date"][:10], "Cumulative P&L %": round(cum, 2)})
-    eq_df = pd.DataFrame(equity)
+    # ════════════════════════════════════════════════════════════════════
+    #  P&L REPORT — ALWAYS AT TOP
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown("### 📊 P&L Report")
 
-    import plotly.graph_objects as go
-    fig = go.Figure()
-    colors = ["#1a6b2e" if v >= 0 else "#9e2018" for v in eq_df["Cumulative P&L %"]]
-    fig.add_trace(go.Scatter(
-        x=eq_df["Trade #"], y=eq_df["Cumulative P&L %"],
-        mode="lines+markers",
-        line=dict(color="#3d5a1c", width=2),
-        marker=dict(color=colors, size=5),
-        fill="tozeroy",
-        fillcolor="rgba(61,90,28,0.1)",
-        name="Equity"
-    ))
-    fig.add_hline(y=0, line_dash="dash", line_color="#b8c89a", line_width=1)
-    fig.update_layout(
-        height=280, margin=dict(l=0,r=0,t=10,b=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(240,244,232,0.5)",
-        font=dict(family="DM Mono", size=11, color="#0e1308"),
-        xaxis=dict(showgrid=False, tickangle=-45, nticks=10),
-        yaxis=dict(showgrid=True, gridcolor="#dae0cb", zeroline=False,
-                   tickformat="+.1f", ticksuffix="%"),
-        showlegend=False,
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    # Summary metrics
+    r1, r2, r3, r4, r5, r6 = st.columns(6)
+    r1.metric("💰 Virtual Balance",  f"₹{balance:,.0f}")
+    r2.metric("📅 Today P&L",        f"₹{today_pnl:+,.0f}",
+              f"{len(today_wins)}W / {len(today_loss)}L today")
+    r3.metric("📈 Total P&L",        f"₹{total_pnl:+,.0f}")
+    r4.metric("⚡ Live Unrealised",   f"₹{live_pnl:+,.0f}",
+              f"{len(open_tr)} open")
+    r5.metric("✅ Win Rate",          f"{win_rate}%",
+              f"{len(wins)}W / {len(losses)}L all-time")
+    pf = round(sum(t["pnl"] for t in wins)/max(abs(sum(t["pnl"] for t in losses)),0.01),2)
+    r6.metric("📊 Profit Factor",    f"{pf}x")
 
-    # ── Walk-forward validation (70/30 split) ────────────────────────────
-    st.markdown("#### 🔄 Walk-Forward Validation (70% train / 30% test)")
-    split     = int(len(results) * 0.7)
-    in_sample = results[:split]
-    out_sample= results[split:]
+    # Strategy breakdown table
+    if closed:
+        st.markdown("##### Strategy Performance")
+        strat_perf = {}
+        for t in closed:
+            src = t.get("source","Manual")
+            if src not in strat_perf:
+                strat_perf[src] = {"trades":0,"wins":0,"pnl":0.0}
+            strat_perf[src]["trades"] += 1
+            strat_perf[src]["pnl"]   += t.get("pnl",0)
+            if t.get("pnl",0) > 0:
+                strat_perf[src]["wins"] += 1
+        rows = []
+        for src, v in sorted(strat_perf.items(), key=lambda x: -x[1]["pnl"]):
+            wr = round(v["wins"]/v["trades"]*100)
+            rows.append({
+                "Strategy / Source": src,
+                "Trades": v["trades"],
+                "Win Rate": f"{wr}%",
+                "Total P&L": f"₹{v['pnl']:+,.2f}",
+                "Avg P&L": f"₹{v['pnl']/v['trades']:+,.2f}",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    if len(in_sample) >= 3 and len(out_sample) >= 2:
-        def _stats(trades):
-            w = [t for t in trades if t["outcome"]=="WIN"]
-            l = [t for t in trades if t["outcome"]=="LOSS"]
-            wr = round(len(w)/len(trades)*100,1) if trades else 0
-            pnl= round(sum(t["pnl_pct"] for t in trades),2)
-            pf = round(abs(sum(t["pnl_pct"] for t in w))/max(abs(sum(t["pnl_pct"] for t in l)),0.01),2)
-            return wr, pnl, pf
+        # Daily P&L bar chart
+        if len(closed) >= 2:
+            st.markdown("##### Daily P&L")
+            import plotly.graph_objects as go
+            df_cl = pd.DataFrame(closed)
+            df_cl["date"] = pd.to_datetime(
+                df_cl.get("opened_at", df_cl.get("time",""))
+                , errors="coerce"
+            ).dt.date
+            daily = df_cl.groupby("date")["pnl"].sum().reset_index()
+            colors = ["#1a6b2e" if p >= 0 else "#9e2018" for p in daily["pnl"]]
+            fig = go.Figure(go.Bar(
+                x=daily["date"].astype(str),
+                y=daily["pnl"],
+                marker_color=colors,
+                text=[f"₹{p:+,.0f}" for p in daily["pnl"]],
+                textposition="outside",
+            ))
+            fig.update_layout(
+                height=220, margin=dict(l=0,r=0,t=10,b=0),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(240,244,232,0.3)",
+                font=dict(family="DM Mono",size=10,color="#0e1308"),
+                yaxis=dict(tickformat="+,.0f",tickprefix="₹",showgrid=True,
+                           gridcolor="#dae0cb"),
+                xaxis=dict(showgrid=False),
+                showlegend=False,
+            )
+            fig.add_hline(y=0,line_dash="dash",line_color="#b8c89a",line_width=1)
+            st.plotly_chart(fig, use_container_width=True)
 
-        is_wr, is_pnl, is_pf = _stats(in_sample)
-        oos_wr,oos_pnl,oos_pf= _stats(out_sample)
+    st.divider()
 
-        wfc1,wfc2 = st.columns(2)
-        with wfc1:
-            healthy = "#e4f5e8" if is_wr >= 50 else "#fbe8e6"
+    # ════════════════════════════════════════════════════════════════════
+    #  OPEN POSITIONS — LIVE TRIGGER STATUS
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown("### ⚡ Open Positions — Live")
+
+    if not open_tr:
+        st.markdown(
+            "<div style='text-align:center;padding:1.5rem;background:#f5f8ed;"
+            "border:2px dashed #b8c89a;border-radius:10px;"
+            "font-family:DM Mono,monospace;color:#4a5e32;'>"
+            "No open positions. Run the CPR Scanner → signals auto-appear here."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        for t in open_tr:
+            ltp   = t.get("live_ltp", t["entry"])
+            upnl  = t.get("live_pnl", 0)
+            upct  = t.get("live_pct", 0)
+            bull  = t["side"] == "BUY"
+            ac    = "#1a6b2e" if bull else "#9e2018"
+            bg    = "#e4f5e8" if bull else "#fbe8e6"
+            pnl_c = "#1a6b2e" if upnl >= 0 else "#9e2018"
+
+            # Distance to target and SL
+            entry  = t["entry"]
+            target = t["target"]
+            sl     = t["sl"]
+            tgt_pct= round((target-ltp)/max(ltp,1)*100,1) if bull else round((ltp-target)/max(ltp,1)*100,1)
+            sl_pct = round((ltp-sl)/max(ltp,1)*100,1)    if bull else round((sl-ltp)/max(ltp,1)*100,1)
+
+            # Progress bar: how far from entry to target
+            if bull:
+                progress = min(max((ltp-entry)/max(target-entry,0.01)*100,0),100)
+            else:
+                progress = min(max((entry-ltp)/max(entry-target,0.01)*100,0),100)
+            prog_col = "#1a6b2e" if progress > 50 else "#ba7517"
+
             st.markdown(
-                f"<div style='background:{healthy};border:1.5px solid #b8c89a;"
-                f"border-radius:10px;padding:0.85rem 1rem;font-family:DM Mono,monospace;'>"
-                f"<div style='font-size:0.68rem;font-weight:700;color:#4a5e32;"
-                f"text-transform:uppercase;margin-bottom:0.4rem;'>"
-                f"In-Sample (first {split} trades)</div>"
-                f"<div style='display:flex;gap:1rem;'>"
-                f"<span>Win Rate <b>{is_wr}%</b></span>"
-                f"<span>P&L <b>{is_pnl:+.1f}%</b></span>"
-                f"<span>PF <b>{is_pf}x</b></span>"
-                f"</div></div>", unsafe_allow_html=True)
-        with wfc2:
-            oos_healthy = "#e4f5e8" if oos_wr >= 45 else "#fbe8e6"
-            st.markdown(
-                f"<div style='background:{oos_healthy};border:1.5px solid #b8c89a;"
-                f"border-radius:10px;padding:0.85rem 1rem;font-family:DM Mono,monospace;'>"
-                f"<div style='font-size:0.68rem;font-weight:700;color:#4a5e32;"
-                f"text-transform:uppercase;margin-bottom:0.4rem;'>"
-                f"Out-of-Sample (last {len(out_sample)} trades)</div>"
-                f"<div style='display:flex;gap:1rem;'>"
-                f"<span>Win Rate <b>{oos_wr}%</b></span>"
-                f"<span>P&L <b>{oos_pnl:+.1f}%</b></span>"
-                f"<span>PF <b>{oos_pf}x</b></span>"
-                f"</div></div>", unsafe_allow_html=True)
+                f"<div style='background:#fff;border:1.5px solid #b8c89a;"
+                f"border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;"
+                f"border-left:4px solid {ac};'>"
+                f"<div style='display:flex;flex-wrap:wrap;gap:10px;"
+                f"align-items:center;margin-bottom:6px;'>"
+                f"<b style='font-size:1rem;color:#0e1308;'>{t['symbol']}</b>"
+                f"<span style='background:{bg};color:{ac};border-radius:5px;"
+                f"padding:1px 8px;font-size:0.68rem;font-weight:700;"
+                f"font-family:DM Mono,monospace;'>{t['side']}</span>"
+                f"<span style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                f"color:#4a5e32;'>{t.get('source','Manual')}</span>"
+                f"<span style='margin-left:auto;font-family:DM Mono,monospace;"
+                f"font-size:0.72rem;color:#2e3d1a;'>LTP ₹{ltp:,.2f}</span>"
+                f"<span style='font-family:DM Mono,monospace;font-size:0.8rem;"
+                f"font-weight:700;color:{pnl_c};'>₹{upnl:+,.2f} ({upct:+.1f}%)</span>"
+                f"</div>"
+                f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
+                f"gap:6px;margin-bottom:8px;font-family:DM Mono,monospace;"
+                f"font-size:0.73rem;'>"
+                f"<div style='text-align:center;background:#f5f8ed;"
+                f"border-radius:6px;padding:4px;'>"
+                f"<div style='color:#8a9a78;font-size:0.62rem;'>ENTRY</div>"
+                f"<div style='font-weight:700;color:#0e1308;'>₹{entry:,.2f}</div></div>"
+                f"<div style='text-align:center;background:#e4f5e8;"
+                f"border-radius:6px;padding:4px;'>"
+                f"<div style='color:#1a6b2e;font-size:0.62rem;'>"
+                f"TARGET ({tgt_pct:+.1f}%)</div>"
+                f"<div style='font-weight:700;color:#1a6b2e;'>₹{target:,.2f}</div></div>"
+                f"<div style='text-align:center;background:#fbe8e6;"
+                f"border-radius:6px;padding:4px;'>"
+                f"<div style='color:#9e2018;font-size:0.62rem;'>"
+                f"STOP LOSS ({sl_pct:+.1f}%)</div>"
+                f"<div style='font-weight:700;color:#9e2018;'>₹{sl:,.2f}</div></div>"
+                f"<div style='text-align:center;background:#f5f8ed;"
+                f"border-radius:6px;padding:4px;'>"
+                f"<div style='color:#8a9a78;font-size:0.62rem;'>QTY · R:R</div>"
+                f"<div style='font-weight:700;color:#0e1308;'>"
+                f"{t['qty']} · {t.get('rr',0)}x</div></div>"
+                f"</div>"
+                f"<div style='background:#f0f4e8;border-radius:4px;height:6px;overflow:hidden;'>"
+                f"<div style='background:{prog_col};width:{progress:.0f}%;"
+                f"height:100%;border-radius:4px;transition:width 1s;'></div></div>"
+                f"<div style='font-family:DM Mono,monospace;font-size:0.62rem;"
+                f"color:#8a9a78;margin-top:3px;text-align:right;'>"
+                f"{progress:.0f}% to target</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            # Manual exit button
+            mc1, mc2, mc3 = st.columns([2,2,1])
+            with mc3:
+                if st.button("✖ Exit", key=f"exit_{t['id']}_{t['symbol']}",
+                              use_container_width=True):
+                    for j, tt in enumerate(st.session_state["paper_trades"]):
+                        if tt["id"] == t["id"] and tt["status"] == "OPEN":
+                            cur = _fwd_get_ltp(tt["symbol"]) or tt["entry"]
+                            pnl = round((cur-tt["entry"])*tt["qty"] if tt["side"]=="BUY"
+                                        else (tt["entry"]-cur)*tt["qty"], 2)
+                            st.session_state["paper_trades"][j].update({
+                                "status":   "MANUAL EXIT",
+                                "exit_px":  cur,
+                                "pnl":      pnl,
+                                "pnl_pct":  round(pnl/max(tt["cost"],1)*100,2),
+                                "exit_time":datetime.now().strftime("%H:%M:%S"),
+                            })
+                            st.session_state["paper_balance"] += tt["cost"] + pnl
+                            _save_paper_trades()
+                            st.rerun()
 
-        # Verdict
-        degradation = is_wr - oos_wr
-        if degradation <= 5:
-            st.success(f"✅ Robust strategy — OOS win rate only {degradation:.1f}% lower than in-sample. Strategy generalises well.")
-        elif degradation <= 15:
-            st.warning(f"⚠️ Moderate degradation — OOS win rate is {degradation:.1f}% lower. Consider tightening entry filters.")
-        else:
-            st.error(f"❌ High degradation ({degradation:.1f}%) — strategy may be over-fit to this period. Use longer lookback.")
+    st.divider()
 
-    # ── Win/Loss by direction ─────────────────────────────────────────────
-    bull_r = [r for r in results if r["bias"] == "Bullish"]
-    bear_r = [r for r in results if r["bias"] == "Bearish"]
+    # ════════════════════════════════════════════════════════════════════
+    #  MANUAL TRADE ENTRY
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander("➕ Manual Forward Test Entry", expanded=False):
+        mc1, mc2, mc3 = st.columns(3)
+        syms = ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
+                "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","AXISBANK","MARUTI",
+                "TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC","BAJAJHFL"]
+        with mc1:
+            sym  = st.selectbox("Symbol", syms, key="ft_sym")
+            side = st.radio("Direction", ["BUY","SELL"], horizontal=True, key="ft_side")
+        with mc2:
+            try:   ltp_now = _fwd_get_ltp(sym)
+            except: ltp_now = 0.0
+            entry   = st.number_input("Entry ₹", value=ltp_now, step=0.5, key="ft_entry")
+            qty     = st.number_input("Qty", value=1, min_value=1, key="ft_qty")
+        with mc3:
+            target  = st.number_input("Target ₹",
+                                       value=round(ltp_now*1.02,2) if side=="BUY" else round(ltp_now*0.98,2),
+                                       step=0.5, key="ft_target")
+            sl      = st.number_input("Stop Loss ₹",
+                                       value=round(ltp_now*0.99,2) if side=="BUY" else round(ltp_now*1.01,2),
+                                       step=0.5, key="ft_sl")
+        risk   = abs(entry-sl)*qty
+        reward = abs(target-entry)*qty
+        rr     = round(reward/max(risk,0.01),2)
+        cost   = round(entry*qty,2)
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
+            f"background:#f5f8ed;border:1px solid #b8c89a;border-radius:7px;"
+            f"padding:6px 12px;display:flex;gap:1.5rem;flex-wrap:wrap;'>"
+            f"<span>Cost <b>₹{cost:,.0f}</b></span>"
+            f"<span>Risk <b>₹{risk:,.0f}</b></span>"
+            f"<span>Reward <b>₹{reward:,.0f}</b></span>"
+            f"<span>R:R <b>{rr}x</b></span></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🧪 Add to Forward Test", use_container_width=True, key="ft_add"):
+            if cost > balance:
+                st.error("Insufficient virtual balance.")
+            else:
+                if "paper_trades" not in st.session_state:
+                    st.session_state["paper_trades"] = []
+                trade = {
+                    "id":       len(st.session_state["paper_trades"])+1,
+                    "symbol":   sym, "side": side,
+                    "entry":    entry, "qty": qty,
+                    "target":   target, "sl": sl,
+                    "rr":       rr, "cost": cost,
+                    "status":   "OPEN", "pnl": 0.0,
+                    "exit_px":  None, "live_ltp": entry,
+                    "live_pnl": 0.0,  "live_pct": 0.0,
+                    "source":   "Manual",
+                    "opened_at":datetime.now().isoformat(),
+                    "time":     datetime.now().strftime("%d %b %H:%M"),
+                }
+                st.session_state["paper_trades"].append(trade)
+                st.session_state["paper_balance"] -= cost
+                _save_paper_trades()
+                st.success(f"✅ {side} {qty}×{sym} @ ₹{entry} added to forward test.")
+                st.rerun()
 
-    if bull_r and bear_r:
-        dc1, dc2 = st.columns(2)
-        with dc1:
-            bull_wr = round(sum(1 for r in bull_r if r["outcome"]=="WIN")/len(bull_r)*100,1)
-            st.markdown(
-                f"<div style='background:#e4f5e8;border:1.5px solid #8dcc9a;"
-                f"border-radius:9px;padding:0.75rem 1rem;text-align:center;"
-                f"font-family:DM Mono,monospace;'>"
-                f"<div style='font-size:0.7rem;color:#1a6b2e;font-weight:700;'>▲ BULLISH SIGNALS</div>"
-                f"<div style='font-size:1.4rem;font-weight:800;color:#1a6b2e;'>{bull_wr}%</div>"
-                f"<div style='font-size:0.7rem;color:#2e3d1a;'>{len(bull_r)} trades · "
-                f"P&L {sum(r['pnl_pct'] for r in bull_r):+.1f}%</div>"
-                f"</div>", unsafe_allow_html=True)
-        with dc2:
-            bear_wr = round(sum(1 for r in bear_r if r["outcome"]=="WIN")/len(bear_r)*100,1)
-            st.markdown(
-                f"<div style='background:#fbe8e6;border:1.5px solid #dc9090;"
-                f"border-radius:9px;padding:0.75rem 1rem;text-align:center;"
-                f"font-family:DM Mono,monospace;'>"
-                f"<div style='font-size:0.7rem;color:#9e2018;font-weight:700;'>▼ BEARISH SIGNALS</div>"
-                f"<div style='font-size:1.4rem;font-weight:800;color:#9e2018;'>{bear_wr}%</div>"
-                f"<div style='font-size:0.7rem;color:#2e3d1a;'>{len(bear_r)} trades · "
-                f"P&L {sum(r['pnl_pct'] for r in bear_r):+.1f}%</div>"
-                f"</div>", unsafe_allow_html=True)
+    # ════════════════════════════════════════════════════════════════════
+    #  CLOSED TRADES LOG
+    # ════════════════════════════════════════════════════════════════════
+    if closed:
+        st.markdown("### 📋 Closed Trades Log")
+        rows = []
+        for t in reversed(closed):
+            rows.append({
+                "Symbol":   t["symbol"],
+                "Side":     t["side"],
+                "Entry":    f"₹{t['entry']:,.2f}",
+                "Exit":     f"₹{t.get('exit_px',0):,.2f}",
+                "Qty":      t["qty"],
+                "P&L":      f"₹{t.get('pnl',0):+,.2f}",
+                "P&L %":    f"{t.get('pnl_pct',0):+.2f}%",
+                "Status":   t.get("status","—"),
+                "Source":   t.get("source","Manual"),
+                "Time":     t.get("exit_time", t.get("time","—")),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True, height=280)
 
-    # ── Trade log table ───────────────────────────────────────────────────
-    st.markdown("#### 📋 Trade Log")
-    rows = []
-    for r in results:
-        rows.append({
-            "Date":      r["date"],
-            "Direction": "▲ BUY" if r["bias"]=="Bullish" else "▼ SELL",
-            "Entry ₹":   f"{r['entry']:,.2f}",
-            "Target ₹":  f"{r['target']:,.2f}",
-            "SL ₹":      f"{r['sl']:,.2f}",
-            "Exit ₹":    f"{r['exit']:,.2f}",
-            "P&L %":     f"{r['pnl_pct']:+.2f}%",
-            "Result":    "✅ WIN" if r["outcome"]=="WIN" else "❌ LOSS",
-            "CPR W%":    r.get("cpr_w",""),
-            "Pivot ₹":   r.get("pivot",""),
-        })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=320)
-
-    # Export
-    if st.button("📥 Export to CSV", key="bt_export"):
-        csv = pd.DataFrame(rows).to_csv(index=False)
-        st.download_button("⬇️ Download CSV", csv,
-                           file_name=f"backtest_{meta.get('symbol','sym')}_{meta.get('tf','tf')}.csv",
-                           mime="text/csv", key="bt_dl")
-
-    st.caption("⚠️ Backtest uses simplified CPR signal logic on historical data. Past performance does not guarantee future results. Not financial advice.")
-
-
-def _calc_max_drawdown(results: list) -> float:
-    """Calculate maximum drawdown from equity curve."""
-    cum = 0; peak = 0; max_dd = 0
-    for r in results:
-        cum  += r["pnl_pct"]
-        peak  = max(peak, cum)
-        dd    = peak - cum
-        max_dd = max(max_dd, dd)
-    return round(max_dd, 2)
+        cpc1, cpc2 = st.columns(2)
+        with cpc1:
+            if st.button("📥 Export CSV", key="ft_export"):
+                csv = pd.DataFrame(rows).to_csv(index=False)
+                st.download_button("⬇️ Download", csv,
+                                    f"forward_test_{today}.csv",
+                                    "text/csv", key="ft_dl")
+        with cpc2:
+            if st.button("🔄 Reset All (Keep Balance)", key="ft_reset"):
+                st.session_state["paper_trades"]  = []
+                st.session_state["paper_balance"] = 100000.0
+                _save_paper_trades()
+                st.rerun()
 
 
 def render_sidebar():
+    """
+    Navigation — uses st.radio (guaranteed to work in all Streamlit environments).
+    Styled as pills via CSS override on radio buttons.
+    Zero hidden buttons. Zero JS tricks. Pure Streamlit.
+    """
     PAGES = [
         ("Market Snapshot",     "📊 Market"),
         ("Pivot Boss Analysis", "📈 Pivot Boss"),
@@ -8434,141 +7354,138 @@ def render_sidebar():
         ("Trade Signals",       "🔔 Signals"),
         ("Price Alerts",        "🎯 Alerts"),
         ("Strategies",          "📚 Strategy"),
-        ("Backtest",            "🔬 Backtest"),
+        ("Forward Testing",     "🧪 Fwd Test"),
         ("Journal",             "📝 Journal"),
         ("Analytics",           "📊 Analytics"),
         ("Market Intelligence", "🏦 Intel"),
-        ("Paper Trading",       "💼 Trades"),
         ("Broker Settings",     "⚙️ Broker"),
         ("Watchlist",           "⭐ Watchlist"),
     ]
+    PAGE_KEYS   = [p[0] for p in PAGES]
+    PAGE_LABELS = [p[1] for p in PAGES]
 
     if "current_page" not in st.session_state:
         st.session_state["current_page"] = "Market Snapshot"
+    if st.session_state["current_page"] not in PAGE_KEYS:
+        st.session_state["current_page"] = "Market Snapshot"
+
     current = st.session_state["current_page"]
+    cur_idx = PAGE_KEYS.index(current)
+    wl      = len(st.session_state.get("watchlist", []))
+    uname   = st.session_state.get("username", "")[:14]
 
-    st.markdown("""<style>
-.block-container{padding-top:0.3rem !important;
-                 padding-left:0.75rem !important;
-                 padding-right:0.75rem !important;}
-section[data-testid="stSidebar"]{display:none !important;}
-[data-testid="collapsedControl"]{display:none !important;}
-button[data-testid="baseButton-header"]{display:none !important;}
-</style>""", unsafe_allow_html=True)
+    # ── Override radio to look like horizontal pills ──────────────────────
+    st.markdown("""
+<style>
+/* Hide sidebar + collapse button */
+section[data-testid="stSidebar"]        { display:none !important; }
+[data-testid="collapsedControl"]         { display:none !important; }
+button[data-testid="baseButton-header"]  { display:none !important; }
 
-    # Top row
-    wl    = len(st.session_state.get("watchlist", []))
-    uname = st.session_state.get("username", "")[:14]
+/* Radio nav — hide the label */
+div[data-testid="stRadio"] > label { display:none !important; }
+
+/* Radio container — wrap like pills */
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    display       : flex !important;
+    flex-wrap     : wrap !important;
+    gap           : 4px !important;
+    align-items   : center !important;
+    padding       : 0.25rem 0 0.45rem !important;
+    border-bottom : 2px solid #b8c89a !important;
+    margin-bottom : 0.55rem !important;
+}
+
+/* Each radio option wrapper */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label {
+    display       : inline-flex !important;
+    align-items   : center !important;
+    padding       : 5px 11px !important;
+    border-radius : 18px !important;
+    border        : 1.5px solid #b8c89a !important;
+    background    : #ffffff !important;
+    cursor        : pointer !important;
+    margin        : 1px !important;
+    transition    : background 0.12s, border-color 0.12s !important;
+    white-space   : nowrap !important;
+}
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:hover {
+    background    : #dce8c4 !important;
+    border-color  : #638534 !important;
+}
+
+/* Radio label text */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label > div > p,
+div[data-testid="stRadio"] > div[role="radiogroup"] > label p {
+    font-family : DM Sans, sans-serif !important;
+    font-size   : 0.78rem !important;
+    font-weight : 600 !important;
+    color       : #2e3d1a !important;
+    margin      : 0 !important;
+    line-height : 1.3 !important;
+}
+
+/* Hide the actual radio circle */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
+    display : none !important;
+}
+
+/* SELECTED pill — dark green */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-selected="true"],
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
+    background   : #3d5a1c !important;
+    border-color : #3d5a1c !important;
+}
+div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-selected="true"] p,
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p {
+    color       : #f8faf0 !important;
+    font-weight : 700 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+    # ── Logo + user ───────────────────────────────────────────────────────
     lc, rc = st.columns([5, 1])
     with lc:
         st.markdown(
-            "<p style='font-family:DM Sans,sans-serif;font-weight:900;"
-            "font-size:0.95rem;color:#0e1308;margin:0.2rem 0 0.1rem;'>"
-            "🏦 PivotVault <span style=\"color:#3d5a1c;\">AI</span></p>",
+            "<div style='font-family:DM Sans,sans-serif;font-weight:900;font-size:1rem;"
+            "color:#0e1308;padding:0.15rem 0 0.05rem;'>"
+            "🏦 PivotVault <span style=\"color:#3d5a1c;\">AI</span></div>",
             unsafe_allow_html=True,
         )
     with rc:
         st.markdown(
-            "<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
-            "color:#4a5e32;text-align:right;margin-top:0.3rem;'>"
-            + "👤 " + uname + " ⭐" + str(wl) + "</div>",
+            "<div style='font-family:DM Mono,monospace;font-size:0.63rem;"
+            "color:#4a5e32;text-align:right;padding-top:0.25rem;'>"
+            "👤 " + uname + " ⭐" + str(wl) + "</div>",
             unsafe_allow_html=True,
         )
 
-    # Pill styles
-    BASE = ("display:inline-flex;align-items:center;padding:6px 13px;"
-            "border-radius:20px;border:1.5px solid #b8c89a;background:#fff;"
-            "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:600;"
-            "color:#2e3d1a;white-space:nowrap;cursor:pointer;line-height:1.4;"
-            "text-decoration:none;margin:2px;")
-    ACTIVE = ("display:inline-flex;align-items:center;padding:6px 13px;"
-              "border-radius:20px;border:1.5px solid #3d5a1c;background:#3d5a1c;"
-              "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:700;"
-              "color:#f8faf0;white-space:nowrap;cursor:pointer;line-height:1.4;"
-              "text-decoration:none;margin:2px;")
-    LOGOUT = ("display:inline-flex;align-items:center;padding:6px 13px;"
-              "border-radius:20px;border:1.5px solid #dc9090;background:#fbe8e6;"
-              "font-family:DM Sans,sans-serif;font-size:0.8rem;font-weight:600;"
-              "color:#9e2018;white-space:nowrap;cursor:pointer;line-height:1.4;"
-              "text-decoration:none;margin:2px;margin-left:auto;")
+    # ── Radio nav (renders as pills via CSS above) ────────────────────────
+    nc, lc2 = st.columns([10, 1])
+    with nc:
+        selected = st.radio(
+            "nav",
+            PAGE_LABELS,
+            index=cur_idx,
+            horizontal=True,
+            key="main_nav_radio",
+            label_visibility="hidden",
+        )
+    with lc2:
+        if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
+            st.session_state["logged_in"]    = False
+            st.session_state["current_page"] = "Market Snapshot"
+            st.rerun()
 
-    # Build pills using st.columns — one button per pill, styled as pill
-    # This is the only reliable approach in Streamlit
-    # Use columns but override button CSS completely
-    st.markdown("""<style>
-/* Turn ALL nav buttons into pills */
-div[data-testid="stHorizontalBlock"] .stButton > div > button {
-    background:#fff !important;
-    border:1.5px solid #b8c89a !important;
-    border-radius:20px !important;
-    color:#2e3d1a !important;
-    font-family:DM Sans,sans-serif !important;
-    font-size:0.8rem !important;
-    font-weight:600 !important;
-    padding:5px 12px !important;
-    min-height:0 !important;
-    height:auto !important;
-    line-height:1.4 !important;
-    box-shadow:none !important;
-    white-space:nowrap !important;
-    transition:background 0.15s, border-color 0.15s !important;
-}
-div[data-testid="stHorizontalBlock"] .stButton > div > button:hover {
-    background:#dce8c4 !important;
-    border-color:#638534 !important;
-    color:#1e2c0d !important;
-}
-/* Active pill override — applied via a CSS class trick using :focus */
-.pv-active-pill > div > button {
-    background:#3d5a1c !important;
-    border-color:#3d5a1c !important;
-    color:#f8faf0 !important;
-    font-weight:700 !important;
-}
-/* Logout pill */
-.pv-logout-pill > div > button {
-    background:#fbe8e6 !important;
-    border-color:#dc9090 !important;
-    color:#9e2018 !important;
-}
-/* Nav row wrapper — no gaps between columns */
-div[data-testid="stHorizontalBlock"] {
-    gap:4px !important;
-    flex-wrap:wrap !important;
-    border-bottom:2px solid #b8c89a !important;
-    padding-bottom:0.4rem !important;
-    margin-bottom:0.6rem !important;
-    align-items:center !important;
-}
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-    flex: 0 0 auto !important;
-    width: auto !important;
-    min-width: 0 !important;
-    padding:0 !important;
-}
-</style>""", unsafe_allow_html=True)
+    # Update page on selection change
+    sel_page = PAGE_KEYS[PAGE_LABELS.index(selected)]
+    if sel_page != current:
+        st.session_state["current_page"] = sel_page
+        st.rerun()
 
-    # Render all nav items as styled buttons in a horizontal block
-    all_pages = list(PAGES) + [("__logout__", "🚪 Logout")]
-    cols = st.columns(len(all_pages))
-    for i, (page_key, label) in enumerate(all_pages):
-        with cols[i]:
-            is_active  = (page_key == current)
-            is_logout  = (page_key == "__logout__")
-            css_class  = "pv-logout-pill" if is_logout else ("pv-active-pill" if is_active else "")
-            if css_class:
-                st.markdown(f"<div class='{css_class}'>", unsafe_allow_html=True)
-            if st.button(label, key=f"nav_{i}", use_container_width=False):
-                if is_logout:
-                    st.session_state["logged_in"]    = False
-                    st.session_state["current_page"] = "Market Snapshot"
-                else:
-                    st.session_state["current_page"] = page_key
-                st.rerun()
-            if css_class:
-                st.markdown("</div>", unsafe_allow_html=True)
+    return sel_page
 
-    return current
 
 def main():
     if not st.session_state["logged_in"]:
@@ -8585,12 +7502,10 @@ def main():
     elif page == "CPR Scanner":          page_cpr_scanner(nse500)
     elif page == "Trade Signals":        page_trade_signals(nse500)
     elif page == "Price Alerts":         page_price_alerts()
-    elif page == "Strategies":           page_strategy()
-    elif page == "Backtest":             page_backtest()
+    elif page == "Forward Testing":      page_forward_test()
     elif page == "Journal":              page_journal()
     elif page == "Analytics":            page_analytics()
     elif page == "Market Intelligence":  page_market_intelligence()
-    elif page == "Paper Trading":        page_paper_trading()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
     else:                                page_market_snapshot(nse500)
