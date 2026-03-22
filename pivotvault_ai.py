@@ -4704,8 +4704,7 @@ function zerodhaUrl(sym, side) {{
            sym + "&transaction_type=" + side;
 }}
 function upstoxUrl(sym, side) {{
-    var action = (side === "BUY" || side === "buy") ? "buy" : "sell";
-    return "https://upstox.com/trading/instruments/NSE/" + sym + "/?action=" + action;
+    return "https://pro.upstox.com/stocks/details/NSE/" + sym;
 }}
 
 function buildCards() {{
@@ -6096,10 +6095,13 @@ def _trade_buttons(s: dict):
     )
 
     # ── URLs ──────────────────────────────────────────────────────────────
-    groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
-    kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
-    _up_side   = 'buy' if bull else 'sell'
-    upstox_url = f"https://upstox.com/trading/instruments/NSE/{sym}/?action={_up_side}"
+    # Correct working URLs — open stock page on each broker
+    # Groww: search page (slug varies per stock, search is reliable)
+    groww_url  = f"https://groww.in/search?q={sym}"
+    # Zerodha Kite: open kite and search the stock
+    kite_url   = f"https://kite.zerodha.com/?q={sym}"
+    # Upstox Pro Web: stock detail page on pro.upstox.com
+    upstox_url = f"https://pro.upstox.com/stocks/details/NSE/{sym}"
 
     # Styles
     btn_style  = (
