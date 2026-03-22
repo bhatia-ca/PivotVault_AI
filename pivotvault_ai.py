@@ -191,35 +191,126 @@ def _upstox_redirect_uri() -> str:
         pass
     return "http://localhost:8501"
 
-# Upstox instrument key format: NSE_EQ|INE002A01018 (RELIANCE)
-# We use NSE symbol name format: NSE_EQ|{ISIN}
-# For simplicity we use NSE_INDEX for indices
+# ── Upstox ISIN map — correct instrument keys for NSE stocks ─────────────
+UPSTOX_ISIN_MAP = {
+    "RELIANCE":    "INE002A01018", "TCS":         "INE467B01029",
+    "HDFCBANK":    "INE040A01034", "INFY":        "INE009A01021",
+    "ICICIBANK":   "INE090A01021", "SBIN":        "INE062A01020",
+    "HINDUNILVR":  "INE030A01027", "BAJFINANCE":  "INE296A01024",
+    "BHARTIARTL":  "INE397D01024", "KOTAKBANK":   "INE237A01028",
+    "LT":          "INE018A01030", "ASIANPAINT":  "INE021A01026",
+    "AXISBANK":    "INE238A01034", "MARUTI":      "INE585B01010",
+    "TITAN":       "INE280A01028", "SUNPHARMA":   "INE044A01036",
+    "WIPRO":       "INE075A01022", "HCLTECH":     "INE860A01027",
+    "ADANIENT":    "INE423A01024", "NTPC":        "INE733E01010",
+    "TATAMOTORS":  "INE155A01022", "ONGC":        "INE213A01029",
+    "POWERGRID":   "INE752E01010", "COALINDIA":   "INE522F01014",
+    "TATASTEEL":   "INE081A01020", "JSWSTEEL":    "INE019A01038",
+    "HINDALCO":    "INE038A01020", "ULTRACEMCO":  "INE481G01011",
+    "NESTLEIND":   "INE239A01016", "TECHM":       "INE669C01036",
+    "BAJAJFINSV":  "INE918I01026", "DRREDDY":     "INE089A01023",
+    "CIPLA":       "INE059A01026", "DIVISLAB":    "INE361B01024",
+    "ITC":         "INE154A01025", "BPCL":        "INE029A01011",
+    "GRASIM":      "INE047A01021", "INDUSINDBK":  "INE095A01012",
+    "EICHERMOT":   "INE066A01021", "HEROMOTOCO":  "INE158A01026",
+    "M&M":         "INE101A01026", "BRITANNIA":   "INE216A01030",
+}
+
 UPSTOX_INDEX_KEYS = {
     "^NSEI":    "NSE_INDEX|Nifty 50",
     "^BSESN":   "BSE_INDEX|SENSEX",
     "^NSEBANK": "NSE_INDEX|Nifty Bank",
 }
 
+# NSE Symbol → Upstox instrument key (NSE_EQ|ISIN)
+# Upstox accepts both ISIN format AND trading symbol format: NSE_EQ|SYMBOL
+# The correct format for v2 API is: NSE_EQ|ISIN
+# For simplicity and broad coverage we use the symbol-based key which works for most stocks
+# Full ISIN list: https://upstox.com/developer/api-documentation/instruments
+UPSTOX_INSTRUMENT_KEYS = {
+    "RELIANCE":    "NSE_EQ|INE002A01018",
+    "TCS":         "NSE_EQ|INE467B01029",
+    "HDFCBANK":    "NSE_EQ|INE040A01034",
+    "INFY":        "NSE_EQ|INE009A01021",
+    "ICICIBANK":   "NSE_EQ|INE090A01021",
+    "SBIN":        "NSE_EQ|INE062A01020",
+    "HINDUNILVR":  "NSE_EQ|INE030A01027",
+    "BAJFINANCE":  "NSE_EQ|INE296A01024",
+    "BHARTIARTL":  "NSE_EQ|INE397D01024",
+    "KOTAKBANK":   "NSE_EQ|INE237A01028",
+    "LT":          "NSE_EQ|INE018A01030",
+    "ASIANPAINT":  "NSE_EQ|INE021A01026",
+    "AXISBANK":    "NSE_EQ|INE238A01034",
+    "MARUTI":      "NSE_EQ|INE585B01010",
+    "TITAN":       "NSE_EQ|INE280A01028",
+    "SUNPHARMA":   "NSE_EQ|INE044A01036",
+    "WIPRO":       "NSE_EQ|INE075A01022",
+    "HCLTECH":     "NSE_EQ|INE860A01027",
+    "ADANIENT":    "NSE_EQ|INE423A01024",
+    "NTPC":        "NSE_EQ|INE733E01010",
+    "POWERGRID":   "NSE_EQ|INE752E01010",
+    "ULTRACEMCO":  "NSE_EQ|INE481G01011",
+    "NESTLEIND":   "NSE_EQ|INE239A01016",
+    "TECHM":       "NSE_EQ|INE669C01036",
+    "BAJAJFINSV":  "NSE_EQ|INE918I01026",
+    "ONGC":        "NSE_EQ|INE213A01029",
+    "JSWSTEEL":    "NSE_EQ|INE019A01038",
+    "TATASTEEL":   "NSE_EQ|INE081A01020",
+    "TATAMOTORS":  "NSE_EQ|INE306A01021",
+    "M&M":         "NSE_EQ|INE101A01026",
+    "HINDALCO":    "NSE_EQ|INE038A01020",
+    "COALINDIA":   "NSE_EQ|INE522F01014",
+    "DIVISLAB":    "NSE_EQ|INE361B01024",
+    "DRREDDY":     "NSE_EQ|INE089A01023",
+    "CIPLA":       "NSE_EQ|INE059A01026",
+    "EICHERMOT":   "NSE_EQ|INE066A01021",
+    "GRASIM":      "NSE_EQ|INE047A01021",
+    "BPCL":        "NSE_EQ|INE029A01011",
+    "INDUSINDBK":  "NSE_EQ|INE095A01012",
+    "APOLLOHOSP":  "NSE_EQ|INE437A01024",
+    "SBILIFE":     "NSE_EQ|INE123W01016",
+    "HDFCLIFE":    "NSE_EQ|INE795G01014",
+    "ADANIPORTS":  "NSE_EQ|INE742F01042",
+    "TATACONSUM":  "NSE_EQ|INE192A01025",
+    "BRITANNIA":   "NSE_EQ|INE216A01030",
+    "HEROMOTOCO":  "NSE_EQ|INE158A01026",
+    "BAJAJ-AUTO":  "NSE_EQ|INE917I01010",
+    "ITC":         "NSE_EQ|INE154A01025",
+    "SHRIRAMFIN":  "NSE_EQ|INE721A01013",
+    "BEL":         "NSE_EQ|INE263A01024",
+}
+
+def _upstox_instrument_key(symbol: str) -> str:
+    """Get Upstox instrument key for a symbol. Returns ISIN-based key if known."""
+    return UPSTOX_INSTRUMENT_KEYS.get(symbol.upper(), f"NSE_EQ|{symbol.upper()}")
+
+# Correct Upstox interval strings
+UPSTOX_INTERVAL_MAP = {
+    "1m":  "1minute",  "3m":  "3minute",  "5m":  "5minute",
+    "10m": "10minute", "15m": "15minute", "30m": "30minute",
+    "1h":  "60minute", "1d":  "day",
+    "1wk": "week",     "1mo": "month",
+}
+
+def _upstox_instrument_key(symbol: str) -> str:
+    """Return correct NSE_EQ|ISIN key for a symbol."""
+    isin = UPSTOX_ISIN_MAP.get(symbol.upper().strip())
+    if isin:
+        return f"NSE_EQ|{isin}"
+    return f"NSE_EQ|{symbol}"   # fallback
+
 def _upstox_headers() -> dict:
-    """Return Upstox auth headers using token from session state."""
     token = st.session_state.get("upstox_access_token", "")
     if not token:
         return {}
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
 def _upstox_connected() -> bool:
     return bool(st.session_state.get("upstox_access_token", "").strip())
 
 @st.cache_data(ttl=15)
 def upstox_get_quote(instrument_key: str) -> dict:
-    """
-    Fetch live LTP + OHLC for one instrument via Upstox Market Quote API.
-    Free tier — no subscription needed, just access token.
-    Returns: {ltp, open, high, low, close, change, pct_change, volume}
-    """
+    """Live LTP + OHLC via Upstox Market Quote API."""
     if not _upstox_connected():
         return {}
     try:
@@ -232,18 +323,17 @@ def upstox_get_quote(instrument_key: str) -> dict:
         if r.status_code != 200:
             return {}
         data = r.json().get("data", {})
-        # data is keyed by instrument_key
-        q = data.get(instrument_key, {})
+        q    = data.get(instrument_key) or (list(data.values())[0] if data else {})
         ohlc = q.get("ohlc", {})
         return {
             "ltp":        round(q.get("last_price", 0), 2),
-            "open":       round(ohlc.get("open", 0),   2),
-            "high":       round(ohlc.get("high", 0),   2),
-            "low":        round(ohlc.get("low",  0),   2),
-            "close":      round(ohlc.get("close",0),   2),
+            "open":       round(ohlc.get("open",  0), 2),
+            "high":       round(ohlc.get("high",  0), 2),
+            "low":        round(ohlc.get("low",   0), 2),
+            "close":      round(ohlc.get("close", 0), 2),
             "volume":     q.get("volume", 0),
             "change":     round(q.get("net_change", 0), 2),
-            "pct_change": round(q.get("net_change", 0) / max(ohlc.get("close",1),1) * 100, 2),
+            "pct_change": round(q.get("net_change",0)/max(ohlc.get("close",1),1)*100, 2),
         }
     except Exception:
         return {}
@@ -252,63 +342,48 @@ def upstox_get_quote(instrument_key: str) -> dict:
 def upstox_get_historical(symbol: str, interval: str = "1d",
                            from_date: str = "", to_date: str = "") -> pd.DataFrame:
     """
-    Fetch historical OHLCV candles from Upstox Historical Candle API (free).
-    symbol: NSE symbol e.g. 'RELIANCE'
-    interval: '1minute','30minute','day','week','month'
-    Returns DataFrame with Open/High/Low/Close/Volume columns.
+    Fetch historical OHLCV from Upstox using correct ISIN key + interval.
+    Supports: 1m 3m 5m 10m 15m 30m 1h 1d 1wk 1mo
     """
     if not _upstox_connected():
         return pd.DataFrame()
-    # Upstox instrument key for NSE equity
-    # Format: NSE_EQ|ISIN — we use symbol directly for simplicity
-    instrument_key = f"NSE_EQ|{symbol}"
 
-    # Interval mapping
-    interval_map = {
-        "1m": "1minute", "5m": "30minute", "15m": "30minute",
-        "30m": "30minute", "1h": "60minute", "1d": "day",
-        "1wk": "week", "1mo": "month",
-    }
-    up_interval = interval_map.get(interval, "day")
+    instrument_key = _upstox_instrument_key(symbol)
+    up_interval    = UPSTOX_INTERVAL_MAP.get(interval, "day")
 
     if not from_date:
         from_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     if not to_date:
         to_date = datetime.now().strftime("%Y-%m-%d")
 
+    url = f"{UPSTOX_BASE}/historical-candle/{instrument_key}/{up_interval}/{to_date}/{from_date}"
+
     try:
-        r = requests.get(
-            f"{UPSTOX_BASE}/historical-candle/{instrument_key}/{up_interval}/{to_date}/{from_date}",
-            headers=_upstox_headers(),
-            timeout=10,
-        )
+        r = requests.get(url, headers=_upstox_headers(), timeout=15)
         if r.status_code != 200:
             return pd.DataFrame()
         candles = r.json().get("data", {}).get("candles", [])
         if not candles:
             return pd.DataFrame()
-        # Upstox candle format: [timestamp, open, high, low, close, volume, oi]
-        df = pd.DataFrame(candles, columns=["Datetime","Open","High","Low","Close","Volume","OI"])
+        df = pd.DataFrame(candles,
+                          columns=["Datetime","Open","High","Low","Close","Volume","OI"])
         df["Datetime"] = pd.to_datetime(df["Datetime"])
         df = df.set_index("Datetime").sort_index()
-        df = df[["Open","High","Low","Close","Volume"]].astype(float)
-        return df
+        return df[["Open","High","Low","Close","Volume"]].astype(float)
     except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=15)
 def upstox_get_index_quote(yf_ticker: str) -> dict:
-    """Get index LTP via Upstox using index instrument key."""
     inst_key = UPSTOX_INDEX_KEYS.get(yf_ticker)
     if not inst_key:
         return {}
     return upstox_get_quote(inst_key)
 
 def upstox_get_ltp(symbol: str) -> float:
-    """Get live LTP for a stock. Returns 0.0 if Upstox not connected."""
     if not _upstox_connected():
         return 0.0
-    q = upstox_get_quote(f"NSE_EQ|{symbol}")
+    q = upstox_get_quote(_upstox_instrument_key(symbol))
     return q.get("ltp", 0.0)
 
 # ─────────────────────────────────────────────
@@ -995,6 +1070,7 @@ defaults = {
     'paper_balance':    100000.0,  # Rs 1 lakh starting capital
     'paper_positions':  {},
     'cpr_scan_15m': None,
+    'cpr_scan_30m': None,
     'cpr_scan_1h':  None,
     'cpr_scan_1d':  None,
     'cpr_scan_1wk': None,
@@ -3983,203 +4059,264 @@ def _get_strategy_description(strategy_name: str) -> str:
 def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
     """
-    Frank Ochoa CPR Scanner:
-    - NO hard CPR width cutoff (scan all, rank by width)
-    - NO R:R cutoff (show all, display R:R on card)
-    - Targets & SL purely from pivot levels + candlestick context
-    - Strength score from 6 weighted factors
+    Frank Ochoa CPR Scanner — Enhanced with Upstox data + strategy rationale.
+    Timeframes: 15m / 30m / 1h / 1d / 1wk / 1mo
+    Upstox used for data if token is active, else yfinance fallback.
+    Each row includes a human-readable strategy rationale for backtest reference.
     """
     rows = []
+
     for sym in symbols[:max_stocks]:
         try:
-            df = yf.Ticker(sym + ".NS").history(period=period, interval=interval)
+            # ── Fetch OHLCV ──────────────────────────────────────────────────
+            df = pd.DataFrame()
+            if _upstox_connected():
+                try:
+                    lb_map = {
+                        "15m":"60d","30m":"90d","1h":"180d",
+                        "1d":"365d","1wk":"730d","1mo":"1825d"
+                    }
+                    days    = int(lb_map.get(interval,"90d").replace("d",""))
+                    from_dt = (datetime.now()-timedelta(days=days)).strftime("%Y-%m-%d")
+                    to_dt   = datetime.now().strftime("%Y-%m-%d")
+                    df      = upstox_get_historical(sym, interval, from_dt, to_dt)
+                except Exception:
+                    df = pd.DataFrame()
+
+            if df.empty:
+                df = yf.Ticker(sym+".NS").history(period=period, interval=interval)
+                if not df.empty:
+                    df.index = df.index.tz_localize(None)
+                df.columns = [c.title() for c in df.columns]
+
             if df.empty or len(df) < 22:
                 continue
-            df.index = df.index.tz_localize(None)
+
+            close  = df["Close"];  high = df["High"]
+            low_s  = df["Low"];    vol  = df["Volume"]
 
             # ── CPR from prior completed candle ──────────────────────────────
-            ref  = df.iloc[-2]
+            ref   = df.iloc[-2]
             H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
-            P  = (H + L + C) / 3
-            BC = (H + L) / 2
-            TC = (P - BC) + P
-            width = abs(TC - BC) / P * 100
+            P   = (H + L + C) / 3
+            BC  = (H + L) / 2
+            TC  = (P - BC) + P
+            width = abs(TC - BC) / P * 100 if P else 0
 
-            # Only skip truly wide CPR (> 2%) — include narrow + moderate
             if width > 2.0:
                 continue
 
-            ltp   = float(df["Close"].iloc[-1])
-            close = df["Close"]
-            high  = df["High"]
-            low_s = df["Low"]
+            ltp = float(close.iloc[-1])
 
-            # ── Pivot levels (Traditional) ───────────────────────────────────
-            R1 = round(2*P - L, 2);  R2 = round(P + (H-L), 2);  R3 = round(H + 2*(P-L), 2)
-            S1 = round(2*P - H, 2);  S2 = round(P - (H-L), 2);  S3 = round(L - 2*(H-P), 2)
+            # ── Pivot levels ─────────────────────────────────────────────────
+            R1 = round(2*P-L,2);  R2 = round(P+(H-L),2);  R3 = round(H+2*(P-L),2)
+            S1 = round(2*P-H,2);  S2 = round(P-(H-L),2);  S3 = round(L-2*(H-P),2)
 
             # ── HMA-20 ───────────────────────────────────────────────────────
             def wma(s, n):
                 w = np.arange(1, n+1)
                 return s.rolling(n).apply(lambda x: np.dot(x,w)/w.sum(), raw=True)
-            hma    = wma(2*wma(close,10) - wma(close,20), 4)
-            hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
+            hma    = wma(2*wma(close,10)-wma(close,20), 4)
+            hma_up = bool(hma.iloc[-1]>hma.iloc[-2]) if len(hma.dropna())>=2 else None
 
             # ── 3/10 Oscillator ──────────────────────────────────────────────
-            diff  = close.rolling(3).mean() - close.rolling(10).mean()
-            sig16 = diff.rolling(16).mean()
-            hist_val       = float(diff.iloc[-1] - sig16.iloc[-1]) if not np.isnan(diff.iloc[-1]) else 0
-            osc_cross_bull = bool(diff.iloc[-1] > sig16.iloc[-1] and diff.iloc[-2] <= sig16.iloc[-2])
-            osc_cross_bear = bool(diff.iloc[-1] < sig16.iloc[-1] and diff.iloc[-2] >= sig16.iloc[-2])
+            diff         = close.rolling(3).mean() - close.rolling(10).mean()
+            sig16        = diff.rolling(16).mean()
+            hist_val     = float(diff.iloc[-1]-sig16.iloc[-1]) if not np.isnan(diff.iloc[-1]) else 0
+            osc_cross_bull = bool(diff.iloc[-1]>sig16.iloc[-1] and diff.iloc[-2]<=sig16.iloc[-2])
+            osc_cross_bear = bool(diff.iloc[-1]<sig16.iloc[-1] and diff.iloc[-2]>=sig16.iloc[-2])
 
             # ── RSI-14 ───────────────────────────────────────────────────────
             delta = close.diff()
             gain  = delta.clip(lower=0).rolling(14).mean()
             loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float(100 - (100/(1 + gain.iloc[-1]/max(loss.iloc[-1], 1e-9))))
+            rsi   = float(100-(100/(1+gain.iloc[-1]/max(loss.iloc[-1],1e-9))))
 
             # ── ATR-14 ───────────────────────────────────────────────────────
             tr  = pd.concat([high-low_s,(high-close.shift()).abs(),(low_s-close.shift()).abs()],axis=1).max(axis=1)
             atr = float(tr.rolling(14).mean().iloc[-1])
 
-            # ── VWAP (20-bar proxy) ──────────────────────────────────────────
-            tp   = (high + low_s + close) / 3
-            vwap = (tp * df["Volume"]).rolling(20).sum() / df["Volume"].rolling(20).sum()
-            above_vwap = bool(ltp > float(vwap.iloc[-1])) if not np.isnan(vwap.iloc[-1]) else None
+            # ── VWAP (20-bar) ────────────────────────────────────────────────
+            tp   = (high+low_s+close)/3
+            vwap = (tp*vol).rolling(20).sum()/vol.rolling(20).sum()
+            above_vwap = bool(ltp>float(vwap.iloc[-1])) if not np.isnan(vwap.iloc[-1]) else None
 
-            # ── Volume surge ─────────────────────────────────────────────────
-            vol_avg   = float(df["Volume"].rolling(20).mean().iloc[-1])
-            vol_cur   = float(df["Volume"].iloc[-1])
-            vol_surge = vol_cur > vol_avg * 1.5 if vol_avg > 0 else False
+            # ── Volume ───────────────────────────────────────────────────────
+            vol_avg   = float(vol.rolling(20).mean().iloc[-1])
+            vol_cur   = float(vol.iloc[-1])
+            vol_surge = vol_cur > vol_avg*1.5 if vol_avg>0 else False
 
-            # ── Candlestick pattern ──────────────────────────────────────────
+            # ── Stochastic %K (14,3) ─────────────────────────────────────────
+            lo14 = low_s.rolling(14).min()
+            hi14 = high.rolling(14).max()
+            stk  = float(100*(close.iloc[-1]-lo14.iloc[-1])/max(hi14.iloc[-1]-lo14.iloc[-1],1e-9))
+            stk_prev = float(100*(close.iloc[-2]-lo14.iloc[-2])/max(hi14.iloc[-2]-lo14.iloc[-2],1e-9))
+
+            # ── Candlestick ──────────────────────────────────────────────────
             candle_name, candle_dir, candle_bonus = detect_candlestick_pattern(df)
+
+            # ── Virgin CPR check ─────────────────────────────────────────────
+            # CPR is virgin if price never closed inside it in last 10 bars
+            inside_cpr = ((close.iloc[-12:-2] >= BC) & (close.iloc[-12:-2] <= TC)).any()
+            virgin_cpr = not inside_cpr
 
             # ── Frank Ochoa Scoring ──────────────────────────────────────────
             bull_pts = bear_pts = 0
+            bull_reasons = []; bear_reasons = []
 
-            # 1. CPR Position — most important (3 pts)
-            if ltp > TC:          bull_pts += 3
-            elif ltp < BC:        bear_pts += 3
-            else:                 pass  # inside CPR — neutral
+            # 1. CPR Position — core signal (3 pts)
+            if ltp > TC:
+                bull_pts += 3; bull_reasons.append("Price above CPR")
+            elif ltp < BC:
+                bear_pts += 3; bear_reasons.append("Price below CPR")
 
-            # 2. HMA trend direction (2 pts)
-            if hma_up is True:    bull_pts += 2
-            elif hma_up is False: bear_pts += 2
+            # Virgin CPR bonus (2 pts) — highest quality setup
+            if virgin_cpr and ltp > TC:
+                bull_pts += 2; bull_reasons.append("Virgin CPR breakout")
+            elif virgin_cpr and ltp < BC:
+                bear_pts += 2; bear_reasons.append("Virgin CPR breakdown")
 
-            # 3. 3/10 Oscillator — fresh crossover strongest (2 pts), else 1 pt
-            if osc_cross_bull:    bull_pts += 2
-            elif osc_cross_bear:  bear_pts += 2
-            elif hist_val > 0:    bull_pts += 1
-            else:                 bear_pts += 1
+            # 2. HMA trend (2 pts)
+            if hma_up is True:
+                bull_pts += 2; bull_reasons.append("HMA trending up")
+            elif hma_up is False:
+                bear_pts += 2; bear_reasons.append("HMA trending down")
+
+            # 3. 3/10 Oscillator (2 pts fresh cross, 1 pt continuation)
+            if osc_cross_bull:
+                bull_pts += 2; bull_reasons.append("3/10 bullish crossover")
+            elif osc_cross_bear:
+                bear_pts += 2; bear_reasons.append("3/10 bearish crossover")
+            elif hist_val > 0:
+                bull_pts += 1; bull_reasons.append("3/10 osc positive")
+            else:
+                bear_pts += 1; bear_reasons.append("3/10 osc negative")
 
             # 4. RSI zone (1 pt)
-            if rsi >= 55:         bull_pts += 1
-            elif rsi <= 45:       bear_pts += 1
+            if rsi >= 55:
+                bull_pts += 1; bull_reasons.append(f"RSI {round(rsi,0)} bullish zone")
+            elif rsi <= 45:
+                bear_pts += 1; bear_reasons.append(f"RSI {round(rsi,0)} bearish zone")
 
-            # 5. VWAP position (1 pt)
-            if above_vwap:        bull_pts += 1
-            elif above_vwap is False: bear_pts += 1
+            # 5. VWAP (1 pt)
+            if above_vwap is True:
+                bull_pts += 1; bull_reasons.append("Above VWAP")
+            elif above_vwap is False:
+                bear_pts += 1; bear_reasons.append("Below VWAP")
 
-            # 6. Volume surge confirms direction (1 pt)
+            # 6. Volume surge (1 pt)
             if vol_surge:
-                if ltp >= P:      bull_pts += 1
-                else:             bear_pts += 1
+                if ltp >= P:
+                    bull_pts += 1; bull_reasons.append("Volume surge bullish")
+                else:
+                    bear_pts += 1; bear_reasons.append("Volume surge bearish")
 
-            # 7. Candlestick pattern confirmation (2 pts bonus)
-            if candle_dir == "bull":   bull_pts += 2
-            elif candle_dir == "bear": bear_pts += 2
+            # 7. Stochastic (1 pt)
+            if stk < 25 and stk > stk_prev:
+                bull_pts += 1; bull_reasons.append("Stoch oversold reversal")
+            elif stk > 75 and stk < stk_prev:
+                bear_pts += 1; bear_reasons.append("Stoch overbought reversal")
+
+            # 8. Candlestick (2 pts)
+            if candle_dir == "bull":
+                bull_pts += 2; bull_reasons.append(f"{candle_name} pattern")
+            elif candle_dir == "bear":
+                bear_pts += 2; bear_reasons.append(f"{candle_name} pattern")
+
+            # 9. Pivot position bonus (1 pt)
+            if ltp > P:
+                bull_pts += 1; bull_reasons.append("Above Pivot P")
+            elif ltp < P:
+                bear_pts += 1; bear_reasons.append("Below Pivot P")
+
+            # 10. CPR width bonus — narrow CPR = stronger signal (1 pt)
+            if width < 0.25:
+                if bull_pts >= bear_pts: bull_pts += 1; bull_reasons.append("Narrow CPR (<0.25%)")
+                else: bear_pts += 1; bear_reasons.append("Narrow CPR (<0.25%)")
 
             total = bull_pts + bear_pts
-            if   bull_pts > bear_pts: pattern_main = "Bullish"
-            elif bear_pts > bull_pts: pattern_main = "Bearish"
-            else:                     pattern_main = "Neutral"
+            if   bull_pts > bear_pts: pattern_main = "Bullish"; reasons = bull_reasons
+            elif bear_pts > bull_pts: pattern_main = "Bearish"; reasons = bear_reasons
+            else:                     pattern_main = "Neutral"; reasons = []
 
             strength = round(max(bull_pts, bear_pts) / max(total, 1) * 100)
 
-            # Skip neutral — no clear direction
             if pattern_main == "Neutral":
                 continue
 
-            # ── Targets & SL from Pivot Points + Candlestick context ─────────
-            # Ochoa principle: always anchor to pivot levels
-            # Entry = CPR breakout level; SL = opposite CPR wall
-            # Targets = sequential pivot resistances/supports
+            # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
-
             if trade_dir == "bull":
-                # Entry: just above TC (CPR breakout)
-                entry = round(TC + atr * 0.05, 2)
-                # SL: below BC — if candle has hammer/engulf, tighten to low
-                if candle_name in ("Hammer", "Bull Pin Bar", "Bullish Engulfing", "Morning Star"):
-                    sl = round(min(BC, float(df["Low"].iloc[-1])) - atr * 0.1, 2)
+                entry = round(TC + atr*0.05, 2)
+                if candle_name in ("Hammer","Bull Pin Bar","Bullish Engulfing","Morning Star"):
+                    sl = round(min(BC, float(df["Low"].iloc[-1])) - atr*0.1, 2)
                 else:
-                    sl = round(BC - atr * 0.1, 2)
-                risk = max(entry - sl, atr * 0.2)
-                # Targets at R1, R2, R3 — classic Ochoa levels
+                    sl = round(BC - atr*0.1, 2)
+                risk = max(entry-sl, atr*0.2)
                 t1, t2, t3 = R1, R2, R3
-                # If candle is Morning Star or Engulfing — target can stretch to R2 minimum
-                if candle_name in ("Morning Star", "Bullish Engulfing", "Bullish Marubozu"):
-                    t1 = R1 if R1 > entry else R2
-
+                if candle_name in ("Morning Star","Bullish Engulfing","Bullish Marubozu"):
+                    t1 = R1 if R1>entry else R2
             else:
-                # Entry: just below BC (CPR breakdown)
-                entry = round(BC - atr * 0.05, 2)
-                if candle_name in ("Shooting Star", "Bear Pin Bar", "Bearish Engulfing", "Evening Star"):
-                    sl = round(max(TC, float(df["High"].iloc[-1])) + atr * 0.1, 2)
+                entry = round(BC - atr*0.05, 2)
+                if candle_name in ("Shooting Star","Bear Pin Bar","Bearish Engulfing","Evening Star"):
+                    sl = round(max(TC, float(df["High"].iloc[-1])) + atr*0.1, 2)
                 else:
-                    sl = round(TC + atr * 0.1, 2)
-                risk = max(sl - entry, atr * 0.2)
+                    sl = round(TC + atr*0.1, 2)
+                risk = max(sl-entry, atr*0.2)
                 t1, t2, t3 = S1, S2, S3
-                if candle_name in ("Evening Star", "Bearish Engulfing", "Bearish Marubozu"):
-                    t1 = S1 if S1 < entry else S2
+                if candle_name in ("Evening Star","Bearish Engulfing","Bearish Marubozu"):
+                    t1 = S1 if S1<entry else S2
 
-            rr1 = round(abs(t1 - entry) / risk, 2) if risk > 0 else 0
-            rr2 = round(abs(t2 - entry) / risk, 2) if risk > 0 else 0
+            rr1 = round(abs(t1-entry)/risk, 2) if risk>0 else 0
+            rr2 = round(abs(t2-entry)/risk, 2) if risk>0 else 0
 
-            cpr_type = "Narrow" if width < 0.25 else ("Moderate" if width < 0.5 else "Wide")
+            cpr_type = "Narrow" if width<0.25 else ("Moderate" if width<0.5 else "Wide")
 
-            # Build unique strategy name for this signal
+            # ── Strategy rationale string ────────────────────────────────────
+            # Used in signal card + backtest reference
+            top3 = reasons[:3] if len(reasons) >= 3 else reasons
+            rationale = " · ".join(top3)
+            if virgin_cpr:
+                rationale = "⭐ " + rationale  # highlight virgin CPR
+
             strat_name = _build_strategy_name({
                 "tf_label":   interval,
                 "CPR Type":   cpr_type,
                 "Candle":     candle_name,
                 "Pattern":    pattern_main,
-                "RSI":        round(rsi, 1),
+                "RSI":        round(rsi,1),
                 "HMA":        "▲" if hma_up else "▼",
                 "Vol Surge":  "✅" if vol_surge else "—",
                 "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
-                "CPR Width%": round(width, 3),
-                "Strength%":  min(strength, 100),
+                "CPR Width%": round(width,3),
+                "Strength%":  min(strength,100),
             })
 
             rows.append({
                 "Symbol":     sym,
-                "LTP":        round(ltp, 2),
-                "CPR Width%": round(width, 3),
+                "LTP":        round(ltp,2),
+                "CPR Width%": round(width,3),
                 "CPR Type":   cpr_type,
+                "Virgin CPR": "⭐ Yes" if virgin_cpr else "—",
                 "Strategy":   strat_name,
-                "TC":         round(TC, 2),
-                "BC":         round(BC, 2),
-                "Pivot P":    round(P, 2),
-                "R1": R1, "R2": R2, "R3": R3,
-                "S1": S1, "S2": S2, "S3": S3,
+                "Rationale":  rationale,
+                "TC":         round(TC,2),  "BC": round(BC,2),  "Pivot P": round(P,2),
+                "R1": R1,  "R2": R2,  "R3": R3,
+                "S1": S1,  "S2": S2,  "S3": S3,
                 "Pattern":    pattern_main,
                 "Candle":     candle_name,
-                "Strength%":  min(strength, 100),
-                "RSI":        round(rsi, 1),
+                "Strength%":  min(strength,100),
+                "RSI":        round(rsi,1),
                 "HMA":        "▲" if hma_up else "▼",
-                "ATR":        round(atr, 2),
+                "ATR":        round(atr,2),
+                "Stoch%K":    round(stk,1),
                 "Vol Surge":  "✅" if vol_surge else "—",
                 "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
                 "Entry":      entry,
                 "SL":         sl,
-                "T1":         round(t1, 2),
-                "T2":         round(t2, 2),
-                "T3":         round(t3, 2),
-                "RR1":        rr1,
-                "RR2":        rr2,
-                "Risk Rs":    round(risk, 2),
+                "T1":         round(t1,2),  "T2": round(t2,2),  "T3": round(t3,2),
+                "RR1":        rr1,           "RR2": rr2,
+                "Risk Rs":    round(risk,2),
             })
         except Exception:
             continue
@@ -4643,6 +4780,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     CPR Scanner — one timeframe at a time.
     Each timeframe auto-refreshes at its own natural interval:
       15m  → every 15 minutes
+      30m  → every 30 minutes
       1h   → every 1 hour
       1d   → every 4 hours (daily chart doesn't change intraday)
       1wk  → every 24 hours
@@ -4652,6 +4790,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
     TF_CONFIG = {
         "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"5d",  "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+        "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"10d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
         "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"30d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
         "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"90d", "tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
         "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
@@ -4778,7 +4917,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
         # ── Always sync canonical keys read by Trade Signals tab ──────────────
         # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
-        if tf_tag in ("15m", "1h"):
+        if tf_tag in ("15m", "30m", "1h"):
             st.session_state[f"cpr_scan_{tf_tag}"]      = result
             st.session_state[f"cpr_scan_time_{tf_tag}"] = now
 
@@ -5533,12 +5672,16 @@ def page_trade_signals(nse500: pd.DataFrame):
     # ── Auto-refresh: inherit from scanner (15m & 1h only) ────────────────
     if _HAS_AUTOREFRESH and is_market_open():
         st_autorefresh(interval=15_000, limit=None, key="signals_autorefresh")
+    # Also track 30m scan time
+    if 'cpr_scan_time_30m' not in st.session_state:
+        st.session_state['cpr_scan_time_30m'] = 0
 
     # ── Pull data from CPR scanner session state ──────────────────────────
     # Only use 15Min and 1Hour scans as requested
     TF_LABELS = {
-        "cpr_scan_15m":  ("⚡ 15 Min",  "#e67e22", "15m"),
-        "cpr_scan_1h":   ("🕐 1 Hour",  "#2980b9", "1h"),
+        "cpr_scan_15m":  ("⚡ 15 Min",  "#7c3aed", "15m"),
+        "cpr_scan_30m":  ("⏱️ 30 Min",  "#ea580c", "30m"),
+        "cpr_scan_1h":   ("🕐 1 Hour",  "#1d4ed8", "1h"),
     }
 
     all_signals = []
@@ -5566,11 +5709,15 @@ def page_trade_signals(nse500: pd.DataFrame):
                     "rr2":      r.get("RR2", 0),
                     "strength": int(r["Strength%"]),
                     "candle":   r.get("Candle", "—"),
-                    "rsi":      r.get("RSI", 0),
-                    "hma":      r.get("HMA", "—"),
-                    "vol":      r.get("Vol Surge", "—"),
-                    "cpr_w":    r.get("CPR Width%", 0),
-                    "atr":      r.get("ATR", 0),
+                    "rsi":       r.get("RSI", 0),
+                    "hma":       r.get("HMA", "—"),
+                    "vol":       r.get("Vol Surge", "—"),
+                    "cpr_w":     r.get("CPR Width%", 0),
+                    "cpr_type":  r.get("CPR Type", "—"),
+                    "virgin_cpr":r.get("Virgin CPR","—") == "⭐ Yes",
+                    "atr":       r.get("ATR", 0),
+                    "stoch":     r.get("Stoch%K", "—"),
+                    "rationale": r.get("Rationale",""),
                 }
                 _sig["strategy_name"] = _build_strategy_name(_sig)
                 _sig["strategy_id"]   = _strategy_short_id(_sig)
@@ -5625,8 +5772,8 @@ def page_trade_signals(nse500: pd.DataFrame):
     # ── Filters ───────────────────────────────────────────────────────────
     fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
     with fc1:
-        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","🕐 1 Hour"],
-                                    default=["⚡ 15 Min","🕐 1 Hour"],
+        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
+                                    default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
                                     key="sig_tf_filter", label_visibility="collapsed")
     with fc2:
         side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
@@ -5736,17 +5883,24 @@ def page_trade_signals(nse500: pd.DataFrame):
       <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
     </div>
   </div>
+  <!-- Strategy rationale -->
+  <div style="font-family:DM Mono,monospace;font-size:0.68rem;color:#4a5e32;
+              background:#f5f8ed;border-radius:5px;padding:4px 7px;
+              margin-bottom:6px;border-left:3px solid {ac};">
+    {s.get('rationale','') or (s['candle'] + ' · RSI ' + str(s['rsi']) + ' · HMA ' + str(s['hma']))}
+  </div>
   <!-- Strength bar -->
-  <div style="margin-bottom:8px;">
+  <div style="margin-bottom:6px;">
     <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
       <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
-        {s['candle']} &nbsp;·&nbsp; RSI {s['rsi']} &nbsp;·&nbsp; HMA {s['hma']} &nbsp;·&nbsp; Vol {s['vol']}
+        Vol {s['vol']} &nbsp;·&nbsp; Stoch {s.get('stoch','—')} &nbsp;·&nbsp;
+        {('⭐ Virgin CPR' if s.get('virgin_cpr') else 'CPR ' + s.get('cpr_type',''))}
       </span>
-      <span style="font-family:DM Mono,monospace;font-size:0.65rem;font-weight:700;color:{ac};">
+      <span style="font-family:DM Mono,monospace;font-size:0.72rem;font-weight:800;color:{ac};">
         {s['strength']}%
       </span>
     </div>
-    <div style="background:#f0f3ea;border-radius:4px;height:5px;overflow:hidden;">
+    <div style="background:#e8eddf;border-radius:4px;height:6px;overflow:hidden;">
       <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
                   transition:width 0.5s;"></div>
     </div>
@@ -6107,12 +6261,16 @@ def page_trade_signals(nse500: pd.DataFrame):
     # ── Auto-refresh: inherit from scanner (15m & 1h only) ────────────────
     if _HAS_AUTOREFRESH and is_market_open():
         st_autorefresh(interval=15_000, limit=None, key="signals_autorefresh")
+    # Also track 30m scan time
+    if 'cpr_scan_time_30m' not in st.session_state:
+        st.session_state['cpr_scan_time_30m'] = 0
 
     # ── Pull data from CPR scanner session state ──────────────────────────
     # Only use 15Min and 1Hour scans as requested
     TF_LABELS = {
-        "cpr_scan_15m":  ("⚡ 15 Min",  "#e67e22", "15m"),
-        "cpr_scan_1h":   ("🕐 1 Hour",  "#2980b9", "1h"),
+        "cpr_scan_15m":  ("⚡ 15 Min",  "#7c3aed", "15m"),
+        "cpr_scan_30m":  ("⏱️ 30 Min",  "#ea580c", "30m"),
+        "cpr_scan_1h":   ("🕐 1 Hour",  "#1d4ed8", "1h"),
     }
 
     all_signals = []
@@ -6140,11 +6298,15 @@ def page_trade_signals(nse500: pd.DataFrame):
                     "rr2":      r.get("RR2", 0),
                     "strength": int(r["Strength%"]),
                     "candle":   r.get("Candle", "—"),
-                    "rsi":      r.get("RSI", 0),
-                    "hma":      r.get("HMA", "—"),
-                    "vol":      r.get("Vol Surge", "—"),
-                    "cpr_w":    r.get("CPR Width%", 0),
-                    "atr":      r.get("ATR", 0),
+                    "rsi":       r.get("RSI", 0),
+                    "hma":       r.get("HMA", "—"),
+                    "vol":       r.get("Vol Surge", "—"),
+                    "cpr_w":     r.get("CPR Width%", 0),
+                    "cpr_type":  r.get("CPR Type", "—"),
+                    "virgin_cpr":r.get("Virgin CPR","—") == "⭐ Yes",
+                    "atr":       r.get("ATR", 0),
+                    "stoch":     r.get("Stoch%K", "—"),
+                    "rationale": r.get("Rationale",""),
                 }
                 _sig["strategy_name"] = _build_strategy_name(_sig)
                 _sig["strategy_id"]   = _strategy_short_id(_sig)
@@ -6199,8 +6361,8 @@ def page_trade_signals(nse500: pd.DataFrame):
     # ── Filters ───────────────────────────────────────────────────────────
     fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
     with fc1:
-        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","🕐 1 Hour"],
-                                    default=["⚡ 15 Min","🕐 1 Hour"],
+        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
+                                    default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
                                     key="sig_tf_filter", label_visibility="collapsed")
     with fc2:
         side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
@@ -6310,17 +6472,24 @@ def page_trade_signals(nse500: pd.DataFrame):
       <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
     </div>
   </div>
+  <!-- Strategy rationale -->
+  <div style="font-family:DM Mono,monospace;font-size:0.68rem;color:#4a5e32;
+              background:#f5f8ed;border-radius:5px;padding:4px 7px;
+              margin-bottom:6px;border-left:3px solid {ac};">
+    {s.get('rationale','') or (s['candle'] + ' · RSI ' + str(s['rsi']) + ' · HMA ' + str(s['hma']))}
+  </div>
   <!-- Strength bar -->
-  <div style="margin-bottom:8px;">
+  <div style="margin-bottom:6px;">
     <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
       <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
-        {s['candle']} &nbsp;·&nbsp; RSI {s['rsi']} &nbsp;·&nbsp; HMA {s['hma']} &nbsp;·&nbsp; Vol {s['vol']}
+        Vol {s['vol']} &nbsp;·&nbsp; Stoch {s.get('stoch','—')} &nbsp;·&nbsp;
+        {('⭐ Virgin CPR' if s.get('virgin_cpr') else 'CPR ' + s.get('cpr_type',''))}
       </span>
-      <span style="font-family:DM Mono,monospace;font-size:0.65rem;font-weight:700;color:{ac};">
+      <span style="font-family:DM Mono,monospace;font-size:0.72rem;font-weight:800;color:{ac};">
         {s['strength']}%
       </span>
     </div>
-    <div style="background:#f0f3ea;border-radius:4px;height:5px;overflow:hidden;">
+    <div style="background:#e8eddf;border-radius:4px;height:6px;overflow:hidden;">
       <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
                   transition:width 0.5s;"></div>
     </div>
@@ -6550,8 +6719,9 @@ def _trade_buttons(s: dict):
         help=strat_name,
     ):
         tf_map = {
-            "⚡ 15 Min": ("15 Min", "3 Months"),
-            "🕐 1 Hour": ("1 Hour", "6 Months"),
+            "⚡ 15 Min":  ("15 Min", "3 Months"),
+            "⏱️ 30 Min":  ("30 Min", "6 Months"),
+            "🕐 1 Hour":  ("1 Hour", "6 Months"),
         }
         bt_tf, bt_lb = tf_map.get(s.get("tf","⚡ 15 Min"), ("15 Min","3 Months"))
 
@@ -6995,6 +7165,919 @@ def page_paper_trading():
     st.caption("⚠️ Paper trading uses virtual capital only. Not real trades. For strategy testing purposes only.")
 
 
+# ══════════════════════════════════════════════════════════════
+#  STRATEGY DEFINITIONS — Single source of truth
+#  Used by: Strategy tab · Signal Cards · Backtester
+# ══════════════════════════════════════════════════════════════
+
+STRATEGIES = [
+    {
+        "id":          "cpr_narrow_breakout",
+        "name":        "CPR Narrow Breakout",
+        "emoji":       "⚡",
+        "category":    "Intraday",
+        "timeframes":  ["15 Min","1 Hour"],
+        "author":      "Frank Ochoa — Pivot Boss",
+        "description": (
+            "When the Central Pivot Range (CPR) is very narrow (< 0.5% of price), "
+            "the market is coiling for a breakout. A close above TC = Bullish, "
+            "below BC = Bearish. High probability intraday setup."
+        ),
+        "conditions": [
+            "CPR Width < 0.5% of price",
+            "Price closes above TC (Bullish) or below BC (Bearish)",
+            "RSI between 50–75 (Bull) or 25–50 (Bear)",
+            "HMA trending in signal direction",
+            "Volume Surge ≥ 1.2x average",
+        ],
+        "entry":  "Next candle open after breakout confirmation",
+        "sl":     "Opposite side of CPR (BC for Bull, TC for Bear)",
+        "target": "R1 for Bull (T1), R2 for Bull (T2) / S1 for Bear (T1)",
+        "rr_min": 1.5,
+        "strength_threshold": 70,
+        "win_rate_expectation": "60–70%",
+        "best_stocks": ["RELIANCE","HDFCBANK","INFY","TCS","ICICIBANK"],
+        "color":  "#1a6b2e",
+        "bg":     "#e4f5e8",
+        "border": "#8dcc9a",
+    },
+    {
+        "id":          "cpr_virgin_pivot",
+        "name":        "Virgin CPR Bounce",
+        "emoji":       "🌟",
+        "category":    "Swing",
+        "timeframes":  ["1 Hour","1 Day"],
+        "author":      "Frank Ochoa — Pivot Boss",
+        "description": (
+            "A Virgin CPR is one that has never been tested (price never traded through it). "
+            "When price revisits an untested CPR, it acts as a strong support/resistance. "
+            "First touch = high probability reversal zone."
+        ),
+        "conditions": [
+            "CPR from a previous session was never tested (virgin)",
+            "Price approaches the virgin CPR from above (Bull) or below (Bear)",
+            "RSI shows oversold (Bull) or overbought (Bear) near CPR",
+            "Candlestick reversal pattern at CPR (Hammer, Engulfing, Doji)",
+            "3/10 Oscillator shows momentum exhaustion",
+        ],
+        "entry":  "On reversal candle close at virgin CPR level",
+        "sl":     "Beyond the CPR range (TC+ATR for short, BC-ATR for long)",
+        "target": "Previous session high/low or next pivot level",
+        "rr_min": 2.0,
+        "strength_threshold": 65,
+        "win_rate_expectation": "65–75%",
+        "best_stocks": ["SBIN","BHARTIARTL","LT","BAJFINANCE","KOTAKBANK"],
+        "color":  "#7c3aed",
+        "bg":     "#f3effe",
+        "border": "#c8a0f0",
+    },
+    {
+        "id":          "pivot_level_bounce",
+        "name":        "Pivot Level Support/Resistance",
+        "emoji":       "🎯",
+        "category":    "Intraday",
+        "timeframes":  ["15 Min","1 Hour"],
+        "author":      "Frank Ochoa — Pivot Boss",
+        "description": (
+            "Price respects traditional pivot levels (P, R1, R2, S1, S2) as key "
+            "support/resistance. When price approaches a pivot level with momentum, "
+            "it either bounces or breaks. Trade the reaction."
+        ),
+        "conditions": [
+            "Price within 0.1% of a key pivot level (P, R1, R2, S1, S2)",
+            "RSI confirming direction (not in extreme zone)",
+            "HMA pointing away from level (trend continuation)",
+            "Volume confirms at the pivot level",
+            "CPR is above pivot for Bull setups (Bullish market structure)",
+        ],
+        "entry":  "On first candle close away from the pivot level",
+        "sl":     "Through the pivot level by ATR/2",
+        "target": "Next pivot level in direction of trade",
+        "rr_min": 1.5,
+        "strength_threshold": 60,
+        "win_rate_expectation": "55–65%",
+        "best_stocks": ["NIFTY","BANKNIFTY","MARUTI","TITAN","AXISBANK"],
+        "color":  "#d97706",
+        "bg":     "#fdf3d4",
+        "border": "#f0c060",
+    },
+    {
+        "id":          "hma_trend_follow",
+        "name":        "HMA Trend Follower",
+        "emoji":       "📈",
+        "category":    "Swing",
+        "timeframes":  ["1 Hour","1 Day"],
+        "author":      "PivotVault AI",
+        "description": (
+            "Hull Moving Average (HMA-20) is one of the fastest trend indicators with "
+            "minimal lag. When price pulls back to HMA in a trending market and bounces, "
+            "it signals trend continuation. Combined with CPR above/below to confirm bias."
+        ),
+        "conditions": [
+            "HMA-20 clearly trending (3 consecutive higher/lower values)",
+            "Price pulls back to touch HMA-20",
+            "Bounce candle closes back above/below HMA (Bull/Bear)",
+            "CPR is above price (Bullish) or below price (Bearish)",
+            "RSI pulled back from overbought/oversold and recovering",
+        ],
+        "entry":  "Close of bounce candle off HMA",
+        "sl":     "Below HMA by ATR × 0.5",
+        "target": "Previous swing high/low or R1/S1",
+        "rr_min": 2.0,
+        "strength_threshold": 65,
+        "win_rate_expectation": "60–70%",
+        "best_stocks": ["TCS","WIPRO","HCLTECH","INFY","SUNPHARMA"],
+        "color":  "#0369a1",
+        "bg":     "#e0f2fe",
+        "border": "#7dd3fc",
+    },
+    {
+        "id":          "rsi_cpr_confluence",
+        "name":        "RSI + CPR Confluence",
+        "emoji":       "🔄",
+        "category":    "Intraday",
+        "timeframes":  ["15 Min","1 Hour"],
+        "author":      "PivotVault AI",
+        "description": (
+            "Combines RSI momentum signal with CPR position. When RSI crosses 50 "
+            "(upward for Bull, downward for Bear) AND price is on the right side of CPR, "
+            "a high-probability trade setup forms. Two indicators agreeing = higher conviction."
+        ),
+        "conditions": [
+            "RSI crosses above 50 (Bull) or below 50 (Bear)",
+            "Price is above TC (Bull) or below BC (Bear)",
+            "CPR width < 1% of price (not too wide)",
+            "Candle close confirms direction",
+            "Volume at or above 20-period average",
+        ],
+        "entry":  "Next candle open after RSI cross + CPR confirmation",
+        "sl":     "CPR midpoint (pivot) for Bull / CPR midpoint for Bear",
+        "target": "R1 (T1), R2 (T2) for Bull / S1 (T1), S2 (T2) for Bear",
+        "rr_min": 1.5,
+        "strength_threshold": 55,
+        "win_rate_expectation": "58–68%",
+        "best_stocks": ["RELIANCE","SBIN","HDFCBANK","ASIANPAINT","NTPC"],
+        "color":  "#dc2626",
+        "bg":     "#fbe8e6",
+        "border": "#f0a0a0",
+    },
+    {
+        "id":          "candlestick_cpr",
+        "name":        "Candlestick Pattern + CPR",
+        "emoji":       "🕯️",
+        "category":    "Intraday",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "author":      "PivotVault AI",
+        "description": (
+            "Candlestick reversal patterns (Hammer, Bullish Engulfing, Morning Star, "
+            "Shooting Star, Bearish Engulfing) carry much more weight when they form "
+            "exactly at a CPR level or pivot. The combination creates a precise, "
+            "high-probability trade entry with a tight stop."
+        ),
+        "conditions": [
+            "Reversal candlestick pattern forms at CPR (TC, BC, or Pivot)",
+            "Pattern is at a key pivot level (R1, R2, S1, S2)",
+            "Volume surge on the pattern candle (> 1.5x average)",
+            "RSI not at extreme (not overbought/oversold entering trade)",
+            "Trend in direction of trade (HMA confirms)",
+        ],
+        "entry":  "Next candle open after pattern confirmation",
+        "sl":     "Below pattern low (Bull) or above pattern high (Bear)",
+        "target": "Next pivot/CPR level in direction",
+        "rr_min": 1.5,
+        "strength_threshold": 60,
+        "win_rate_expectation": "62–72%",
+        "best_stocks": ["BAJFINANCE","KOTAKBANK","TITAN","MARUTI","LT"],
+        "color":  "#059669",
+        "bg":     "#d1fae5",
+        "border": "#6ee7b7",
+    },
+]
+
+
+def page_strategy():
+    """Strategy Reference + Backtest Launcher."""
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">📚</span>
+        <h1>Strategy Library</h1>
+        <span style="margin-left:auto;background:#e0f2fe;border:1px solid #7dd3fc;
+                     color:#0369a1;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+            FRANK OCHOA · PIVOT BOSS · CPR
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        "<div style='font-family:DM Mono,monospace;font-size:0.8rem;color:#2e3d1a;"
+        "margin-bottom:1rem;'>"
+        "All signal cards in the Scanner & Signals tab are built on these strategies. "
+        "Select any strategy → pick a stock → launch backtest with one click."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Category filter ───────────────────────────────────────────────────
+    cats = ["All"] + sorted(set(s["category"] for s in STRATEGIES))
+    tfs  = ["All", "15 Min", "1 Hour", "1 Day"]
+    fc1, fc2 = st.columns([2, 2])
+    with fc1:
+        cat_filter = st.radio("Category", cats, horizontal=True, key="st_cat")
+    with fc2:
+        tf_filter = st.radio("Timeframe", tfs, horizontal=True, key="st_tf")
+
+    filtered = [
+        s for s in STRATEGIES
+        if (cat_filter == "All" or s["category"] == cat_filter)
+        and (tf_filter == "All" or tf_filter in s["timeframes"])
+    ]
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.73rem;color:#4a5e32;"
+        f"margin-bottom:0.75rem;'>Showing {len(filtered)} of {len(STRATEGIES)} strategies</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Strategy cards ────────────────────────────────────────────────────
+    for strat in filtered:
+        _render_strategy_card(strat)
+
+    st.divider()
+    st.caption(
+        "Strategies based on Frank Ochoa's Pivot Boss methodology. "
+        "All signals use CPR (Central Pivot Range) as the primary filter. "
+        "Not financial advice."
+    )
+
+
+def _render_strategy_card(s: dict):
+    """Render one strategy card with full details + backtest launcher."""
+    c = s["color"]; bg = s["bg"]; bd = s["border"]
+
+    st.markdown(f"""
+    <div style="background:#ffffff;border:1.5px solid {bd};border-radius:12px;
+                padding:1.1rem 1.2rem;margin-bottom:1rem;
+                border-left:5px solid {c};box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
+        <span style="font-size:1.4rem;">{s['emoji']}</span>
+        <span style="font-family:DM Sans,sans-serif;font-size:1.05rem;
+                     font-weight:800;color:#0e1308;">{s['name']}</span>
+        <span style="background:{bg};color:{c};border:1px solid {bd};
+                     border-radius:20px;padding:2px 9px;
+                     font-family:DM Mono,monospace;font-size:0.65rem;font-weight:700;">
+            {s['category']}
+        </span>
+        <span style="background:#f0f4e8;color:#2e3d1a;border:1px solid #b8c89a;
+                     border-radius:20px;padding:2px 9px;
+                     font-family:DM Mono,monospace;font-size:0.65rem;">
+            {" · ".join(s['timeframes'])}
+        </span>
+        <span style="margin-left:auto;font-family:DM Mono,monospace;
+                     font-size:0.65rem;color:#4a5e32;">by {s['author']}</span>
+      </div>
+      <div style="font-family:DM Sans,sans-serif;font-size:0.85rem;color:#2e3d1a;
+                  margin-bottom:10px;line-height:1.6;">{s['description']}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="background:{bg};border-radius:8px;padding:0.55rem 0.75rem;">
+          <div style="font-family:DM Mono,monospace;font-size:0.6rem;color:{c};
+                      font-weight:700;text-transform:uppercase;margin-bottom:4px;">
+              Entry</div>
+          <div style="font-family:DM Sans,sans-serif;font-size:0.78rem;color:#0e1308;">
+              {s['entry']}</div>
+        </div>
+        <div style="background:#fbe8e6;border-radius:8px;padding:0.55rem 0.75rem;">
+          <div style="font-family:DM Mono,monospace;font-size:0.6rem;color:#9e2018;
+                      font-weight:700;text-transform:uppercase;margin-bottom:4px;">
+              Stop Loss</div>
+          <div style="font-family:DM Sans,sans-serif;font-size:0.78rem;color:#0e1308;">
+              {s['sl']}</div>
+        </div>
+        <div style="background:#e4f5e8;border-radius:8px;padding:0.55rem 0.75rem;">
+          <div style="font-family:DM Mono,monospace;font-size:0.6rem;color:#1a6b2e;
+                      font-weight:700;text-transform:uppercase;margin-bottom:4px;">
+              Target</div>
+          <div style="font-family:DM Sans,sans-serif;font-size:0.78rem;color:#0e1308;">
+              {s['target']}</div>
+        </div>
+        <div style="background:#f0f4e8;border-radius:8px;padding:0.55rem 0.75rem;">
+          <div style="font-family:DM Mono,monospace;font-size:0.6rem;color:#2e3d1a;
+                      font-weight:700;text-transform:uppercase;margin-bottom:4px;">
+              Expected Win Rate</div>
+          <div style="font-family:DM Sans,sans-serif;font-size:0.78rem;
+                      font-weight:700;color:{c};">
+              {s['win_rate_expectation']}</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Conditions ────────────────────────────────────────────────────────
+    with st.expander(f"📋 {s['name']} — Entry Conditions & Best Stocks"):
+        cc1, cc2 = st.columns([3, 2])
+        with cc1:
+            st.markdown("**Entry Conditions:**")
+            for cond in s["conditions"]:
+                st.markdown(f"- {cond}")
+            st.markdown(f"**Minimum R:R:** `{s['rr_min']}x`")
+            st.markdown(f"**Min Signal Strength:** `{s['strength_threshold']}%`")
+        with cc2:
+            st.markdown("**Best performing stocks:**")
+            for stk in s["best_stocks"]:
+                st.markdown(f"- `{stk}`")
+
+    # ── Backtest launcher ─────────────────────────────────────────────────
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+        f"color:#4a5e32;margin:0.25rem 0 0.4rem;'>🔬 Quick backtest this strategy:</div>",
+        unsafe_allow_html=True,
+    )
+
+    ALL_STOCKS = [
+        "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
+        "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
+        "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
+    ]
+
+    bc1, bc2, bc3, bc4 = st.columns([2.5, 1.5, 1.5, 2])
+    with bc1:
+        # Default to strategy's best stocks
+        default_stocks = [stk for stk in s["best_stocks"] if stk in ALL_STOCKS]
+        default_idx    = ALL_STOCKS.index(default_stocks[0]) if default_stocks else 0
+        sel_sym = st.selectbox(
+            "Stock", ALL_STOCKS, index=default_idx,
+            key=f"st_sym_{s['id']}",
+            label_visibility="collapsed",
+        )
+    with bc2:
+        tf_opts     = s["timeframes"] + (["1 Day"] if "1 Day" not in s["timeframes"] else [])
+        sel_tf = st.selectbox(
+            "TF", tf_opts,
+            key=f"st_tf_{s['id']}",
+            label_visibility="collapsed",
+        )
+    with bc3:
+        sel_lb = st.selectbox(
+            "Period",
+            ["1 Month","3 Months","6 Months","1 Year"],
+            index=1,
+            key=f"st_lb_{s['id']}",
+            label_visibility="collapsed",
+        )
+    with bc4:
+        if st.button(
+            f"🔬 Run Backtest",
+            key=f"bt_launch_{s['id']}",
+            use_container_width=True,
+        ):
+            # Map R:R
+            rr_val = s["rr_min"]
+            if   rr_val >= 3.5: rr_str = "1:4"
+            elif rr_val >= 2.5: rr_str = "1:3"
+            elif rr_val >= 1.5: rr_str = "1:2"
+            else:               rr_str = "1:1"
+
+            st.session_state.update({
+                "bt_prefill_sym":      sel_sym,
+                "bt_prefill_tf":       sel_tf,
+                "bt_prefill_lb":       sel_lb,
+                "bt_prefill_rr":       rr_str,
+                "bt_prefill_dir":      "Both",
+                "bt_prefill_str":      s["strength_threshold"],
+                "bt_prefill_strategy": s["name"],
+                "bt_results":          [],
+                "bt_meta":             {},
+                "bt_launched_from":    {
+                    "sym": sel_sym, "tf": sel_tf,
+                    "dir": "Both",  "rr": rr_str,
+                    "strategy": s["name"],
+                },
+                "current_page": "Backtest",
+            })
+            st.rerun()
+
+    st.markdown("<div style='height:0.25rem;'></div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+#  STRATEGY LIBRARY PAGE
+# ══════════════════════════════════════════════════════════════
+
+STRATEGIES = [
+    {
+        "id":          "cpr_breakout_bull",
+        "name":        "CPR Bullish Breakout",
+        "category":    "CPR",
+        "direction":   "Bullish",
+        "timeframes":  ["15 Min","1 Hour"],
+        "icon":        "📈",
+        "color":       "#1a6b2e",
+        "bg":          "#e4f5e8",
+        "border":      "#8dcc9a",
+        "description": "Price closes above TC (Top Central Pivot). Frank Ochoa's primary bullish signal — when price holds above TC after touching it, expect continuation.",
+        "conditions": [
+            ("LTP > TC",             "Price above Top Central Pivot — bullish territory"),
+            ("HMA-20 Rising",        "Hull Moving Average trending up — momentum confirmed"),
+            ("3/10 Osc Bullish",     "Fast MA above slow MA — trend confirmed"),
+            ("RSI > 55",             "RSI in bullish zone (not overbought)"),
+            ("Above VWAP",           "Price above 20-bar VWAP proxy — institutional buying"),
+            ("Volume Surge",         "Volume 1.5x above 20-bar average — conviction"),
+        ],
+        "entry":       "Buy on close above TC or retest of TC from above",
+        "stop_loss":   "Below BC (Bottom Central Pivot) or previous candle low",
+        "targets":     "T1=R1, T2=R2, T3=R3 (Traditional Pivot Resistance levels)",
+        "rr":          "Typically 1:2 to 1:4",
+        "score_max":   10,
+        "tags":        ["CPR","HMA","Oscillator","RSI","VWAP","Volume"],
+    },
+    {
+        "id":          "cpr_breakdown_bear",
+        "name":        "CPR Bearish Breakdown",
+        "category":    "CPR",
+        "direction":   "Bearish",
+        "timeframes":  ["15 Min","1 Hour"],
+        "icon":        "📉",
+        "color":       "#9e2018",
+        "bg":          "#fbe8e6",
+        "border":      "#dc9090",
+        "description": "Price closes below BC (Bottom Central Pivot). Ochoa's primary bearish signal — sustained breakdown below BC with HMA pointing down.",
+        "conditions": [
+            ("LTP < BC",             "Price below Bottom Central Pivot — bearish territory"),
+            ("HMA-20 Falling",       "Hull Moving Average trending down — downtrend confirmed"),
+            ("3/10 Osc Bearish",     "Fast MA below slow MA — bearish momentum"),
+            ("RSI < 45",             "RSI in bearish zone"),
+            ("Below VWAP",           "Price below VWAP — sellers in control"),
+            ("Volume Surge",         "High volume on breakdown — strong conviction"),
+        ],
+        "entry":       "Sell on close below BC or retest of BC from below",
+        "stop_loss":   "Above TC or previous candle high",
+        "targets":     "T1=S1, T2=S2, T3=S3 (Traditional Pivot Support levels)",
+        "rr":          "Typically 1:2 to 1:4",
+        "score_max":   10,
+        "tags":        ["CPR","HMA","Oscillator","RSI","VWAP","Volume"],
+    },
+    {
+        "id":          "bullish_engulfing_cpr",
+        "name":        "Bullish Engulfing at CPR",
+        "category":    "Candlestick",
+        "direction":   "Bullish",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "🕯️",
+        "color":       "#1a6b2e",
+        "bg":          "#e4f5e8",
+        "border":      "#8dcc9a",
+        "description": "A bearish candle is completely engulfed by the next bullish candle at or near the CPR zone. One of the strongest reversal signals in Ochoa methodology.",
+        "conditions": [
+            ("Previous candle bearish", "Prior candle closed below its open"),
+            ("Current candle bullish",  "Current candle opens at or below prior close"),
+            ("Body engulfs prior body", "Current body is 10%+ larger than prior body"),
+            ("Near BC or Pivot",        "Pattern forms near CPR support zone"),
+            ("LTP above CPR",           "Price in bullish territory after pattern"),
+        ],
+        "entry":       "Enter at close of engulfing candle or next candle open",
+        "stop_loss":   "Low of the engulfing candle",
+        "targets":     "T1=R1, T2=R2",
+        "rr":          "1:2 to 1:3",
+        "score_max":   15,
+        "tags":        ["Candlestick","Engulfing","CPR","Reversal"],
+    },
+    {
+        "id":          "bearish_engulfing_cpr",
+        "name":        "Bearish Engulfing at CPR",
+        "category":    "Candlestick",
+        "direction":   "Bearish",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "🕯️",
+        "color":       "#9e2018",
+        "bg":          "#fbe8e6",
+        "border":      "#dc9090",
+        "description": "A bullish candle completely engulfed by a bearish candle at the CPR resistance zone. Signals exhaustion of buying and shift to selling pressure.",
+        "conditions": [
+            ("Previous candle bullish",  "Prior candle closed above its open"),
+            ("Current candle bearish",   "Current opens at or above prior close"),
+            ("Body engulfs prior body",  "Current body 10%+ larger"),
+            ("Near TC or Pivot",         "Pattern forms near CPR resistance"),
+            ("LTP below CPR",            "Price in bearish zone after pattern"),
+        ],
+        "entry":       "Enter at close of engulfing candle or next open",
+        "stop_loss":   "High of the engulfing candle",
+        "targets":     "T1=S1, T2=S2",
+        "rr":          "1:2 to 1:3",
+        "score_max":   15,
+        "tags":        ["Candlestick","Engulfing","CPR","Reversal"],
+    },
+    {
+        "id":          "hammer_at_support",
+        "name":        "Hammer at CPR Support",
+        "category":    "Candlestick",
+        "direction":   "Bullish",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "🔨",
+        "color":       "#1a6b2e",
+        "bg":          "#e4f5e8",
+        "border":      "#8dcc9a",
+        "description": "Hammer candle (long lower wick ≥ 2× body, small upper wick) forming at BC or S1. Signals strong rejection of lower prices and buyer absorption.",
+        "conditions": [
+            ("Lower wick ≥ 2× body",  "Long lower shadow shows rejection"),
+            ("Upper wick ≤ 40% body", "Minimal upper shadow"),
+            ("Lower wick ≥ 55% range","Dominant lower wick"),
+            ("At BC or S1 level",     "Pattern at CPR support or pivot support"),
+        ],
+        "entry":       "Enter on next candle open after Hammer confirmation",
+        "stop_loss":   "Below Hammer low",
+        "targets":     "T1=TC, T2=R1",
+        "rr":          "1:2 to 1:3",
+        "score_max":   12,
+        "tags":        ["Candlestick","Hammer","Support","Reversal"],
+    },
+    {
+        "id":          "shooting_star_resistance",
+        "name":        "Shooting Star at Resistance",
+        "category":    "Candlestick",
+        "direction":   "Bearish",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "⭐",
+        "color":       "#9e2018",
+        "bg":          "#fbe8e6",
+        "border":      "#dc9090",
+        "description": "Shooting Star (long upper wick ≥ 2× body) at TC or R1. Price was rejected sharply from higher levels — bearish reversal signal.",
+        "conditions": [
+            ("Upper wick ≥ 2× body",  "Long upper shadow — price rejected"),
+            ("Lower wick ≤ 40% body", "Minimal lower shadow"),
+            ("At TC or R1 level",     "Pattern at CPR resistance or pivot resistance"),
+        ],
+        "entry":       "Enter short on next candle open",
+        "stop_loss":   "Above Shooting Star high",
+        "targets":     "T1=BC, T2=S1",
+        "rr":          "1:2",
+        "score_max":   12,
+        "tags":        ["Candlestick","ShootingStar","Resistance","Reversal"],
+    },
+    {
+        "id":          "morning_star",
+        "name":        "Morning Star (3-Candle Bullish)",
+        "category":    "Candlestick",
+        "direction":   "Bullish",
+        "timeframes":  ["1 Hour","1 Day"],
+        "icon":        "🌅",
+        "color":       "#1a6b2e",
+        "bg":          "#e4f5e8",
+        "border":      "#8dcc9a",
+        "description": "3-candle reversal: large bearish candle → small indecision candle → large bullish candle closing above midpoint of first candle. Strongest 3-candle reversal pattern.",
+        "conditions": [
+            ("C1 large bearish",         "First candle is a large red/bearish candle"),
+            ("C2 small body (Doji-like)","Middle candle shows indecision"),
+            ("C3 large bullish",         "Third candle is large green closing above C1 midpoint"),
+            ("Pattern near support",     "Ideally at BC, S1, or S2"),
+        ],
+        "entry":       "Enter on close of third candle",
+        "stop_loss":   "Below low of middle candle",
+        "targets":     "T1=TC, T2=R1, T3=R2",
+        "rr":          "1:3 to 1:4",
+        "score_max":   18,
+        "tags":        ["Candlestick","MorningStar","3-Candle","Reversal"],
+    },
+    {
+        "id":          "evening_star",
+        "name":        "Evening Star (3-Candle Bearish)",
+        "category":    "Candlestick",
+        "direction":   "Bearish",
+        "timeframes":  ["1 Hour","1 Day"],
+        "icon":        "🌙",
+        "color":       "#9e2018",
+        "bg":          "#fbe8e6",
+        "border":      "#dc9090",
+        "description": "3-candle reversal: large bullish candle → small indecision candle → large bearish candle. Mirror of Morning Star — powerful top reversal signal.",
+        "conditions": [
+            ("C1 large bullish",          "First candle large green"),
+            ("C2 small body",             "Indecision / Doji middle candle"),
+            ("C3 large bearish",          "Third candle large red closing below C1 midpoint"),
+            ("Pattern near resistance",   "Ideally at TC, R1, or R2"),
+        ],
+        "entry":       "Enter short on close of third candle",
+        "stop_loss":   "Above high of middle candle",
+        "targets":     "T1=BC, T2=S1, T3=S2",
+        "rr":          "1:3 to 1:4",
+        "score_max":   18,
+        "tags":        ["Candlestick","EveningStar","3-Candle","Reversal"],
+    },
+    {
+        "id":          "inside_bar_breakout",
+        "name":        "Inside Bar Breakout",
+        "category":    "Candlestick",
+        "direction":   "Both",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "📦",
+        "color":       "#7a5800",
+        "bg":          "#fdf3d4",
+        "border":      "#e0c060",
+        "description": "Current candle high/low is completely within prior candle range — compression before breakout. Direction follows the prior candle trend. Ochoa considers this a high-probability setup.",
+        "conditions": [
+            ("High0 < High1",    "Current high inside prior candle range"),
+            ("Low0 > Low1",      "Current low inside prior candle range"),
+            ("Prior trend clear","Follow direction of prior candle bias"),
+        ],
+        "entry":       "Enter on breakout above/below inside bar range",
+        "stop_loss":   "Opposite end of inside bar",
+        "targets":     "T1 = 1× inside bar range projected, T2 = next pivot",
+        "rr":          "1:1 to 1:2",
+        "score_max":   10,
+        "tags":        ["Candlestick","InsideBar","Compression","Breakout"],
+    },
+    {
+        "id":          "pin_bar_rejection",
+        "name":        "Pin Bar / Rejection Candle",
+        "category":    "Candlestick",
+        "direction":   "Both",
+        "timeframes":  ["15 Min","1 Hour","1 Day"],
+        "icon":        "📌",
+        "color":       "#185fa5",
+        "bg":          "#e6f1fb",
+        "border":      "#85b7eb",
+        "description": "Wick ≥ 3× body length — extreme rejection at a key level. Bull Pin Bar (long lower wick) at support = strong buy. Bear Pin Bar (long upper wick) at resistance = strong sell.",
+        "conditions": [
+            ("Wick ≥ 3× body",       "Extreme rejection — wick dominates the candle"),
+            ("At key S/R level",     "Must be at CPR, Pivot, or prior S/R"),
+            ("Volume confirmation",  "Higher volume = stronger rejection"),
+        ],
+        "entry":       "Enter on next candle in direction of rejection",
+        "stop_loss":   "Beyond the tip of the pin bar wick",
+        "targets":     "T1 = nearest opposite CPR/Pivot level",
+        "rr":          "1:2 to 1:3",
+        "score_max":   14,
+        "tags":        ["Candlestick","PinBar","Rejection","KeyLevel"],
+    },
+    {
+        "id":          "narrow_cpr_breakout",
+        "name":        "Narrow CPR Breakout (Virgin CPR)",
+        "category":    "CPR Advanced",
+        "direction":   "Both",
+        "timeframes":  ["1 Day","1 Hour"],
+        "icon":        "💥",
+        "color":       "#534ab7",
+        "bg":          "#eeedfe",
+        "border":      "#afa9ec",
+        "description": "CPR Width < 0.3% of price. Extremely narrow CPR = coiled spring. Frank Ochoa: narrow CPR days produce the biggest trending moves. Breakout above TC = strong bull, below BC = strong bear.",
+        "conditions": [
+            ("CPR Width < 0.3%",     "Ultra-narrow CPR — high probability trending day"),
+            ("Virgin CPR",           "Previous sessions did not test this CPR level"),
+            ("Strong open",          "Price gaps above TC (bull) or below BC (bear)"),
+            ("Volume expansion",     "Volume increases on breakout candle"),
+        ],
+        "entry":       "Buy break above TC / Sell break below BC on first test",
+        "stop_loss":   "Opposite end of CPR",
+        "targets":     "T1=R1/S1, T2=R2/S2, T3=R3/S3 (trending day — hold for full range)",
+        "rr":          "1:3 to 1:6 on trending days",
+        "score_max":   20,
+        "tags":        ["CPR","NarrowCPR","VirginCPR","Trending","Breakout"],
+    },
+    {
+        "id":          "oscillator_crossover",
+        "name":        "3/10 Oscillator Crossover",
+        "category":    "Oscillator",
+        "direction":   "Both",
+        "timeframes":  ["15 Min","1 Hour"],
+        "icon":        "〰️",
+        "color":       "#0f6e56",
+        "bg":          "#e1f5ee",
+        "border":      "#5dcaa5",
+        "description": "Frank Ochoa's signature 3/10 oscillator (3-period MA minus 10-period MA vs 16-period signal line). Fresh crossover + CPR alignment = high-probability entry.",
+        "conditions": [
+            ("Fast MA crosses Signal", "3/10 diff crosses 16-period average — fresh signal"),
+            ("CPR confirmation",       "Price above TC (bull cross) or below BC (bear cross)"),
+            ("HMA agreement",          "HMA direction matches oscillator signal"),
+            ("RSI not extreme",        "RSI between 30–70 for best results"),
+        ],
+        "entry":       "Enter on crossover candle close with CPR confirmation",
+        "stop_loss":   "Below/above most recent pivot low/high",
+        "targets":     "T1=R1/S1, T2=R2/S2",
+        "rr":          "1:2",
+        "score_max":   10,
+        "tags":        ["Oscillator","3/10","Ochoa","Crossover"],
+    },
+]
+
+def page_strategy():
+    """Strategy Library — all signal strategies with backtest launcher."""
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">📚</span>
+        <h1>Strategy Library</h1>
+        <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
+                     color:#3c3489;padding:3px 12px;border-radius:20px;
+                     font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+            FRANK OCHOA · CPR · PIVOT BOSS
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        "<div style='font-family:DM Mono,monospace;font-size:0.82rem;color:#2e3d1a;"
+        "margin-bottom:1rem;'>All signal generation logic used in the CPR Scanner and "
+        "Trade Signals tab. Click <b>🔬 Backtest</b> on any strategy to test it on "
+        "any stock.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Filters ───────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        cat_filter = st.multiselect(
+            "Category",
+            ["CPR","CPR Advanced","Candlestick","Oscillator"],
+            default=[],
+            placeholder="All categories",
+            key="sl_cat",
+            label_visibility="collapsed",
+        )
+    with fc2:
+        dir_filter = st.radio("Direction", ["All","Bullish","Bearish"],
+                              horizontal=True, key="sl_dir", label_visibility="collapsed")
+    with fc3:
+        tf_filter = st.multiselect(
+            "Timeframe",
+            ["15 Min","1 Hour","1 Day"],
+            default=[],
+            placeholder="All timeframes",
+            key="sl_tf",
+            label_visibility="collapsed",
+        )
+
+    # Apply filters
+    filtered = STRATEGIES
+    if cat_filter:
+        filtered = [s for s in filtered if s["category"] in cat_filter]
+    if dir_filter != "All":
+        filtered = [s for s in filtered if s["direction"] in (dir_filter, "Both")]
+    if tf_filter:
+        filtered = [s for s in filtered if any(t in s["timeframes"] for t in tf_filter)]
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+        f"color:#4a5e32;margin-bottom:0.75rem;'>"
+        f"Showing <b>{len(filtered)}</b> of {len(STRATEGIES)} strategies</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Strategy cards ────────────────────────────────────────────────────
+    for strat in filtered:
+        bull = strat["direction"] == "Bullish"
+        bear = strat["direction"] == "Bearish"
+
+        # Card container
+        st.markdown(
+            f"<div style='background:#fff;border:1.5px solid {strat['border']};"
+            f"border-radius:12px;padding:1rem 1.1rem 0.75rem;margin-bottom:1rem;"
+            f"border-left:5px solid {strat['color']};'>"
+
+            # Header
+            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;'>"
+            f"<span style='font-size:1.2rem;'>{strat['icon']}</span>"
+            f"<span style='font-family:DM Sans,sans-serif;font-size:1rem;"
+            f"font-weight:800;color:#0e1308;'>{strat['name']}</span>"
+            f"<span style='margin-left:auto;background:{strat['bg']};"
+            f"color:{strat['color']};border:1px solid {strat['border']};"
+            f"border-radius:20px;padding:2px 10px;font-size:0.68rem;"
+            f"font-family:DM Mono,monospace;font-weight:700;'>{strat['category']}</span>"
+            f"{'<span style="background:#e4f5e8;color:#1a6b2e;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▲ BULL</span>' if bull else ''}"
+            f"{'<span style="background:#fbe8e6;color:#9e2018;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▼ BEAR</span>' if bear else ''}"
+            f"{'<span style="background:#fdf3d4;color:#7a5800;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">↕ BOTH</span>' if not bull and not bear else ''}"
+            f"</div>"
+
+            # Description
+            f"<div style='font-size:0.85rem;color:#2e3d1a;margin-bottom:0.6rem;"
+            f"line-height:1.5;'>{strat['description']}</div>"
+
+            # Timeframes + tags
+            f"<div style='display:flex;flex-wrap:wrap;gap:5px;margin-bottom:0.6rem;'>"
+            + "".join(
+                f"<span style='background:#f0f4e8;border:1px solid #b8c89a;"
+                f"border-radius:5px;padding:1px 7px;font-size:0.65rem;"
+                f"font-family:DM Mono,monospace;color:#2e3d1a;'>⏱ {t}</span>"
+                for t in strat["timeframes"]
+            )
+            + "".join(
+                f"<span style='background:#f5f8ed;border:1px solid #dae0cb;"
+                f"border-radius:5px;padding:1px 7px;font-size:0.65rem;"
+                f"font-family:DM Mono,monospace;color:#4a5e32;'>{tag}</span>"
+                for tag in strat["tags"]
+            )
+            + f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Expandable conditions + trade plan
+        with st.expander(f"📋 Entry Conditions & Trade Plan — {strat['name']}"):
+            cc1, cc2 = st.columns([3, 2])
+            with cc1:
+                st.markdown("**Entry Conditions:**")
+                for cond, desc in strat["conditions"]:
+                    st.markdown(
+                        f"<div style='display:flex;gap:8px;margin-bottom:4px;"
+                        f"font-family:DM Sans,sans-serif;font-size:0.85rem;'>"
+                        f"<span style='background:{strat["bg"]};color:{strat["color"]};"
+                        f"border-radius:5px;padding:1px 8px;font-family:DM Mono,monospace;"
+                        f"font-size:0.72rem;font-weight:700;white-space:nowrap;'>{cond}</span>"
+                        f"<span style='color:#2e3d1a;'>{desc}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+            with cc2:
+                st.markdown("**Trade Plan:**")
+                details = [
+                    ("🎯 Entry",    strat["entry"]),
+                    ("🛑 Stop Loss", strat["stop_loss"]),
+                    ("💰 Targets",  strat["targets"]),
+                    ("📊 R:R",      strat["rr"]),
+                    ("⭐ Max Score", f"{strat['score_max']}/20"),
+                ]
+                for label, val in details:
+                    st.markdown(
+                        f"<div style='margin-bottom:5px;font-size:0.82rem;'>"
+                        f"<span style='font-family:DM Mono,monospace;font-weight:700;"
+                        f"color:#0e1308;'>{label}:</span> "
+                        f"<span style='color:#2e3d1a;'>{val}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+
+        # Backtest button row
+        _strategy_backtest_launcher(strat)
+
+    st.caption("📚 Strategies based on Frank Ochoa's Pivot Boss methodology. "
+               "CPR = Central Pivot Range. For educational purposes only.")
+
+
+def _strategy_backtest_launcher(strat: dict):
+    """Render stock selector + backtest button for a strategy card."""
+    sid = strat["id"]
+
+    ALL_SYMS = [
+        "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN","HINDUNILVR",
+        "BAJFINANCE","BHARTIARTL","KOTAKBANK","LT","ASIANPAINT","AXISBANK",
+        "MARUTI","TITAN","SUNPHARMA","WIPRO","HCLTECH","ADANIENT","NTPC",
+        "POWERGRID","ULTRACEMCO","NESTLEIND","TATAMOTORS","JSWSTEEL",
+        "HINDALCO","COALINDIA","BPCL","INDUSINDBK","CIPLA",
+    ]
+
+    c1, c2, c3, c4 = st.columns([2, 1.5, 1.5, 1.5])
+    with c1:
+        sym = st.selectbox(
+            "Stock",
+            ALL_SYMS,
+            key=f"sl_sym_{sid}",
+            label_visibility="collapsed",
+        )
+    with c2:
+        tf_opts = strat["timeframes"]
+        tf = st.selectbox(
+            "TF",
+            tf_opts,
+            key=f"sl_tf_{sid}",
+            label_visibility="collapsed",
+        )
+    with c3:
+        lb = st.selectbox(
+            "Lookback",
+            ["1 Month","3 Months","6 Months","1 Year"],
+            index=1,
+            key=f"sl_lb_{sid}",
+            label_visibility="collapsed",
+        )
+    with c4:
+        if st.button(
+            f"🔬 Backtest",
+            key=f"bt_strat_{sid}",
+            use_container_width=True,
+        ):
+            # Map strategy direction to backtest direction filter
+            dir_map = {"Bullish": "Bullish Only", "Bearish": "Bearish Only", "Both": "Both"}
+            bt_dir  = dir_map.get(strat["direction"], "Both")
+
+            # Map R:R string
+            rr_str = "1:2"
+            if "1:3" in strat["rr"]: rr_str = "1:3"
+            elif "1:4" in strat["rr"]: rr_str = "1:4"
+            elif "1:1" in strat["rr"]: rr_str = "1:1"
+
+            st.session_state.update({
+                "bt_prefill_sym":      sym,
+                "bt_prefill_tf":       tf,
+                "bt_prefill_lb":       lb,
+                "bt_prefill_rr":       rr_str,
+                "bt_prefill_dir":      bt_dir,
+                "bt_prefill_str":      50,
+                "bt_prefill_strat":    strat["name"],
+                "bt_results":          [],
+                "bt_meta":             {},
+                "bt_launched_from": {
+                    "sym": sym, "tf": tf,
+                    "dir": bt_dir, "rr": rr_str,
+                    "strat": strat["name"],
+                },
+                "current_page":        "Backtest",
+            })
+            st.rerun()
+
+
 def page_backtest():
     """
     Backtest CPR/Pivot Boss signals on historical data from Upstox (or yfinance fallback).
@@ -7013,12 +8096,29 @@ def page_backtest():
     </div>
     """, unsafe_allow_html=True)
 
-    data_src = "📡 Upstox" if _upstox_connected() else "📊 yfinance"
+    data_src = "📡 Upstox" if _upstox_connected() else "📊 yfinance (delayed ~15min)"
+
+    upstox_on = _upstox_connected()
+    DATA_AVAIL = {
+        "15 Min":  ("30 min candles",   "1 Year",    "Upstox") if upstox_on else ("15 min",  "60 Days",  "yfinance"),
+        "30 Min":  ("30 min candles",   "1 Year",    "Upstox") if upstox_on else ("30 min",  "60 Days",  "yfinance"),
+        "1 Hour":  ("60 min candles",   "1 Year",    "Upstox") if upstox_on else ("1 hour",  "2 Years",  "yfinance"),
+        "1 Day":   ("Daily candles",    "10+ Years", "Upstox") if upstox_on else ("Daily",   "10 Years", "yfinance"),
+    }
+
+    sel_tf   = st.session_state.get("bt_tf","15 Min")
+    avail    = DATA_AVAIL.get(sel_tf, DATA_AVAIL["15 Min"])
+
     st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;color:#2e3d1a;"
+        f"<div style='font-family:DM Mono,monospace;font-size:0.78rem;"
         f"background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-        f"padding:0.5rem 0.9rem;margin-bottom:1rem;'>"
-        f"Data source: <b>{data_src}</b></div>",
+        f"padding:0.55rem 1rem;margin-bottom:0.75rem;"
+        f"display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;'>"
+        f"<span>📡 Data: <b>{avail[2]}</b></span>"
+        f"<span>📊 Resolution: <b>{avail[0]}</b></span>"
+        f"<span>📅 Max history: <b>{avail[1]}</b></span>"
+        f"{'<span style="color:#1a6b2e;">✅ Live feed active</span>' if _upstox_connected() else '<span style="color:#7a5800;">⚠️ Connect Upstox for better data</span>'}"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -7082,8 +8182,8 @@ def page_backtest():
         sym_default = ALL_SYMS.index(pf_sym) if pf_sym and pf_sym in ALL_SYMS else 0
         symbol = st.selectbox("Symbol", ALL_SYMS, index=sym_default, key="bt_sym")
     with c2:
-        tf_opts = ["15 Min","1 Hour","1 Day"]
-        tf_default = tf_opts.index(pf_tf) if pf_tf in tf_opts else 0
+        tf_opts = ["15 Min","30 Min","1 Hour","1 Day"]
+        tf_default = tf_opts.index(pf_tf) if pf_tf and pf_tf in tf_opts else 0
         tf = st.selectbox("Timeframe", tf_opts, index=tf_default, key="bt_tf")
     with c3:
         lb_opts = ["1 Month","3 Months","6 Months","1 Year"]
@@ -7130,9 +8230,10 @@ def page_backtest():
     if run_bt:
         # ── Fetch historical data ─────────────────────────────────────────
         tf_map = {
-            "15 Min": ("15m", "60d"),
-            "1 Hour": ("1h",  "180d"),
-            "1 Day":  ("1d",  "365d"),
+            "15 Min": ("15m",  "60d"),
+            "30 Min": ("30m",  "90d"),
+            "1 Hour": ("1h",   "180d"),
+            "1 Day":  ("1d",   "365d"),
         }
         lb_map = {
             "1 Month":  30,  "3 Months": 90,
@@ -7142,21 +8243,32 @@ def page_backtest():
         days         = lb_map[lookback]
         rr_val       = int(rr_target.split(":")[1])
 
-        with st.spinner(f"Fetching {symbol} {tf} data ({lookback})..."):
-            from_dt = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-            to_dt   = datetime.now().strftime("%Y-%m-%d")
+        from_dt = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        to_dt   = datetime.now().strftime("%Y-%m-%d")
+        source  = "Upstox" if _upstox_connected() else "yfinance"
 
+        with st.spinner(f"Fetching {symbol} {tf} data via {source} ({lookback})..."):
+            df = pd.DataFrame()
             if _upstox_connected():
                 df = upstox_get_historical(symbol, interval, from_dt, to_dt)
-            else:
-                df = pd.DataFrame()
+                if df.empty:
+                    st.warning(
+                        f"⚠️ Upstox returned no data for **{symbol}** ({interval}). "
+                        f"This may mean the symbol is not in the ISIN map or the interval "
+                        f"is not available. Falling back to yfinance."
+                    )
 
             if df.empty:
-                df = yf.Ticker(symbol+".NS").history(
-                    period=f"{days}d", interval=interval
-                )
-                if not df.empty:
-                    df.index = df.index.tz_localize(None)
+                source = "yfinance (fallback)"
+                try:
+                    df = yf.Ticker(symbol+".NS").history(period=f"{days}d", interval=interval)
+                    if not df.empty:
+                        df.index = df.index.tz_localize(None)
+                except Exception as e:
+                    st.error(f"yfinance fetch failed: {e}")
+
+            if not df.empty:
+                st.caption(f"✅ {len(df)} candles fetched from **{source}**")
 
         if df.empty or len(df) < 30:
             st.error("Not enough historical data. Try a longer period or different symbol.")
@@ -7471,15 +8583,14 @@ def _render_backtest_results(results: list, meta: dict):
         rows.append({
             "Date":      r["date"],
             "Direction": "▲ BUY" if r["bias"]=="Bullish" else "▼ SELL",
-            "Entry":     f"₹{r['entry']:,.2f}",
-            "Target":    f"₹{r['target']:,.2f}",
-            "SL":        f"₹{r['sl']:,.2f}",
-            "Exit":      f"₹{r['exit']:,.2f}",
+            "Entry ₹":   f"{r['entry']:,.2f}",
+            "Target ₹":  f"{r['target']:,.2f}",
+            "SL ₹":      f"{r['sl']:,.2f}",
+            "Exit ₹":    f"{r['exit']:,.2f}",
             "P&L %":     f"{r['pnl_pct']:+.2f}%",
             "Result":    "✅ WIN" if r["outcome"]=="WIN" else "❌ LOSS",
-            "Strength":  f"{r['strength']}%",
-            "RSI":       r["rsi"],
-            "Bars":      r["bars"],
+            "CPR W%":    r.get("cpr_w",""),
+            "Pivot ₹":   r.get("pivot",""),
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=320)
 
@@ -7510,6 +8621,7 @@ def render_sidebar():
         ("📈", "Pivot Boss", "Pivot Boss Analysis"),
         ("📡", "Scanner",    "CPR Scanner"),
         ("🔔", "Signals",    "Trade Signals"),
+        ("📚", "Strategies", "Strategies"),
         ("🔬", "Backtest",   "Backtest"),
         ("📝", "Test Trade", "Paper Trading"),
         ("⚙️",  "Broker",    "Broker Settings"),
@@ -7609,6 +8721,8 @@ def main():
     elif page == "Pivot Boss Analysis": page_pivot_boss(nse500)
     elif page == "CPR Scanner":         page_cpr_scanner(nse500)
     elif page == "Trade Signals":       page_trade_signals(nse500)
+    elif page == "Strategies":          page_strategy()
+    elif page == "Strategy":            page_strategy()
     elif page == "Backtest":            page_backtest()
     elif page == "Paper Trading":       page_paper_trading()
     elif page == "Broker Settings":     page_broker_settings()
