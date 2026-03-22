@@ -6125,26 +6125,39 @@ pip install pyotp
 
             with c2:
                 if st.button("🧪 Test Auto-Renewal Now", use_container_width=True, key="test_autorenewal"):
-                    # Save first
                     st.session_state.update({
                         "upstox_mobile":       ar_mobile.strip(),
                         "upstox_pin":          ar_pin.strip(),
                         "upstox_totp_secret":  ar_totp.strip(),
                         "upstox_redirect":     ar_redir.strip(),
                     })
-                    with st.spinner("Attempting auto-renewal..."):
-                        ok, result = _upstox_auto_renew()
+                    prog = st.empty()
+                    prog.info("⏳ Step 1/5 — Opening Upstox auth session...")
+                    ok, result = _upstox_auto_renew()
                     if ok:
+                        prog.empty()
                         st.session_state.update({
                             "upstox_access_token": result,
                             "upstox_token_date":   datetime.now().strftime("%Y-%m-%d"),
                             "broker_connected":    True,
                         })
                         st.cache_data.clear()
-                        st.success("✅ Auto-renewal successful! Token updated.")
+                        st.success("✅ Auto-renewal successful! Live data feed active.")
                         st.rerun()
                     else:
-                        st.error(f"❌ Auto-renewal failed: {result}")
+                        prog.empty()
+                        st.error(f"❌ Failed: {result}")
+                        # Helpful hints based on error
+                        if "Step 1" in result:
+                            st.info("💡 Check your API Key — copy it fresh from Upstox developer portal.")
+                        elif "Step 2" in result or "PIN" in result:
+                            st.info("💡 Check your 6-digit Upstox PIN — this is the PIN you use to login to Upstox app.")
+                        elif "Step 3" in result or "TOTP" in result:
+                            st.info("💡 Check your TOTP secret — must be the base32 secret from Upstox 2FA setup (not the 6-digit code).")
+                        elif "redirect" in result.lower() or "100070" in result or "100068" in result:
+                            st.info("💡 Check Redirect URI — must exactly match what you registered in Upstox developer portal.")
+                        elif "auth code" in result.lower():
+                            st.info("💡 TOTP step passed but code extraction failed — try again (TOTP codes expire in 30s).")
 
             # Show TOTP verification
             if st.session_state.get("upstox_totp_secret"):
