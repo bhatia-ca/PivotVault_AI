@@ -410,6 +410,12 @@ def upstox_get_live_ltp_batch(symbols: list) -> dict:
         pass
     return {}
 
+def _upstox_connected() -> bool:
+    """Return True if a valid Upstox access token is saved in session state."""
+    token = st.session_state.get("upstox_access_token", "")
+    return bool(token and token.strip() and token.startswith("eyJ"))
+
+
 def _upstox_redirect_uri() -> str:
     """Detect correct redirect URI based on where the app is running."""
     try:
