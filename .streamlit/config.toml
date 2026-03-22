@@ -1,17 +1,17 @@
 [theme]
 base                     = "light"
-primaryColor             = "#1a6b3c"
-backgroundColor          = "#f0f4f8"
+primaryColor             = "#3d5a1c"
+backgroundColor          = "#f0f4e8"
 secondaryBackgroundColor = "#ffffff"
-textColor                = "#1a2332"
-font                     = "monospace"
+textColor                = "#0e1308"
+font                     = "sans serif"
 
 [server]
-headless            = true
-enableCORS          = false
+headless         = true
+enableCORS       = false
 
 [browser]
-gatherUsageStats    = false
+gatherUsageStats = false
 ```
 
 4. Click **Commit changes**
