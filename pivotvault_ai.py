@@ -5942,7 +5942,59 @@ def page_broker_settings():
 
         st.divider()
         st.markdown("#### Or — paste an existing Access Token directly")
-        uat = st.text_input("Access Token (if you already have one)", value=st.session_state.get("upstox_access_token",""), key="up_at", type="password")
+        st.caption("Use this if you already have a token from yesterday's login or another source.")
+        uat = st.text_input(
+            "Access Token",
+            value=st.session_state.get("upstox_access_token",""),
+            key="up_at",
+            type="password",
+            placeholder="eyJ0eXAiOiJKV1QiLCJhbGci...",
+        )
+        if st.button("💾 Save & Activate Token", use_container_width=True, key="save_up_token"):
+            if uat.strip():
+                # Quick verify
+                try:
+                    rv = requests.get(
+                        f"{UPSTOX_BASE}/profile",
+                        headers={"Authorization": f"Bearer {uat.strip()}", "Accept": "application/json"},
+                        timeout=5,
+                    )
+                    if rv.status_code == 200:
+                        pname = rv.json().get("data",{}).get("name","User")
+                        st.session_state.update({
+                            "upstox_access_token": uat.strip(),
+                            "broker":              "upstox",
+                            "broker_connected":    True,
+                        })
+                        st.cache_data.clear()
+                        st.success(f"✅ Connected as **{pname}**! Live data feed is active.")
+                        st.rerun()
+                    else:
+                        st.error(f"Token invalid ({rv.status_code}). Generate a fresh one above.")
+                except Exception as e:
+                    # If verify fails (network etc), save anyway
+                    st.session_state.update({
+                        "upstox_access_token": uat.strip(),
+                        "broker":              "upstox",
+                        "broker_connected":    True,
+                    })
+                    st.cache_data.clear()
+                    st.success("✅ Token saved! (Could not verify — check internet connection)")
+                    st.rerun()
+            else:
+                st.warning("Paste your access token first.")
+
+        # Disconnect button
+        if _upstox_connected():
+            if st.button("🔌 Disconnect", key="btn_disconnect_up", use_container_width=True):
+                st.session_state.update({
+                    "upstox_access_token": "",
+                    "broker": "none",
+                    "broker_connected": False,
+                })
+                st.cache_data.clear()
+                st.info("Disconnected. Switched back to yfinance.")
+                st.rerun()
 
     with tab_zerodha:
         st.markdown("### ⚡ Zerodha Kite")
