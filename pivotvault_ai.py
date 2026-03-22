@@ -5567,114 +5567,676 @@ def page_trade_signals(nse500: pd.DataFrame):
 
 def _trade_buttons(s: dict):
     """
-    Trade action buttons with market hours awareness.
-    - During market hours (9:15–15:30 IST): Live trade buttons (Groww/Zerodha/Upstox) are active
-    - Outside market hours: Live buttons show 'Market Closed' state, Paper trade always available
+    Trade buttons — behaviour:
+    • Upstox connected + market open  → Live ORDER button (purple) + Paper
+    • Upstox connected + market closed → Upstox button greyed, Paper active
+    • No Upstox → Groww / Zerodha / Upstox web links + Paper
     """
     from datetime import timezone
-    bull    = s["side"] == "BUY"
-    sym     = s["symbol"]
-    mkt_open = is_market_open()
+    bull      = s["side"] == "BUY"
+    sym       = s["symbol"]
+    mkt_open  = is_market_open()
+    up_live   = _upstox_connected()
+    IST       = timezone(timedelta(hours=5, minutes=30))
+    now_ist   = datetime.now(IST)
 
-    IST     = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(IST)
-
-    # Next market open message
+    # Market timing label
     if not mkt_open:
         if now_ist.weekday() >= 5:
             next_open = "Opens Monday 9:15 AM IST"
         elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
-            next_open = f"Opens today at 9:15 AM IST"
+            next_open = "Opens today at 9:15 AM IST"
         else:
             next_open = "Opens tomorrow 9:15 AM IST"
     else:
         next_open = ""
 
-    # Market status badge
-    if mkt_open:
+    # Status line
+    if up_live and mkt_open:
         st.markdown(
-            "<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
-            "color:#2d7a3a;margin-bottom:4px;display:flex;align-items:center;gap:5px;'>"
-            "<span style='width:6px;height:6px;background:#2d7a3a;border-radius:50%;"
+            "<div style='font-family:DM Mono,monospace;font-size:0.68rem;"
+            "color:#5b21b6;margin-bottom:5px;display:flex;align-items:center;gap:5px;'>"
+            "<span style='width:7px;height:7px;background:#7c3aed;border-radius:50%;"
             "display:inline-block;animation:pulse 1.5s infinite;'></span>"
-            "NSE Open · Live trading available</div>",
+            "Upstox Live · NSE Open · Place order instantly</div>",
+            unsafe_allow_html=True,
+        )
+    elif up_live and not mkt_open:
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.68rem;"
+            f"color:#b8860b;margin-bottom:5px;display:flex;align-items:center;gap:5px;'>"
+            f"<span style='width:7px;height:7px;background:#b8860b;border-radius:50%;"
+            f"display:inline-block;'></span>"
+            f"Upstox Connected · Market Closed · {next_open}</div>",
+            unsafe_allow_html=True,
+        )
+    elif mkt_open:
+        st.markdown(
+            "<div style='font-family:DM Mono,monospace;font-size:0.68rem;"
+            "color:#1a6b2e;margin-bottom:5px;display:flex;align-items:center;gap:5px;'>"
+            "<span style='width:7px;height:7px;background:#1a6b2e;border-radius:50%;"
+            "display:inline-block;animation:pulse 1.5s infinite;'></span>"
+            "NSE Open · Use broker link to place order</div>",
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
-            f"color:#b8860b;margin-bottom:4px;display:flex;align-items:center;gap:5px;'>"
-            f"<span style='width:6px;height:6px;background:#b8860b;border-radius:50%;"
-            f"display:inline-block;'></span>"
-            f"Market Closed · {next_open} · Paper trade available</div>",
+            f"<div style='font-family:DM Mono,monospace;font-size:0.68rem;"
+            f"color:#b8860b;margin-bottom:5px;display:flex;align-items:center;gap:5px;'>"
+            f"<span style='width:7px;height:7px;background:#b8860b;border-radius:50%;'></span>"
+            f"Market Closed · {next_open}</div>",
             unsafe_allow_html=True,
         )
 
-    # ── Button row ────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    # ── UPSTOX CONNECTED — show prominent order button ────────────────────
+    if up_live:
+        ac      = "#7c3aed" if mkt_open else "#a0a0a0"
+        btn_col, paper_col = st.columns([3, 1])
 
-    groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
-    kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
-    upstox_url = f"https://login.upstox.com/?tradingsymbol={sym}&exchange=NSE&transaction_type={s['side']}"
+        with btn_col:
+            btn_label = (
+                f"{'🟢' if bull else '🔴'} {'BUY' if bull else 'SELL'} {sym} via Upstox"
+                if mkt_open else
+                f"🔒 Upstox — Market Closed"
+            )
+            if mkt_open:
+                # Place order via Upstox API
+                if st.button(btn_label, key=f"up_order_{sym}_{s['side']}_{s['tf']}",
+                             use_container_width=True):
+                    try:
+                        # Get live LTP
+                        live = upstox_get_ltp(sym)
+                        if live <= 0:
+                            live = s["entry"]
+                        qty  = max(1, int(10000 / max(live, 1)))  # ~₹10,000 default lot
 
-    if mkt_open:
-        # ── MARKET OPEN — full live trade buttons ─────────────────────────
-        with c1:
-            ac = "#00b386" if bull else "#e74c3c"
-            st.markdown(
-                f"<a href='{groww_url}' target='_blank' style='"
-                f"display:block;text-align:center;padding:7px 0;"
-                f"background:{ac};color:#fff;border-radius:7px;"
-                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
-                f"font-family:DM Sans,sans-serif;'>"
-                f"{'🟢 Groww' if bull else '🔴 Groww'}</a>",
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown(
-                f"<a href='{kite_url}' target='_blank' style='"
-                f"display:block;text-align:center;padding:7px 0;"
-                f"background:#387ed1;color:#fff;border-radius:7px;"
-                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
-                f"font-family:DM Sans,sans-serif;'>"
-                f"⚡ Zerodha</a>",
-                unsafe_allow_html=True,
-            )
-        with c3:
-            st.markdown(
-                f"<a href='{upstox_url}' target='_blank' style='"
-                f"display:block;text-align:center;padding:7px 0;"
-                f"background:#7c3aed;color:#fff;border-radius:7px;"
-                f"font-size:0.75rem;font-weight:700;text-decoration:none;"
-                f"font-family:DM Sans,sans-serif;'>"
-                f"💜 Upstox</a>",
-                unsafe_allow_html=True,
-            )
+                        payload = {
+                            "quantity":          qty,
+                            "product":           "D",        # Delivery
+                            "validity":          "DAY",
+                            "price":             0,           # Market order
+                            "tag":               "PivotVault",
+                            "instrument_token":  f"NSE_EQ|{sym}",
+                            "order_type":        "MARKET",
+                            "transaction_type":  s["side"],
+                            "disclosed_quantity": 0,
+                            "trigger_price":     0,
+                            "is_amo":            False,
+                        }
+                        r = requests.post(
+                            f"{UPSTOX_BASE}/order/place",
+                            headers={
+                                "Authorization": f"Bearer {st.session_state['upstox_access_token']}",
+                                "Content-Type":  "application/json",
+                                "Accept":        "application/json",
+                            },
+                            json=payload,
+                            timeout=10,
+                        )
+                        if r.status_code in [200, 201]:
+                            order_id = r.json().get("data",{}).get("order_id","")
+                            st.success(f"✅ Order placed! ID: {order_id}  ·  {s['side']} {qty}×{sym} @ Market")
+                        else:
+                            err = r.json()
+                            emsg = err.get("errors",[{}])[0].get("message", r.text[:150]) if isinstance(err.get("errors"), list) else str(err)[:150]
+                            st.error(f"❌ Order failed: {emsg}")
+                    except Exception as e:
+                        st.error(f"Order error: {e}")
+            else:
+                # Greyed out button
+                st.markdown(
+                    f"<div style='text-align:center;padding:9px 0;"
+                    f"background:#e8eddf;color:#8a9a78;border-radius:7px;"
+                    f"font-size:0.8rem;font-weight:600;border:1px dashed #c4d49a;"
+                    f"font-family:DM Sans,sans-serif;cursor:not-allowed;'>"
+                    f"🔒 Upstox — {next_open}</div>",
+                    unsafe_allow_html=True,
+                )
+
+        with paper_col:
+            _paper_btn(s, sym, bull)
+
+    # ── NO UPSTOX — show Groww / Zerodha / Upstox web links ──────────────
     else:
-        # ── MARKET CLOSED — greyed out with tooltip ───────────────────────
+        groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
+        kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
+        upstox_url = f"https://login.upstox.com/?tradingsymbol={sym}&exchange=NSE&transaction_type={s['side']}"
+
         closed_style = (
             "display:block;text-align:center;padding:7px 0;"
             "background:#e8eddf;color:#8a9a78;border-radius:7px;"
-            "font-size:0.7rem;font-weight:600;text-decoration:none;"
+            "font-size:0.72rem;font-weight:600;text-decoration:none;"
             "font-family:DM Sans,sans-serif;cursor:not-allowed;"
             "border:1px dashed #c4d49a;"
         )
+
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.markdown(
-                f"<div title='{next_open}' style='{closed_style}'>"
-                f"🔒 Groww</div>",
-                unsafe_allow_html=True,
-            )
+            if mkt_open:
+                ac = "#00b386" if bull else "#e74c3c"
+                st.markdown(
+                    f"<a href='{groww_url}' target='_blank' style='"
+                    f"display:block;text-align:center;padding:7px 0;"
+                    f"background:{ac};color:#fff;border-radius:7px;"
+                    f"font-size:0.72rem;font-weight:700;text-decoration:none;"
+                    f"font-family:DM Sans,sans-serif;'>"
+                    f"{'🟢 Groww' if bull else '🔴 Groww'}</a>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"<div title='{next_open}' style='{closed_style}'>🔒 Groww</div>",
+                            unsafe_allow_html=True)
         with c2:
+            if mkt_open:
+                st.markdown(
+                    f"<a href='{kite_url}' target='_blank' style='"
+                    f"display:block;text-align:center;padding:7px 0;"
+                    f"background:#387ed1;color:#fff;border-radius:7px;"
+                    f"font-size:0.72rem;font-weight:700;text-decoration:none;"
+                    f"font-family:DM Sans,sans-serif;'>⚡ Zerodha</a>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"<div title='{next_open}' style='{closed_style}'>🔒 Zerodha</div>",
+                            unsafe_allow_html=True)
+        with c3:
+            if mkt_open:
+                st.markdown(
+                    f"<a href='{upstox_url}' target='_blank' style='"
+                    f"display:block;text-align:center;padding:7px 0;"
+                    f"background:#7c3aed;color:#fff;border-radius:7px;"
+                    f"font-size:0.72rem;font-weight:700;text-decoration:none;"
+                    f"font-family:DM Sans,sans-serif;'>💜 Upstox</a>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"<div title='{next_open}' style='{closed_style}'>🔒 Upstox</div>",
+                            unsafe_allow_html=True)
+        with c4:
+            _paper_btn(s, sym, bull)
+
+    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+
+
+def _paper_btn(s: dict, sym: str, bull: bool):
+    """Paper trade button — always available."""
+    if st.button("📝 Paper", key=f"paper_{sym}_{s['side']}_{s['tf']}", use_container_width=True):
+        balance = st.session_state.get("paper_balance", 100000.0)
+        try:
+            live = upstox_get_ltp(sym) if _upstox_connected() else 0
+            if live <= 0:
+                live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
+        except:
+            live = s["entry"]
+        qty  = max(1, int(balance * 0.05 / max(live, 1)))
+        cost = round(live * qty, 2)
+        if cost > balance:
+            qty  = max(1, int(balance * 0.02 / max(live, 1)))
+            cost = round(live * qty, 2)
+        if cost > balance:
+            st.error("Insufficient virtual balance.")
+        else:
+            trade = {
+                "id":      len(st.session_state.get("paper_trades", [])) + 1,
+                "symbol":  sym, "side": s["side"],
+                "entry":   live, "qty": qty,
+                "target":  s["t1"], "sl": s["sl"],
+                "rr":      s["rr1"], "cost": cost,
+                "status":  "OPEN", "pnl": 0.0, "exit_px": None,
+                "source":  f"Scanner {s['tf']}",
+                "time":    datetime.now().strftime("%d %b %H:%M"),
+            }
+            if "paper_trades" not in st.session_state:
+                st.session_state["paper_trades"] = []
+            st.session_state["paper_trades"].append(trade)
+            st.session_state["paper_balance"] = balance - cost
+            st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live}", icon="✅")
+
+
+def page_trade_signals(nse500: pd.DataFrame):
+    """
+    Trade Signal Board — synced live from CPR Scanner.
+    Shows 15Min and 1Hour scanner results as actionable trade cards.
+    Refreshes automatically when scanner refreshes.
+    """
+    import json
+
+    # ── Header ────────────────────────────────────────────────────────────
+    h1, h2 = st.columns([5, 1])
+    with h1:
+        st.markdown("""
+        <div class="title-bar">
+            <span style="font-size:1.5rem;">🔔</span>
+            <h1 style="color:#1a1f0e;">Trade Signals</h1>
+            <span style="margin-left:auto;background:#edf7ee;border:1px solid #b8dfc0;
+                         color:#2d7a3a;padding:3px 12px;border-radius:20px;
+                         font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+                LIVE · CPR SCANNER SYNC
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+    with h2:
+        # Notification enable button — calls window.parent
+        st.markdown("""
+        <button onclick="(function(){
+            var w = window.parent || window;
+            if (!w.Notification) { alert('Notifications not supported in this browser.'); return; }
+            w.Notification.requestPermission().then(function(p){
+                if (p === 'granted') {
+                    w._pvNotifEnabled = true;
+                    new w.Notification('🏦 PivotVault AI', {
+                        body: 'Trade signal notifications are now ON!',
+                        icon: '/static/icon-192.png',
+                        tag:  'pv-enable'
+                    });
+                } else {
+                    alert('Notification permission denied. Please allow notifications in your browser settings.');
+                }
+            });
+        })()"
+        style="width:100%;padding:8px 6px;background:#4e6130;color:#fff;
+               border:none;border-radius:8px;font-family:DM Sans,sans-serif;
+               font-size:0.75rem;font-weight:700;cursor:pointer;
+               transition:opacity 0.2s;" id="notif-enable-btn">
+        🔔 Enable Alerts
+        </button>
+        <script>
+        // Update button text based on current permission
+        (function checkPerm(){
+            var w = window.parent || window;
+            var btn = document.getElementById("notif-enable-btn");
+            if (!btn) { setTimeout(checkPerm, 300); return; }
+            if (w.Notification && w.Notification.permission === "granted") {
+                btn.style.background = "#2d7a3a";
+                btn.innerText = "✅ Alerts ON";
+            } else if (w.Notification && w.Notification.permission === "denied") {
+                btn.style.background = "#c0392b";
+                btn.innerText = "🔕 Blocked";
+                btn.title = "Allow notifications in browser settings (🔒 icon in address bar)";
+            }
+        })();
+        </script>
+        """, unsafe_allow_html=True)
+
+    # ── Auto-refresh: inherit from scanner (15m & 1h only) ────────────────
+    if _HAS_AUTOREFRESH and is_market_open():
+        st_autorefresh(interval=15_000, limit=None, key="signals_autorefresh")
+
+    # ── Pull data from CPR scanner session state ──────────────────────────
+    # Only use 15Min and 1Hour scans as requested
+    TF_LABELS = {
+        "cpr_scan_15m":  ("⚡ 15 Min",  "#e67e22", "15m"),
+        "cpr_scan_1h":   ("🕐 1 Hour",  "#2980b9", "1h"),
+    }
+
+    all_signals = []
+    scan_times  = {}
+
+    for key, (label, color, tag) in TF_LABELS.items():
+        _raw = st.session_state.get(key)
+        df = _raw if isinstance(_raw, pd.DataFrame) else pd.DataFrame()
+        ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
+        if not df.empty:
+            scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
+            for _, r in df.iterrows():
+                all_signals.append({
+                    "tf":       label,
+                    "tf_color": color,
+                    "symbol":   r["Symbol"],
+                    "side":     "BUY"  if r["Pattern"] == "Bullish" else "SELL",
+                    "ltp":      r["LTP"],
+                    "entry":    r["Entry"],
+                    "t1":       r["T1"],
+                    "t2":       r["T2"],
+                    "t3":       r["T3"],
+                    "sl":       r["SL"],
+                    "rr1":      r["RR1"],
+                    "rr2":      r.get("RR2", 0),
+                    "strength": int(r["Strength%"]),
+                    "candle":   r.get("Candle", "—"),
+                    "rsi":      r.get("RSI", 0),
+                    "hma":      r.get("HMA", "—"),
+                    "vol":      r.get("Vol Surge", "—"),
+                    "cpr_w":    r.get("CPR Width%", 0),
+                    "atr":      r.get("ATR", 0),
+                })
+
+    # ── Status bar ────────────────────────────────────────────────────────
+    if not all_signals:
+        st.markdown("""
+        <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
+                    border:2px dashed #dae0cb;border-radius:12px;
+                    font-family:DM Mono,monospace;">
+            <div style="font-size:2rem;margin-bottom:0.75rem;">📡</div>
+            <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
+                No signals yet
+            </div>
+            <div style="font-size:0.82rem;color:#5a6a48;">
+                Go to <b>📡 CPR Scanner</b> → select <b>15 Min</b> or <b>1 Hour</b>
+                → click <b>🔄 Scan Now</b><br>
+                Signals will appear here automatically and refresh with every scan.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        # Quick scan shortcut buttons
+        st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            if st.button("📡 Go to CPR Scanner → Run Scan", use_container_width=True, key="goto_scanner"):
+                st.session_state["current_page"] = "CPR Scanner"
+                st.rerun()
+        return
+
+    # Scan time info
+    time_pills = " &nbsp;·&nbsp; ".join(
+        f"<span style='color:{TF_LABELS[k][1] if k in TF_LABELS else '#5a6a48'};font-weight:700;'>{label}</span> "
+        f"<span style='color:#8a9a78;'>scanned {t}</span>"
+        for label, t in scan_times.items()
+    ) if scan_times else ""
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+        f"color:#5a6a48;margin-bottom:1rem;padding:0.5rem 0.9rem;"
+        f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
+        f"border-left:3px solid #4e6130;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
+        f"<span class='live-dot'></span>"
+        f"<span style='font-weight:700;color:#4e6130;'>LIVE SIGNALS</span>"
+        f"{time_pills}"
+        f"<span style='margin-left:auto;color:#8a9a78;'>{len(all_signals)} signals total</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Filters ───────────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
+    with fc1:
+        tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","🕐 1 Hour"],
+                                    default=["⚡ 15 Min","🕐 1 Hour"],
+                                    key="sig_tf_filter", label_visibility="collapsed")
+    with fc2:
+        side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
+                                horizontal=True, key="sig_side_filter", label_visibility="collapsed")
+    with fc3:
+        min_str = st.slider("Min Strength%", 0, 100, 60, key="sig_min_str")
+    with fc4:
+        min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
+
+    # Apply filters
+    filtered = [s for s in all_signals
+                if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
+                and (side_filter == "All"
+                     or (side_filter == "BUY only"  and s["side"] == "BUY")
+                     or (side_filter == "SELL only" and s["side"] == "SELL"))
+                and s["strength"] >= min_str
+                and s["rr1"] >= min_rr]
+
+    # Sort: strength desc, then CPR width asc
+    filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
+
+    if not filtered:
+        st.info(f"No signals match current filters. Try reducing Min Strength or Min R:R.")
+        return
+
+    bull_sigs = [s for s in filtered if s["side"] == "BUY"]
+    bear_sigs = [s for s in filtered if s["side"] == "SELL"]
+
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;color:#5a6a48;"
+        f"margin-bottom:0.75rem;'>Showing <b>{len(filtered)}</b> signals — "
+        f"<span style='color:#2d7a3a;font-weight:700;'>▲ {len(bull_sigs)} Bullish</span> &nbsp;"
+        f"<span style='color:#c0392b;font-weight:700;'>▼ {len(bear_sigs)} Bearish</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    broker = st.session_state.get("broker", "none")
+
+    # ── Signal cards ──────────────────────────────────────────────────────
+    def _signal_card_html(s: dict) -> str:
+        bull    = s["side"] == "BUY"
+        ac      = "#2d7a3a" if bull else "#c0392b"
+        bg      = "#edf7ee" if bull else "#fdf0ee"
+        bdr     = "#b8dfc0" if bull else "#f0c0b8"
+        arrow   = "▲" if bull else "▼"
+        rr_col  = "#2d7a3a" if s["rr1"] >= 2 else ("#b8860b" if s["rr1"] >= 1.5 else "#c0392b")
+        str_w   = min(s["strength"], 100)
+        tf_c    = s["tf_color"]
+        return f"""
+<div style="background:#ffffff;border:1px solid #dae0cb;border-radius:12px;
+            padding:1rem 1.1rem;border-top:4px solid {ac};
+            box-shadow:0 2px 10px rgba(50,70,20,0.07);
+            animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
+  <!-- Header row -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
+      <span style="background:{bg};color:{ac};border:1px solid {bdr};
+                   border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
+        {arrow} {s['side']}
+      </span>
+      <span style="background:{tf_c}18;color:{tf_c};border:1px solid {tf_c}44;
+                   border-radius:12px;padding:1px 7px;font-size:0.65rem;font-weight:700;">
+        {s['tf']}
+      </span>
+    </div>
+    <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
+      LTP ₹{s['ltp']:,.2f}
+    </span>
+  </div>
+  <!-- Level pills -->
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">Entry</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#1a1f0e;font-family:DM Mono,monospace;">₹{s['entry']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T1</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t1']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T2</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t2']}</div>
+    </div>
+    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">SL</div>
+      <div style="font-size:0.8rem;font-weight:700;color:#c0392b;font-family:DM Mono,monospace;">₹{s['sl']}</div>
+    </div>
+    <div style="background:{rr_col}15;border-radius:7px;padding:5px 3px;text-align:center;border:1px solid {rr_col}33;">
+      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">R:R</div>
+      <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
+    </div>
+  </div>
+  <!-- Strength bar -->
+  <div style="margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+      <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
+        {s['candle']} &nbsp;·&nbsp; RSI {s['rsi']} &nbsp;·&nbsp; HMA {s['hma']} &nbsp;·&nbsp; Vol {s['vol']}
+      </span>
+      <span style="font-family:DM Mono,monospace;font-size:0.65rem;font-weight:700;color:{ac};">
+        {s['strength']}%
+      </span>
+    </div>
+    <div style="background:#f0f3ea;border-radius:4px;height:5px;overflow:hidden;">
+      <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
+                  transition:width 0.5s;"></div>
+    </div>
+  </div>
+</div>"""
+
+    # Render in 2-column grid (bull left, bear right on desktop)
+    if bull_sigs and bear_sigs:
+        col_bull, col_bear = st.columns(2)
+        with col_bull:
+            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#2d7a3a;font-weight:700;margin-bottom:0.5rem;'>▲ BULLISH ({len(bull_sigs)})</div>",
+                        unsafe_allow_html=True)
+            for s in bull_sigs:
+                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                _trade_buttons(s)
+        with col_bear:
+            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#c0392b;font-weight:700;margin-bottom:0.5rem;'>▼ BEARISH ({len(bear_sigs)})</div>",
+                        unsafe_allow_html=True)
+            for s in bear_sigs:
+                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                _trade_buttons(s)
+    else:
+        for s in filtered:
+            st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+            _trade_buttons(s)
+
+    # Desktop notifications for new signals
+    if filtered:
+        notif_js = json.dumps([{
+            "symbol":s["symbol"],"side":s["side"],
+            "entry":s["entry"],"t1":s["t1"],"sl":s["sl"],
+            "rr":s["rr1"],"strength":s["strength"],"candle":s["candle"]
+        } for s in filtered[:6]])
+        st.markdown(f"""
+        <script>
+        (function(){{
+            var sigs = {notif_js};
+            var w = window.parent || window;
+            if (w._pvNotifEnabled || (w.Notification && w.Notification.permission === "granted")) {{
+                sigs.forEach(function(s){{
+                    if (w._pvNotify) {{
+                        w._pvNotify(
+                            (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                            "Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                            "pv-"+s.symbol
+                        );
+                    }} else {{
+                        var n = new w.Notification(
+                            (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                            {{body:"Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                              icon:"/static/icon-192.png",tag:"pv-"+s.symbol,requireInteraction:false}}
+                        );
+                    }}
+                }});
+            }}
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
+
+    st.caption("⚠️ Signals from CPR Scanner (15Min + 1Hour). Frank Ochoa Pivot methodology. Not financial advice.")
+
+
+def _trade_buttons(s: dict):
+    """
+    Trade action buttons:
+    - Upstox: ALWAYS live when token is connected (regardless of market hours)
+    - Groww/Zerodha: Live during market hours, locked outside
+    - Paper: Always available
+    """
+    from datetime import timezone
+    bull      = s["side"] == "BUY"
+    sym       = s["symbol"]
+    mkt_open  = is_market_open()
+    up_live   = _upstox_connected()   # Upstox always active when token saved
+
+    IST     = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+
+    # Next open message for non-Upstox brokers
+    if not mkt_open:
+        if now_ist.weekday() >= 5:
+            next_open = "Opens Monday 9:15 AM IST"
+        elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
+            next_open = "Opens today at 9:15 AM IST"
+        else:
+            next_open = "Opens tomorrow 9:15 AM IST"
+    else:
+        next_open = ""
+
+    # ── Status bar ────────────────────────────────────────────────────────
+    if mkt_open:
+        status_html = (
+            "<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
+            " · Live trading available"
+        )
+    elif up_live:
+        status_html = (
+            "<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span>"
+            f" · {next_open} · Upstox always active"
+        )
+    else:
+        status_html = (
+            f"<span style='color:#b8860b;font-weight:700;'>● Market Closed</span>"
+            f" · {next_open}"
+        )
+    st.markdown(
+        f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
+        f"color:#2e3d1a;margin-bottom:5px;'>{status_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── URLs ──────────────────────────────────────────────────────────────
+    groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
+    kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
+    upstox_url = f"https://trade.upstox.com/stocks/{sym}/trade?exchange=NSE&type={s['side'].lower()}"
+
+    # Styles
+    btn_style  = (
+        "display:block;text-align:center;padding:8px 0;"
+        "border-radius:7px;font-size:0.78rem;font-weight:700;"
+        "text-decoration:none;font-family:DM Sans,sans-serif;"
+    )
+    lock_style = (
+        "display:block;text-align:center;padding:8px 0;"
+        "background:#e8eddf;color:#8a9a78;border-radius:7px;"
+        "font-size:0.72rem;font-weight:600;font-family:DM Sans,sans-serif;"
+        "cursor:not-allowed;border:1px dashed #b8c89a;"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    # ── Groww — market hours only ─────────────────────────────────────────
+    with c1:
+        if mkt_open:
+            ac = "#00b386" if bull else "#e74c3c"
             st.markdown(
-                f"<div title='{next_open}' style='{closed_style}'>"
-                f"🔒 Zerodha</div>",
+                f"<a href='{groww_url}' target='_blank' style='{btn_style}background:{ac};color:#fff;'>"
+                f"{'🟢' if bull else '🔴'} Groww</a>",
                 unsafe_allow_html=True,
             )
-        with c3:
+        else:
             st.markdown(
-                f"<div title='{next_open}' style='{closed_style}'>"
-                f"🔒 Upstox</div>",
+                f"<div title='{next_open}' style='{lock_style}'>🔒 Groww</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Zerodha — market hours only ───────────────────────────────────────
+    with c2:
+        if mkt_open:
+            st.markdown(
+                f"<a href='{kite_url}' target='_blank' style='{btn_style}background:#387ed1;color:#fff;'>"
+                f"⚡ Zerodha</a>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div title='{next_open}' style='{lock_style}'>🔒 Zerodha</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Upstox — ALWAYS LIVE when token connected ─────────────────────────
+    with c3:
+        if up_live:
+            # Always show as active — Upstox token = always ready
+            label = f"{'🟢' if bull else '🔴'} Upstox"
+            badge = " ●" if not mkt_open else ""  # dot when market closed to show it's special
+            st.markdown(
+                f"<a href='{upstox_url}' target='_blank' "
+                f"style='{btn_style}background:#7c3aed;color:#fff;"
+                f"box-shadow:0 0 8px rgba(124,58,237,0.4);'>"
+                f"{label}{badge}</a>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # Not connected — prompt to connect
+            st.markdown(
+                f"<a href='#' onclick='return false;' "
+                f"title='Connect Upstox in ⚙️ Broker settings for live trading anytime' "
+                f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>💜 Upstox</a>",
                 unsafe_allow_html=True,
             )
 
@@ -5683,7 +6245,10 @@ def _trade_buttons(s: dict):
         if st.button("📝 Paper", key=f"paper_{sym}_{s['side']}_{s['tf']}", use_container_width=True):
             balance = st.session_state.get("paper_balance", 100000.0)
             try:
-                live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
+                if _upstox_connected():
+                    live = upstox_get_ltp(sym) or round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
+                else:
+                    live = round(float(yf.Ticker(sym+".NS").fast_info.last_price), 2)
             except:
                 live = s["entry"]
             qty  = max(1, int(balance * 0.05 / max(live, 1)))
@@ -5696,17 +6261,11 @@ def _trade_buttons(s: dict):
             else:
                 trade = {
                     "id":     len(st.session_state.get("paper_trades", [])) + 1,
-                    "symbol": sym,
-                    "side":   s["side"],
-                    "entry":  live,
-                    "qty":    qty,
-                    "target": s["t1"],
-                    "sl":     s["sl"],
-                    "rr":     s["rr1"],
-                    "cost":   cost,
-                    "status": "OPEN",
-                    "pnl":    0.0,
-                    "exit_px": None,
+                    "symbol": sym, "side": s["side"],
+                    "entry":  live, "qty": qty,
+                    "target": s["t1"], "sl": s["sl"],
+                    "rr":     s["rr1"], "cost": cost,
+                    "status": "OPEN", "pnl": 0.0, "exit_px": None,
                     "source": f"Scanner {s['tf']}",
                     "time":   datetime.now().strftime("%d %b %H:%M"),
                 }
