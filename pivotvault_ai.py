@@ -8426,145 +8426,146 @@ def _calc_max_drawdown(results: list) -> float:
 
 def render_sidebar():
     PAGES = [
-        ("📊", "Market", "Market Snapshot"),
+        ("📊", "Market",     "Market Snapshot"),
         ("📈", "Pivot Boss", "Pivot Boss Analysis"),
-        ("📡", "Scanner", "CPR Scanner"),
-        ("🔔", "Signals", "Trade Signals"),
-        ("🎯", "Alerts", "Price Alerts"),
-        ("📚", "Strategies", "Strategies"),
-        ("🔬", "Backtest", "Backtest"),
-        ("📝", "Journal", "Journal"),
-        ("📊", "Analytics", "Analytics"),
-        ("🏦", "Intel", "Market Intelligence"),
-        ("💼", "Trades", "Paper Trading"),
-        ("⚙️", "Broker", "Broker Settings"),
-        ("⭐", "Watchlist", "Watchlist"),
+        ("📡", "Scanner",    "CPR Scanner"),
+        ("🔔", "Signals",    "Trade Signals"),
+        ("🎯", "Alerts",     "Price Alerts"),
+        ("📚", "Strategy",   "Strategies"),
+        ("🔬", "Backtest",   "Backtest"),
+        ("📝", "Journal",    "Journal"),
+        ("📊", "Analytics",  "Analytics"),
+        ("🏦", "Intel",      "Market Intelligence"),
+        ("💼", "Trades",     "Paper Trading"),
+        ("⚙️",  "Broker",    "Broker Settings"),
+        ("⭐", "Watchlist",  "Watchlist"),
     ]
 
     if "current_page" not in st.session_state:
         st.session_state["current_page"] = "Market Snapshot"
     current = st.session_state["current_page"]
 
-    st.markdown("""
-<style>
-.block-container{padding-top:0.4rem !important;padding-left:0.6rem !important;padding-right:0.6rem !important;}
+    # ── CSS ───────────────────────────────────────────────────────────────
+    st.markdown("""<style>
+.block-container{padding-top:0.3rem !important;padding-left:0.75rem !important;padding-right:0.75rem !important;}
 section[data-testid="stSidebar"]{display:none !important;}
 [data-testid="collapsedControl"]{display:none !important;}
 button[data-testid="baseButton-header"]{display:none !important;}
-.pv-nav{display:flex;flex-wrap:wrap;gap:5px;padding:0.3rem 0 0.45rem;
-        border-bottom:2px solid #b8c89a;margin-bottom:0.5rem;}
+.pv-topbar{display:flex;align-items:center;justify-content:space-between;
+           padding:0.35rem 0 0.25rem;margin-bottom:0.25rem;}
+.pv-logo{font-family:DM Sans,sans-serif;font-weight:900;font-size:0.95rem;
+         color:#0e1308;line-height:1.2;}
+.pv-logo em{color:#3d5a1c;font-style:normal;}
+.pv-user{font-family:DM Mono,monospace;font-size:0.65rem;color:#4a5e32;text-align:right;}
+.pv-nav{display:flex;flex-wrap:wrap;gap:5px;
+        padding:0.3rem 0 0.4rem;
+        border-bottom:2px solid #b8c89a;
+        margin-bottom:0.6rem;}
 .pv-pill{display:inline-flex;align-items:center;gap:3px;
-         padding:6px 12px;border-radius:20px;border:1.5px solid #b8c89a;
-         background:#ffffff;font-family:DM Sans,sans-serif;
-         font-size:0.8rem;font-weight:600;color:#2e3d1a;
-         cursor:pointer;white-space:nowrap;
+         padding:5px 11px;border-radius:20px;
+         border:1.5px solid #b8c89a;background:#fff;
+         font-family:DM Sans,sans-serif;font-size:0.8rem;
+         font-weight:600;color:#2e3d1a;white-space:nowrap;
+         cursor:pointer;line-height:1.4;
          -webkit-tap-highlight-color:transparent;
-         user-select:none;line-height:1.4;}
+         user-select:none;text-decoration:none;}
 .pv-pill:hover{background:#dce8c4;border-color:#638534;color:#1e2c0d;}
-.pv-pill.active{background:#3d5a1c !important;
-                border-color:#3d5a1c !important;
-                color:#f8faf0 !important;
-                font-weight:700 !important;}
-.pv-hbtns{height:0;overflow:hidden;opacity:0;pointer-events:none;position:absolute;}
-@media(max-width:480px){.pv-pill{font-size:0.74rem;padding:5px 9px;}}
-</style>
-    """, unsafe_allow_html=True)
+.pv-pill.active{background:#3d5a1c !important;border-color:#3d5a1c !important;
+                color:#f8faf0 !important;font-weight:700 !important;}
+.pv-logout{font-family:DM Sans,sans-serif;font-size:0.75rem;font-weight:600;
+           color:#2e3d1a;background:#f0f4e8;border:1.5px solid #b8c89a;
+           border-radius:7px;padding:4px 10px;cursor:pointer;
+           white-space:nowrap;line-height:1.4;}
+.pv-logout:hover{background:#dce8c4;border-color:#638534;}
+@media(max-width:500px){.pv-pill{font-size:0.72rem;padding:4px 8px;}}
+</style>""", unsafe_allow_html=True)
 
     wl    = len(st.session_state.get("watchlist", []))
-    uname = st.session_state.get("username", "")[:12]
-    tc1, tc2 = st.columns([4, 1])
-    with tc1:
-        nm = f"🏦 PivotVault <span style='color:#3d5a1c;'>AI</span>"
-        st.markdown(f"<p style='font-family:DM Sans,sans-serif;font-weight:900;font-size:0.95rem;color:#0e1308;margin:0.2rem 0 0.1rem;'>{nm}</p>", unsafe_allow_html=True)
-    with tc2:
-        if st.button("🚪 Logout", key="top_logout", use_container_width=True):
-            st.session_state["logged_in"] = False
-            st.session_state["current_page"] = "Market Snapshot"
+    uname = st.session_state.get("username", "")[:14]
+
+    # ── Build pills HTML ──────────────────────────────────────────────────
+    pills_html = ""
+    for icon, short, page_key in PAGES:
+        cls = "pv-pill active" if current == page_key else "pv-pill"
+        pills_html += f"<span class='{cls}' data-page='{page_key}'>{icon} {short}</span>"
+
+    # ── Inject full nav as one HTML block (no Streamlit buttons) ─────────
+    st.markdown(f"""
+<div class="pv-topbar">
+  <div class="pv-logo">🏦 PivotVault <em>AI</em></div>
+  <div class="pv-user">👤 {uname} &nbsp;⭐ {wl}
+    <br><span id="pv-logout-btn" class="pv-logout"
+          onclick="document.getElementById('pv-logout-trigger').click()">
+      🚪 Logout
+    </span>
+  </div>
+</div>
+<div class="pv-nav" id="pv-nav-bar">
+  {pills_html}
+</div>
+<script>
+(function(){{
+  document.getElementById('pv-nav-bar').addEventListener('click', function(e){{
+    var pill = e.target.closest('.pv-pill');
+    if (!pill) return;
+    var page = pill.getAttribute('data-page');
+    if (!page) return;
+    // Find the matching hidden trigger and click it
+    var triggers = window.parent.document.querySelectorAll('[data-pv-nav]');
+    for (var i=0; i<triggers.length; i++){{
+      if (triggers[i].getAttribute('data-pv-nav') === page){{
+        triggers[i].click();
+        return;
+      }}
+    }}
+  }});
+}})();
+</script>
+""", unsafe_allow_html=True)
+
+    # ── Hidden Streamlit nav triggers — rendered but visually invisible ───
+    # These use CSS to be invisible while remaining clickable by JS
+    st.markdown("""<style>
+.pv-hidden-nav { position:fixed; top:-9999px; left:-9999px;
+                 width:1px; height:1px; overflow:hidden; opacity:0;
+                 pointer-events:none; }
+.pv-hidden-nav > div { margin:0 !important; padding:0 !important; }
+.pv-hidden-nav button { width:1px !important; height:1px !important;
+                        min-height:0 !important; padding:0 !important;
+                        margin:0 !important; border:none !important;
+                        opacity:0 !important; pointer-events:none !important; }
+</style>
+<div class="pv-hidden-nav" id="pv-nav-triggers">
+""", unsafe_allow_html=True)
+
+    for i, (_, short, page_key) in enumerate(PAGES):
+        if st.button(short, key=f"nav_{i}"):
+            st.session_state["current_page"] = page_key
             st.rerun()
-        st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;color:#4a5e32;text-align:right;'>👤{uname} ⭐{wl}</div>", unsafe_allow_html=True)
 
-    pills = []
-    css = "pv-pill active" if current == "Market Snapshot" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn0').click()\">📊 Market</span>")
-    css = "pv-pill active" if current == "Pivot Boss Analysis" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn1').click()\">📈 Pivot Boss</span>")
-    css = "pv-pill active" if current == "CPR Scanner" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn2').click()\">📡 Scanner</span>")
-    css = "pv-pill active" if current == "Trade Signals" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn3').click()\">🔔 Signals</span>")
-    css = "pv-pill active" if current == "Price Alerts" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn4').click()\">🎯 Alerts</span>")
-    css = "pv-pill active" if current == "Strategies" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn5').click()\">📚 Strategies</span>")
-    css = "pv-pill active" if current == "Backtest" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn6').click()\">🔬 Backtest</span>")
-    css = "pv-pill active" if current == "Journal" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn7').click()\">📝 Journal</span>")
-    css = "pv-pill active" if current == "Analytics" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn8').click()\">📊 Analytics</span>")
-    css = "pv-pill active" if current == "Market Intelligence" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn9').click()\">🏦 Intel</span>")
-    css = "pv-pill active" if current == "Paper Trading" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn10').click()\">💼 Trades</span>")
-    css = "pv-pill active" if current == "Broker Settings" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn11').click()\">⚙️ Broker</span>")
-    css = "pv-pill active" if current == "Watchlist" else "pv-pill"
-    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn12').click()\">⭐ Watchlist</span>")
-    st.markdown("<div class='pv-nav'>" + "".join(pills) + "</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='pv-hbtns'>", unsafe_allow_html=True)
-    if st.button("Market", key="nav_0"):
+    if st.button("Logout", key="pv-logout-trigger"):
+        st.session_state["logged_in"] = False
         st.session_state["current_page"] = "Market Snapshot"
         st.rerun()
-    if st.button("Pivot Boss", key="nav_1"):
-        st.session_state["current_page"] = "Pivot Boss Analysis"
-        st.rerun()
-    if st.button("Scanner", key="nav_2"):
-        st.session_state["current_page"] = "CPR Scanner"
-        st.rerun()
-    if st.button("Signals", key="nav_3"):
-        st.session_state["current_page"] = "Trade Signals"
-        st.rerun()
-    if st.button("Alerts", key="nav_4"):
-        st.session_state["current_page"] = "Price Alerts"
-        st.rerun()
-    if st.button("Strategies", key="nav_5"):
-        st.session_state["current_page"] = "Strategies"
-        st.rerun()
-    if st.button("Backtest", key="nav_6"):
-        st.session_state["current_page"] = "Backtest"
-        st.rerun()
-    if st.button("Journal", key="nav_7"):
-        st.session_state["current_page"] = "Journal"
-        st.rerun()
-    if st.button("Analytics", key="nav_8"):
-        st.session_state["current_page"] = "Analytics"
-        st.rerun()
-    if st.button("Intel", key="nav_9"):
-        st.session_state["current_page"] = "Market Intelligence"
-        st.rerun()
-    if st.button("Trades", key="nav_10"):
-        st.session_state["current_page"] = "Paper Trading"
-        st.rerun()
-    if st.button("Broker", key="nav_11"):
-        st.session_state["current_page"] = "Broker Settings"
-        st.rerun()
-    if st.button("Watchlist", key="nav_12"):
-        st.session_state["current_page"] = "Watchlist"
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
-    _nav_labels = ['Market', 'Pivot Boss', 'Scanner', 'Signals', 'Alerts', 'Strategies', 'Backtest', 'Journal', 'Analytics', 'Intel', 'Trades', 'Broker', 'Watchlist']
-    _nav_js = "<script>(function(){function a(){"
-    _nav_js += "var bs=window.parent.document.querySelectorAll('button');"
-    _nav_js += "var ls=" + str(_nav_labels).replace('"', '\\"') + ";"
-    _nav_js += "bs.forEach(function(x){"
-    _nav_js += "var t=(x.innerText||x.textContent||'').trim();"
-    _nav_js += "var idx=ls.indexOf(t);"
-    _nav_js += "if(idx>=0)x.id='pvbtn'+idx;"
-    _nav_js += "});"
-    _nav_js += "}a();setTimeout(a,500);setTimeout(a,1500);})()</script>"
-    st.markdown(_nav_js, unsafe_allow_html=True)
+    # Wire up data-pv-nav attributes via JS after render
+    nav_map = {short: page_key for _, short, page_key in PAGES}
+    nav_map["Logout"] = "__logout__"
+    st.markdown(f"""</div>
+<script>
+(function(){{
+  var map = {str(nav_map).replace("'", '"')};
+  function wire(){{
+    var btns = window.parent.document.querySelectorAll('.pv-hidden-nav button');
+    btns.forEach(function(btn){{
+      var txt = btn.innerText.trim();
+      if (map[txt]) btn.setAttribute('data-pv-nav', map[txt]);
+    }});
+  }}
+  setTimeout(wire, 300);
+  setTimeout(wire, 800);
+}})();
+</script>""", unsafe_allow_html=True)
 
     return current
 
