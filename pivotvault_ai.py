@@ -38,6 +38,146 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import streamlit.components.v1 as _stc
 
+# ══════════════════════════════════════════════════════════════
+#  UPSTOX FREE DATA FEED
+#  Free tier: Historical OHLCV + Market quotes (no WebSocket)
+#  Docs: https://upstox.com/developer/api-documentation/
+# ══════════════════════════════════════════════════════════════
+
+UPSTOX_BASE = "https://api.upstox.com/v2"
+
+def _upstox_redirect_uri() -> str:
+    """Detect correct redirect URI based on where the app is running."""
+    try:
+        ctx = getattr(st, "context", None)
+        if ctx and hasattr(ctx, "headers"):
+            host = dict(ctx.headers).get("host", "")
+            if host and "localhost" not in host and "127.0.0.1" not in host:
+                return f"https://{host}"
+    except Exception:
+        pass
+    return "http://localhost:8501"
+
+# Upstox instrument key format: NSE_EQ|INE002A01018 (RELIANCE)
+# We use NSE symbol name format: NSE_EQ|{ISIN}
+# For simplicity we use NSE_INDEX for indices
+UPSTOX_INDEX_KEYS = {
+    "^NSEI":    "NSE_INDEX|Nifty 50",
+    "^BSESN":   "BSE_INDEX|SENSEX",
+    "^NSEBANK": "NSE_INDEX|Nifty Bank",
+}
+
+def _upstox_headers() -> dict:
+    """Return Upstox auth headers using token from session state."""
+    token = st.session_state.get("upstox_access_token", "")
+    if not token:
+        return {}
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+
+def _upstox_connected() -> bool:
+    return bool(st.session_state.get("upstox_access_token", "").strip())
+
+@st.cache_data(ttl=15)
+def upstox_get_quote(instrument_key: str) -> dict:
+    """
+    Fetch live LTP + OHLC for one instrument via Upstox Market Quote API.
+    Free tier — no subscription needed, just access token.
+    Returns: {ltp, open, high, low, close, change, pct_change, volume}
+    """
+    if not _upstox_connected():
+        return {}
+    try:
+        r = requests.get(
+            f"{UPSTOX_BASE}/market-quote/quotes",
+            headers=_upstox_headers(),
+            params={"instrument_key": instrument_key},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return {}
+        data = r.json().get("data", {})
+        # data is keyed by instrument_key
+        q = data.get(instrument_key, {})
+        ohlc = q.get("ohlc", {})
+        return {
+            "ltp":        round(q.get("last_price", 0), 2),
+            "open":       round(ohlc.get("open", 0),   2),
+            "high":       round(ohlc.get("high", 0),   2),
+            "low":        round(ohlc.get("low",  0),   2),
+            "close":      round(ohlc.get("close",0),   2),
+            "volume":     q.get("volume", 0),
+            "change":     round(q.get("net_change", 0), 2),
+            "pct_change": round(q.get("net_change", 0) / max(ohlc.get("close",1),1) * 100, 2),
+        }
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=60)
+def upstox_get_historical(symbol: str, interval: str = "1d",
+                           from_date: str = "", to_date: str = "") -> pd.DataFrame:
+    """
+    Fetch historical OHLCV candles from Upstox Historical Candle API (free).
+    symbol: NSE symbol e.g. 'RELIANCE'
+    interval: '1minute','30minute','day','week','month'
+    Returns DataFrame with Open/High/Low/Close/Volume columns.
+    """
+    if not _upstox_connected():
+        return pd.DataFrame()
+    # Upstox instrument key for NSE equity
+    # Format: NSE_EQ|ISIN — we use symbol directly for simplicity
+    instrument_key = f"NSE_EQ|{symbol}"
+
+    # Interval mapping
+    interval_map = {
+        "1m": "1minute", "5m": "30minute", "15m": "30minute",
+        "30m": "30minute", "1h": "60minute", "1d": "day",
+        "1wk": "week", "1mo": "month",
+    }
+    up_interval = interval_map.get(interval, "day")
+
+    if not from_date:
+        from_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    if not to_date:
+        to_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        r = requests.get(
+            f"{UPSTOX_BASE}/historical-candle/{instrument_key}/{up_interval}/{to_date}/{from_date}",
+            headers=_upstox_headers(),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return pd.DataFrame()
+        candles = r.json().get("data", {}).get("candles", [])
+        if not candles:
+            return pd.DataFrame()
+        # Upstox candle format: [timestamp, open, high, low, close, volume, oi]
+        df = pd.DataFrame(candles, columns=["Datetime","Open","High","Low","Close","Volume","OI"])
+        df["Datetime"] = pd.to_datetime(df["Datetime"])
+        df = df.set_index("Datetime").sort_index()
+        df = df[["Open","High","Low","Close","Volume"]].astype(float)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=15)
+def upstox_get_index_quote(yf_ticker: str) -> dict:
+    """Get index LTP via Upstox using index instrument key."""
+    inst_key = UPSTOX_INDEX_KEYS.get(yf_ticker)
+    if not inst_key:
+        return {}
+    return upstox_get_quote(inst_key)
+
+def upstox_get_ltp(symbol: str) -> float:
+    """Get live LTP for a stock. Returns 0.0 if Upstox not connected."""
+    if not _upstox_connected():
+        return 0.0
+    q = upstox_get_quote(f"NSE_EQ|{symbol}")
+    return q.get("ltp", 0.0)
+
 # ─────────────────────────────────────────────
 #  CONFIGURATION
 # ─────────────────────────────────────────────
@@ -893,16 +1033,32 @@ def get_market_movers():
 def fetch_index_data(ticker: str) -> dict:
     """
     Fetch live index price.
-    Priority: NSE API → yfinance fast_info → yfinance history (fallback)
+    Priority: Upstox API → NSE API → yfinance fast_info → yfinance history
     """
+    # ── Method 0: Upstox (if access token configured) ─────────────────────
+    if _upstox_connected():
+        try:
+            q = upstox_get_index_quote(ticker)
+            if q and q.get("ltp"):
+                return {
+                    "ltp":    q["ltp"],
+                    "change": q.get("pct_change", 0),
+                    "prev":   q.get("close", 0),
+                    "high":   q.get("high", q["ltp"]),
+                    "low":    q.get("low",  q["ltp"]),
+                    "source": "Upstox",
+                }
+        except Exception:
+            pass
+
     # NSE API mapping
     NSE_MAP = {
         "^NSEI":    "NIFTY 50",
-        "^BSESN":   None,          # BSE handled separately
+        "^BSESN":   None,
         "^NSEBANK": "NIFTY BANK",
     }
 
-    # ── Method 1: NSE India API (most accurate, real-time) ───────────────
+    # ── Method 1: NSE India API (real-time) ──────────────────────────────
     try:
         nse_name = NSE_MAP.get(ticker)
         if nse_name:
@@ -2791,12 +2947,31 @@ def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
 
 @st.cache_data(ttl=60)
 def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    # ── Try Upstox first (free, accurate, NSE data) ───────────────────────
+    if _upstox_connected():
+        try:
+            # Map period to from_date
+            period_days = {
+                "5d":60,"10d":10,"15d":15,"20d":20,"30d":30,
+                "60d":60,"90d":90,"1y":365,"2y":730,"5y":1825,"10y":3650,
+            }
+            days = period_days.get(period, 365)
+            from_dt = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            to_dt   = datetime.now().strftime("%Y-%m-%d")
+            df = upstox_get_historical(symbol, interval, from_dt, to_dt)
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+    # ── Fallback: yfinance ────────────────────────────────────────────────
     try:
         df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
-        df.index = df.index.tz_localize(None)
-        return df
+        if not df.empty:
+            df.index = df.index.tz_localize(None)
+            return df
     except Exception:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 
 def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
@@ -5534,65 +5709,214 @@ def _trade_buttons(s: dict):
 
 
 def page_broker_settings():
-    st.markdown("## ⚙️ Broker Settings")
-    st.markdown("<div style='color:#5a6a48;font-size:0.85rem;margin-bottom:1.5rem;'>Connect your broker for one-click trading. Keys stored in session only — never saved to server.</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class="title-bar">
+        <span style="font-size:1.5rem;">⚙️</span>
+        <h1>Broker & Data Feed Settings</h1>
+    </div>
+    """, unsafe_allow_html=True)
 
-    broker = st.radio("Select Broker", ["None","Zerodha Kite","Upstox","Groww (web only)"],
-                      horizontal=True, key="broker_radio")
+    # ── DATA FEED STATUS ──────────────────────────────────────────────────
+    upstox_ok = _upstox_connected()
+    st.markdown(
+        f"<div style='background:{'#e4f5e8' if upstox_ok else '#fdf3d4'};"
+        f"border:1.5px solid {'#8dcc9a' if upstox_ok else '#e0c060'};"
+        f"border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:1.25rem;"
+        f"font-family:DM Mono,monospace;font-size:0.82rem;'>"
+        f"<b>{'✅ Upstox Live Data Feed ACTIVE' if upstox_ok else '⚪ Live Data Feed: Not connected (using yfinance)'}</b><br>"
+        f"<span style='color:#4a5e32;font-size:0.75rem;'>"
+        f"{'All market data (indices, charts, scanner) now uses Upstox real-time feed' if upstox_ok else 'Connect Upstox below for free NSE real-time data'}"
+        f"</span></div>",
+        unsafe_allow_html=True,
+    )
 
-    if broker == "Zerodha Kite":
-        st.info("📋 Go to kite.zerodha.com/apps → Create app → Copy API Key & Secret. Generate daily access token via Kite login.")
+    tab_upstox, tab_zerodha, tab_groww = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww"])
+
+    # ══════════════════════════════
+    #  UPSTOX — Data Feed + Trading
+    # ══════════════════════════════
+    with tab_upstox:
+        st.markdown("### 📡 Upstox — Free Live Data + Trading")
+        st.info("""
+**Upstox Free API gives you:**
+- ✅ Real-time LTP (last traded price)
+- ✅ OHLCV historical data (all timeframes)
+- ✅ Market depth (bids/asks)
+- ✅ Index data (Nifty 50, Bank Nifty, Sensex)
+- ✅ Place orders programmatically
+- ✅ Free tier — no monthly charge
+
+**Setup (5 minutes):**
+1. Go to [upstox.com/developer](https://upstox.com/developer/api-documentation/introduction/)
+2. Login → My Apps → **Create New App**
+3. Add ALL these Redirect URIs in your Upstox app:
+   `http://localhost:8501`  `http://127.0.0.1:8501`  `https://your-app.streamlit.app`
+4. Copy **API Key** and **API Secret**
+5. Generate **Access Token** (see steps below)
+        """)
+
+        st.markdown("#### Step 1 — Enter API credentials")
         c1, c2 = st.columns(2)
         with c1:
-            ak  = st.text_input("API Key",    value=st.session_state.get("zerodha_api_key",""),      key="zk_ak",  type="password")
+            uak  = st.text_input("API Key",    value=st.session_state.get("upstox_api_key",""),    key="up_ak",  type="password", placeholder="your-api-key")
         with c2:
-            aks = st.text_input("API Secret", value=st.session_state.get("zerodha_api_secret",""),   key="zk_aks", type="password")
-        at  = st.text_input("Access Token (regenerate daily)", value=st.session_state.get("zerodha_access_token",""), key="zk_at", type="password")
+            uaks = st.text_input("API Secret", value=st.session_state.get("upstox_api_secret",""), key="up_aks", type="password", placeholder="your-api-secret")
+
+        st.markdown("#### Step 2 — Generate Access Token")
+        if uak and uaks:
+            _redir   = _upstox_redirect_uri()
+            auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={uak}&redirect_uri={_redir}"
+            st.markdown(
+                f"<a href='{auth_url}' target='_blank' style='"
+                f"display:inline-block;background:#7c3aed;color:#fff;"
+                f"padding:9px 20px;border-radius:7px;font-size:0.85rem;"
+                f"font-weight:700;text-decoration:none;font-family:DM Sans,sans-serif;'>"
+                f"🔐 Login to Upstox & Authorize</a>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("""
+<small style='color:#4a5e32;font-family:DM Mono,monospace;'>
+After clicking above:<br>
+1. Login with your Upstox account<br>
+2. Copy the <b>code=</b> value from the redirect URL<br>
+   Example: <code>http://localhost:8501?code=<b>ABC123XYZ</b></code><br>
+3. Paste the code below and click Generate Token
+</small>
+            """, unsafe_allow_html=True)
+
+            auth_code = st.text_input("Authorization Code (from redirect URL)", key="up_auth_code", placeholder="ABC123XYZ")
+
+            if st.button("🔑 Generate Access Token", use_container_width=True, key="btn_gen_token"):
+                if auth_code.strip():
+                    try:
+                        import base64
+                        credentials = base64.b64encode(f"{uak}:{uaks}".encode()).decode()
+                        r = requests.post(
+                            "https://api.upstox.com/v2/login/authorization/token",
+                            headers={
+                                "Authorization": f"Basic {credentials}",
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                "Accept": "application/json",
+                            },
+                            data={
+                                "code":         auth_code.strip(),
+                                "grant_type":   "authorization_code",
+                                "redirect_uri": _upstox_redirect_uri(),
+                            },
+                            timeout=10,
+                        )
+                        if r.status_code == 200:
+                            token = r.json().get("access_token","")
+                            if token:
+                                st.session_state["upstox_access_token"] = token
+                                st.session_state["upstox_api_key"]      = uak
+                                st.session_state["upstox_api_secret"]   = uaks
+                                st.session_state["broker"]              = "upstox"
+                                st.session_state["broker_connected"]    = True
+                                st.success("✅ Access token generated! Upstox live data feed is now active.")
+                                st.rerun()
+                            else:
+                                st.error(f"Token not found in response: {r.json()}")
+                        else:
+                            st.error(f"Error {r.status_code}: {r.text[:300]}")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Paste the authorization code first.")
+
+        st.markdown("#### Or — paste an existing Access Token directly")
+        uat = st.text_input("Access Token (if you already have one)", value=st.session_state.get("upstox_access_token",""), key="up_at", type="password")
+        if st.button("💾 Save Token & Activate Feed", use_container_width=True, key="save_up_token"):
+            if uat.strip():
+                # Verify token works
+                r = requests.get(
+                    f"{UPSTOX_BASE}/profile",
+                    headers={"Authorization": f"Bearer {uat.strip()}", "Accept": "application/json"},
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    profile = r.json().get("data", {})
+                    name = profile.get("name", "User")
+                    st.session_state.update({
+                        "upstox_access_token": uat.strip(),
+                        "upstox_api_key":      uak,
+                        "upstox_api_secret":   uaks,
+                        "broker":              "upstox",
+                        "broker_connected":    True,
+                    })
+                    # Clear caches so new data source takes effect
+                    st.cache_data.clear()
+                    st.success(f"✅ Connected as **{name}**! Live data feed activated. All caches cleared.")
+                    st.rerun()
+                else:
+                    st.error(f"Token invalid ({r.status_code}). Generate a fresh one above.")
+            else:
+                st.error("Enter the access token.")
+
+        if _upstox_connected():
+            if st.button("🔌 Disconnect Upstox", key="btn_disconnect_up"):
+                st.session_state.update({
+                    "upstox_access_token": "",
+                    "broker": "none",
+                    "broker_connected": False,
+                })
+                st.cache_data.clear()
+                st.info("Disconnected. Switched back to yfinance.")
+                st.rerun()
+
+        st.markdown("""
+        **Note:** Access token expires daily. You need to regenerate it each day.
+        For auto-renewal, consider running a daily script using the Upstox OAuth flow.
+        """)
+
+    # ══════════════════════════════
+    #  ZERODHA
+    # ══════════════════════════════
+    with tab_zerodha:
+        st.markdown("### ⚡ Zerodha Kite")
+        st.info("📋 Go to kite.zerodha.com/apps → Create app → Copy API Key & Secret. Access token regenerates daily after login.")
+        c1, c2 = st.columns(2)
+        with c1:
+            zak  = st.text_input("API Key",    value=st.session_state.get("zerodha_api_key",""),    key="zk_ak",  type="password")
+        with c2:
+            zaks = st.text_input("API Secret", value=st.session_state.get("zerodha_api_secret",""), key="zk_aks", type="password")
+        zat  = st.text_input("Access Token",   value=st.session_state.get("zerodha_access_token",""), key="zk_at", type="password")
         if st.button("💾 Save Zerodha Config", use_container_width=True, key="save_zk"):
-            st.session_state.update({"zerodha_api_key":ak,"zerodha_api_secret":aks,
-                                     "zerodha_access_token":at,"broker":"zerodha",
-                                     "broker_connected": bool(ak and at)})
-            st.success("✅ Zerodha configured!" if ak and at else "⚠️ Enter API key and access token.")
+            st.session_state.update({"zerodha_api_key":zak,"zerodha_api_secret":zaks,
+                                     "zerodha_access_token":zat,"broker":"zerodha",
+                                     "broker_connected": bool(zak and zat)})
+            st.success("✅ Zerodha saved!" if zak and zat else "⚠️ Enter API key and access token.")
+        st.markdown("""
+        ```
+        pip install kiteconnect
+        ```
+        """)
 
-    elif broker == "Upstox":
-        st.info("📋 Go to upstox.com/developer → Create app → Copy API Key & Secret → Generate access token via OAuth.")
-        c1, c2 = st.columns(2)
-        with c1:
-            uak  = st.text_input("API Key",    value=st.session_state.get("upstox_api_key",""),    key="up_ak",  type="password")
-        with c2:
-            uaks = st.text_input("API Secret", value=st.session_state.get("upstox_api_secret",""), key="up_aks", type="password")
-        uat  = st.text_input("Access Token",   value=st.session_state.get("upstox_access_token",""), key="up_at", type="password")
-        if st.button("💾 Save Upstox Config", use_container_width=True, key="save_up"):
-            st.session_state.update({"upstox_api_key":uak,"upstox_api_secret":uaks,
-                                     "upstox_access_token":uat,"broker":"upstox",
-                                     "broker_connected": bool(uat)})
-            st.success("✅ Upstox configured!" if uat else "⚠️ Enter access token.")
+    # ══════════════════════════════
+    #  GROWW
+    # ══════════════════════════════
+    with tab_groww:
+        st.markdown("### 🟢 Groww")
+        st.info("ℹ️ Groww does not have a public trading API. Signal cards open Groww web/app — you place the order manually (one tap).")
+        if st.button("✅ Use Groww (web links)", use_container_width=True, key="set_groww"):
+            st.session_state["broker"] = "groww"
+            st.session_state["broker_connected"] = True
+            st.success("Groww selected. Signal cards will link to Groww stock pages.")
 
-    elif broker == "Groww (web only)":
-        st.info("ℹ️ Groww has no public API. Signal cards open Groww web/app — place order manually.")
-        st.session_state["broker"] = "groww"
-        st.session_state["broker_connected"] = True
-    else:
-        st.session_state["broker"] = "none"
-        st.session_state["broker_connected"] = False
-
+    # ── Status summary ────────────────────────────────────────────────────
     st.divider()
     connected = st.session_state.get("broker_connected", False)
-    bname     = st.session_state.get("broker","none").title()
+    bname     = st.session_state.get("broker","none").replace("upstox","Upstox").replace("zerodha","Zerodha").replace("groww","Groww").replace("none","None")
+    up_active = _upstox_connected()
     st.markdown(
-        f"<div style='padding:0.75rem 1rem;background:{'#edf7ee' if connected else '#f7f9f2'};"
-        f"border:1px solid {'#b8dfc0' if connected else '#dae0cb'};"
-        f"border-radius:8px;font-family:DM Mono,monospace;font-size:0.8rem;'>"
-        f"{'✅ Connected: '+bname if connected else '⚪ No broker connected — using web links'}"
-        f"</div>", unsafe_allow_html=True)
-
-    st.markdown("""
-    ### 📦 Install broker SDKs (run once in terminal)
-    ```
-    pip install kiteconnect          # Zerodha
-    pip install upstox-python-sdk    # Upstox
-    ```
-    """)
+        f"<div style='padding:0.85rem 1.1rem;"
+        f"background:{'#e4f5e8' if up_active else ('#fdf3d4' if connected else '#f5f8ed')};"
+        f"border:1.5px solid {'#8dcc9a' if up_active else ('#e0c060' if connected else '#b8c89a')};"
+        f"border-radius:10px;font-family:DM Mono,monospace;font-size:0.82rem;'>"
+        f"{'📡 Data Feed: Upstox LIVE  ·  Trading: ' + bname if up_active else ('⚙️ Broker: ' + bname + ' (no live data feed)' if connected else '⚪ No broker connected')}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def page_paper_trading():
