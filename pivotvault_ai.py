@@ -5790,49 +5790,6 @@ def _trade_buttons(s: dict):
                 st.session_state["paper_balance"] = balance - cost
                 st.toast(f"📝 {s['side']} {qty}×{sym} @ ₹{live} → Test Trade tab", icon="✅")
 
-    # ── Backtest this signal ─────────────────────────────────────────────
-    strat_id   = s.get("strategy_id",   _strategy_short_id(s))
-    strat_name = s.get("strategy_name", _build_strategy_name(s))
-    if st.button(
-        f"🔬 Backtest — {strat_id}",
-        key=f"bt_{sym}_{s['side']}_{s['tf']}",
-        use_container_width=True,
-        help=strat_name,
-    ):
-        tf_map = {
-            "⚡ 15 Min":  ("15 Min", "3 Months"),
-            "⏱️ 30 Min":  ("30 Min", "6 Months"),
-            "🕐 1 Hour":  ("1 Hour", "6 Months"),
-        }
-        bt_tf, bt_lb = tf_map.get(s.get("tf","⚡ 15 Min"), ("15 Min","3 Months"))
-
-        rr_val = s.get("rr1", 2.0)
-        if   rr_val >= 3.5: rr_str = "1:4"
-        elif rr_val >= 2.5: rr_str = "1:3"
-        elif rr_val >= 1.5: rr_str = "1:2"
-        else:               rr_str = "1:1"
-
-        direction = "Bullish Only" if s["side"] == "BUY" else "Bearish Only"
-        strength  = max(0, s.get("strength", 60) - 10)
-
-        st.session_state.update({
-            "bt_prefill_sym":      sym,
-            "bt_prefill_tf":       bt_tf,
-            "bt_prefill_lb":       bt_lb,
-            "bt_prefill_rr":       rr_str,
-            "bt_prefill_dir":      direction,
-            "bt_prefill_str":      strength,
-            "bt_prefill_strategy": strat_name,
-            "bt_prefill_candle":   s.get("candle","—"),
-            "bt_prefill_cpr_w":    s.get("cpr_w", 1.0),
-            "bt_prefill_rsi_ref":  s.get("rsi",   50),
-            "bt_results":          [],
-            "bt_meta":             {},
-            "bt_launched_from":    None,
-            "current_page":        "Forward Test",
-        })
-        st.rerun()
-
     st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
 
 
