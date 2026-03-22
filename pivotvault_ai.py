@@ -52,135 +52,6 @@ UPSTOX_BASE = "https://api.upstox.com/v2"
 # This uses your Upstox login credentials + TOTP secret to get a new token
 # automatically every day without manual intervention.
 
-def _upstox_auto_renew() -> tuple:
-    """
-    Auto-renew Upstox access token using TOTP (Google Authenticator secret).
-    Steps:
-    1. Login with mobile/email + TOTP code
-    2. Exchange for access token
-    Returns (success, token_or_error)
-    """
-    api_key    = st.session_state.get("upstox_api_key","").strip()
-    api_secret = st.session_state.get("upstox_api_secret","").strip()
-    mobile     = st.session_state.get("upstox_mobile","").strip()
-    pin        = st.session_state.get("upstox_pin","").strip()
-    totp_secret= st.session_state.get("upstox_totp_secret","").strip()
-    redirect   = st.session_state.get("upstox_redirect","http://localhost:8501").strip()
-
-    if not all([api_key, api_secret, mobile, pin, totp_secret]):
-        return False, "Missing credentials for auto-renewal."
-
-    try:
-        import pyotp
-        totp_code = pyotp.TOTP(totp_secret).now()
-
-        session = requests.Session()
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
-        # Step 1: Initiate login
-        r1 = session.post(
-            "https://api.upstox.com/v2/login/authorization/dialog/initiate-mobile-num-login",
-            headers=headers,
-            json={"mobile_num": mobile, "client_id": api_key},
-            timeout=10,
-        )
-        if r1.status_code not in [200, 201]:
-            return False, f"Step 1 failed: {r1.text[:200]}"
-
-        # Step 2: Verify mobile PIN
-        r2 = session.post(
-            "https://api.upstox.com/v2/login/authorization/dialog/verify-mobile-num-login-otp",
-            headers=headers,
-            json={
-                "mobile_num": mobile,
-                "client_id":  api_key,
-                "otp":        pin,
-            },
-            timeout=10,
-        )
-        if r2.status_code not in [200, 201]:
-            return False, f"Step 2 failed: {r2.text[:200]}"
-
-        # Step 3: Verify TOTP
-        r3 = session.post(
-            "https://api.upstox.com/v2/login/authorization/dialog/verify-totp",
-            headers=headers,
-            json={
-                "mobile_num": mobile,
-                "client_id":  api_key,
-                "totp":       totp_code,
-            },
-            timeout=10,
-        )
-        if r3.status_code not in [200, 201]:
-            return False, f"Step 3 TOTP failed: {r3.text[:200]}"
-
-        # Step 4: Get auth code from redirect
-        auth_code = r3.json().get("data", {}).get("code","")
-        if not auth_code:
-            # Try alternate response format
-            auth_code = r3.json().get("code","")
-        if not auth_code:
-            return False, f"No auth code in response: {r3.json()}"
-
-        # Step 5: Exchange code for token
-        # Note: redirect_uri is NOT sent in TOTP/programmatic flow
-        r4 = session.post(
-            "https://api.upstox.com/v2/login/authorization/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
-            data={
-                "code":          auth_code,
-                "client_id":     api_key,
-                "client_secret": api_secret,
-                "grant_type":    "authorization_code",
-            },
-            timeout=10,
-        )
-        if r4.status_code == 200:
-            token = r4.json().get("access_token","")
-            if token:
-                return True, token
-            return False, f"No token: {r4.json()}"
-        return False, f"Token exchange failed: {r4.text[:200]}"
-
-    except ImportError:
-        return False, "pyotp not installed. Run: pip install pyotp"
-    except Exception as e:
-        return False, str(e)
-
-
-def _check_token_expiry():
-    """Check if token needs renewal and silently auto-renew if TOTP is configured."""
-    from datetime import timezone
-    IST       = timezone(timedelta(hours=5, minutes=30))
-    now       = datetime.now(IST)
-    today_str = now.strftime("%Y-%m-%d")
-
-    # Already renewed today — nothing to do
-    if st.session_state.get("upstox_token_date","") == today_str:
-        return
-
-    # TOTP credentials must be configured
-    if not st.session_state.get("upstox_totp_secret","").strip():
-        return
-
-    # Only attempt after 6 AM IST (token becomes invalid at midnight)
-    if now.hour < 6:
-        return
-
-    # Attempt silent renewal
-    ok, result = _upstox_auto_renew()
-    if ok:
-        st.session_state["upstox_access_token"] = result
-        st.session_state["upstox_token_date"]   = today_str
-        st.session_state["broker_connected"]     = True
-        st.cache_data.clear()
-        st.toast("♻️ Upstox token auto-renewed!", icon="✅")
-    else:
-        # Don't crash — just log silently
-        st.session_state["upstox_renewal_error"] = result
-
-
 def _upstox_redirect_uri() -> str:
     """Detect correct redirect URI based on where the app is running."""
     try:
@@ -991,11 +862,6 @@ defaults = {
     'upstox_api_key':      '',
     'upstox_api_secret':   '',
     'upstox_access_token': '',
-    'upstox_mobile':       '',
-    'upstox_pin':          '',
-    'upstox_totp_secret':  '',
-    'upstox_redirect':     'http://localhost:8501',
-    'upstox_token_date':   '',
     'broker_connected':    False,
     # Paper trading
     'paper_trades':     [],
@@ -5863,10 +5729,6 @@ def page_broker_settings():
 
     # ── DATA FEED STATUS ──────────────────────────────────────────────────
     upstox_ok = _upstox_connected()
-    # Auto-renew check — run silently if configured
-    if st.session_state.get("upstox_totp_secret"):
-        _check_token_expiry()
-
     st.markdown(
         f"<div style='background:{'#e4f5e8' if upstox_ok else '#fdf3d4'};"
         f"border:1.5px solid {'#8dcc9a' if upstox_ok else '#e0c060'};"
@@ -6082,145 +5944,6 @@ def page_broker_settings():
         st.markdown("#### Or — paste an existing Access Token directly")
         uat = st.text_input("Access Token (if you already have one)", value=st.session_state.get("upstox_access_token",""), key="up_at", type="password")
 
-        st.divider()
-        st.markdown("#### ♻️ Auto-Renewal — Token regenerates daily automatically")
-        st.info(
-            "Setup your Upstox login credentials once. "
-            "The app will silently renew the token every morning before market opens — no manual work needed."
-        )
-        ar_configured = bool(st.session_state.get("upstox_totp_secret","").strip())
-        with st.expander("⚙️ Configure Auto-Renewal (one-time setup)", expanded=not ar_configured):
-            st.markdown("""
-**Requirements:**
-- Your Upstox registered **mobile number**
-- Your Upstox **6-digit login PIN**  
-- Your Upstox **TOTP secret** (from Google Authenticator setup)
-
-**How to get TOTP secret:**
-1. Open Upstox app → Profile → Security → 2FA Setup
-2. When QR code appears, click **"Can't scan?"** or **"Manual entry"**
-3. Copy the secret key shown (looks like: `JBSWY3DPEHPK3PXP`)
-
-**Install required package:**
-```
-pip install pyotp
-```
-            """)
-
-            ar_mobile = st.text_input("Upstox Mobile Number", value=st.session_state.get("upstox_mobile",""), key="ar_mobile", placeholder="9876543210")
-            ar_pin    = st.text_input("Upstox Login PIN (6 digit)", value=st.session_state.get("upstox_pin",""), key="ar_pin", type="password", placeholder="123456")
-            ar_totp   = st.text_input("TOTP Secret Key", value=st.session_state.get("upstox_totp_secret",""), key="ar_totp", type="password", placeholder="JBSWY3DPEHPK3PXP")
-            ar_redir  = st.text_input("Redirect URI (same as above)", value=st.session_state.get("upstox_redirect","http://localhost:8501"), key="ar_redir")
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("💾 Save Auto-Renewal Config", use_container_width=True, key="save_autorenewal"):
-                    st.session_state.update({
-                        "upstox_mobile":       ar_mobile.strip(),
-                        "upstox_pin":          ar_pin.strip(),
-                        "upstox_totp_secret":  ar_totp.strip(),
-                        "upstox_redirect":     ar_redir.strip(),
-                    })
-                    st.success("✅ Auto-renewal configured! Token will renew daily after 6 AM IST.")
-
-            with c2:
-                if st.button("🧪 Test Auto-Renewal Now", use_container_width=True, key="test_autorenewal"):
-                    st.session_state.update({
-                        "upstox_mobile":       ar_mobile.strip(),
-                        "upstox_pin":          ar_pin.strip(),
-                        "upstox_totp_secret":  ar_totp.strip(),
-                        "upstox_redirect":     ar_redir.strip(),
-                    })
-                    prog = st.empty()
-                    prog.info("⏳ Step 1/5 — Opening Upstox auth session...")
-                    ok, result = _upstox_auto_renew()
-                    if ok:
-                        prog.empty()
-                        st.session_state.update({
-                            "upstox_access_token": result,
-                            "upstox_token_date":   datetime.now().strftime("%Y-%m-%d"),
-                            "broker_connected":    True,
-                        })
-                        st.cache_data.clear()
-                        st.success("✅ Auto-renewal successful! Live data feed active.")
-                        st.rerun()
-                    else:
-                        prog.empty()
-                        st.error(f"❌ Failed: {result}")
-                        # Helpful hints based on error
-                        if "Step 1" in result:
-                            st.info("💡 Check your API Key — copy it fresh from Upstox developer portal.")
-                        elif "Step 2" in result or "PIN" in result:
-                            st.info("💡 Check your 6-digit Upstox PIN — this is the PIN you use to login to Upstox app.")
-                        elif "Step 3" in result or "TOTP" in result:
-                            st.info("💡 Check your TOTP secret — must be the base32 secret from Upstox 2FA setup (not the 6-digit code).")
-                        elif "redirect" in result.lower() or "100070" in result or "100068" in result:
-                            st.info("💡 Check Redirect URI — must exactly match what you registered in Upstox developer portal.")
-                        elif "auth code" in result.lower():
-                            st.info("💡 TOTP step passed but code extraction failed — try again (TOTP codes expire in 30s).")
-
-            # Show TOTP verification
-            if st.session_state.get("upstox_totp_secret"):
-                try:
-                    import pyotp
-                    current_totp = pyotp.TOTP(st.session_state["upstox_totp_secret"]).now()
-                    st.markdown(
-                        f"<div style='font-family:DM Mono,monospace;font-size:0.82rem;"
-                        f"background:#e4f5e8;border:1px solid #8dcc9a;border-radius:7px;"
-                        f"padding:0.5rem 0.9rem;'>🔐 Current TOTP: <b>{current_totp}</b> "
-                        f"(refreshes every 30s)</div>",
-                        unsafe_allow_html=True,
-                    )
-                except ImportError:
-                    st.warning("Install pyotp: `pip install pyotp`")
-                except Exception as e:
-                    st.error(f"TOTP error: {e}")
-        if st.button("💾 Save Token & Activate Feed", use_container_width=True, key="save_up_token"):
-            if uat.strip():
-                # Verify token works
-                r = requests.get(
-                    f"{UPSTOX_BASE}/profile",
-                    headers={"Authorization": f"Bearer {uat.strip()}", "Accept": "application/json"},
-                    timeout=5,
-                )
-                if r.status_code == 200:
-                    profile = r.json().get("data", {})
-                    name = profile.get("name", "User")
-                    st.session_state.update({
-                        "upstox_access_token": uat.strip(),
-                        "upstox_api_key":      uak,
-                        "upstox_api_secret":   uaks,
-                        "broker":              "upstox",
-                        "broker_connected":    True,
-                    })
-                    # Clear caches so new data source takes effect
-                    st.cache_data.clear()
-                    st.success(f"✅ Connected as **{name}**! Live data feed activated. All caches cleared.")
-                    st.rerun()
-                else:
-                    st.error(f"Token invalid ({r.status_code}). Generate a fresh one above.")
-            else:
-                st.error("Enter the access token.")
-
-        if _upstox_connected():
-            if st.button("🔌 Disconnect Upstox", key="btn_disconnect_up"):
-                st.session_state.update({
-                    "upstox_access_token": "",
-                    "broker": "none",
-                    "broker_connected": False,
-                })
-                st.cache_data.clear()
-                st.info("Disconnected. Switched back to yfinance.")
-                st.rerun()
-
-        st.markdown("""
-        **Note:** Access token expires daily. You need to regenerate it each day.
-        For auto-renewal, consider running a daily script using the Upstox OAuth flow.
-        """)
-
-    # ══════════════════════════════
-    #  ZERODHA
-    # ══════════════════════════════
     with tab_zerodha:
         st.markdown("### ⚡ Zerodha Kite")
         st.info("📋 Go to kite.zerodha.com/apps → Create app → Copy API Key & Secret. Access token regenerates daily after login.")
@@ -6506,9 +6229,6 @@ def main():
     if not st.session_state["logged_in"]:
         page_login()
         return
-
-    # Auto-renew Upstox token daily if TOTP configured
-    _check_token_expiry()
 
     page = render_sidebar()
     render_market_header()

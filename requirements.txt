@@ -6,4 +6,3 @@ plotly
 requests
 reportlab
 streamlit-autorefresh
-pyotp
