@@ -7399,6 +7399,7 @@ def page_paper_trading():
 STRATEGIES = [
     {
         "id":          "cpr_narrow_breakout",
+        "direction":  "Both",
         "name":        "CPR Narrow Breakout",
         "emoji":       "⚡",
         "category":    "Intraday",
@@ -7429,6 +7430,7 @@ STRATEGIES = [
     },
     {
         "id":          "cpr_virgin_pivot",
+        "direction":  "Both",
         "name":        "Virgin CPR Bounce",
         "emoji":       "🌟",
         "category":    "Swing",
@@ -7459,6 +7461,7 @@ STRATEGIES = [
     },
     {
         "id":          "pivot_level_bounce",
+        "direction":  "Both",
         "name":        "Pivot Level Support/Resistance",
         "emoji":       "🎯",
         "category":    "Intraday",
@@ -7489,6 +7492,7 @@ STRATEGIES = [
     },
     {
         "id":          "hma_trend_follow",
+        "direction":  "Both",
         "name":        "HMA Trend Follower",
         "emoji":       "📈",
         "category":    "Swing",
@@ -7519,6 +7523,7 @@ STRATEGIES = [
     },
     {
         "id":          "rsi_cpr_confluence",
+        "direction":  "Both",
         "name":        "RSI + CPR Confluence",
         "emoji":       "🔄",
         "category":    "Intraday",
@@ -7549,6 +7554,7 @@ STRATEGIES = [
     },
     {
         "id":          "candlestick_cpr",
+        "direction":  "Both",
         "name":        "Candlestick Pattern + CPR",
         "emoji":       "🕯️",
         "category":    "Intraday",
@@ -7608,7 +7614,7 @@ def page_strategy():
     with fc1:
         cat_filter = st.multiselect(
             "Category",
-            ["CPR","CPR Advanced","Candlestick","Oscillator"],
+            ["Intraday","Swing"],
             default=[],
             placeholder="All categories",
             key="sl_cat",
@@ -7632,7 +7638,7 @@ def page_strategy():
     if cat_filter:
         filtered = [s for s in filtered if s["category"] in cat_filter]
     if dir_filter != "All":
-        filtered = [s for s in filtered if s["direction"] in (dir_filter, "Both")]
+        filtered = [s for s in filtered if s.get("direction","Both") in (dir_filter, "Both")]
     if tf_filter:
         filtered = [s for s in filtered if any(t in s["timeframes"] for t in tf_filter)]
 
@@ -7645,22 +7651,22 @@ def page_strategy():
 
     # ── Strategy cards ────────────────────────────────────────────────────
     for strat in filtered:
-        bull = strat["direction"] == "Bullish"
-        bear = strat["direction"] == "Bearish"
+        bull = strat.get("direction","Both") == "Bullish"
+        bear = strat.get("direction","Both") == "Bearish"
 
         # Card container
         st.markdown(
-            f"<div style='background:#fff;border:1.5px solid {strat['border']};"
+            f"<div style='background:#fff;border:1.5px solid {strat.get("border","#b8c89a")};"
             f"border-radius:12px;padding:1rem 1.1rem 0.75rem;margin-bottom:1rem;"
-            f"border-left:5px solid {strat['color']};'>"
+            f"border-left:5px solid {strat.get("color","#3d5a1c")};'>"
 
             # Header
             f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;'>"
-            f"<span style='font-size:1.2rem;'>{strat['icon']}</span>"
+            f"<span style='font-size:1.2rem;'>{strat.get("icon", strat.get("emoji","📊"))}</span>"
             f"<span style='font-family:DM Sans,sans-serif;font-size:1rem;"
             f"font-weight:800;color:#0e1308;'>{strat['name']}</span>"
-            f"<span style='margin-left:auto;background:{strat['bg']};"
-            f"color:{strat['color']};border:1px solid {strat['border']};"
+            f"<span style='margin-left:auto;background:{strat.get("bg","#f5f8ed")};"
+            f"color:{strat.get("color","#3d5a1c")};border:1px solid {strat.get("border","#b8c89a")};"
             f"border-radius:20px;padding:2px 10px;font-size:0.68rem;"
             f"font-family:DM Mono,monospace;font-weight:700;'>{strat['category']}</span>"
             f"{'<span style="background:#e4f5e8;color:#1a6b2e;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▲ BULL</span>' if bull else ''}"
@@ -7684,7 +7690,7 @@ def page_strategy():
                 f"<span style='background:#f5f8ed;border:1px solid #dae0cb;"
                 f"border-radius:5px;padding:1px 7px;font-size:0.65rem;"
                 f"font-family:DM Mono,monospace;color:#4a5e32;'>{tag}</span>"
-                for tag in strat["tags"]
+                for tag in strat.get("tags", strat.get("best_stocks",[]))
             )
             + f"</div></div>",
             unsafe_allow_html=True,
@@ -7695,11 +7701,11 @@ def page_strategy():
             cc1, cc2 = st.columns([3, 2])
             with cc1:
                 st.markdown("**Entry Conditions:**")
-                for cond, desc in strat["conditions"]:
+                for cond in strat.get("conditions",[]):
                     st.markdown(
                         f"<div style='display:flex;gap:8px;margin-bottom:4px;"
                         f"font-family:DM Sans,sans-serif;font-size:0.85rem;'>"
-                        f"<span style='background:{strat["bg"]};color:{strat["color"]};"
+                        f"<span style='background:{strat.get("bg","#f5f8ed")};color:{strat.get("color","#3d5a1c")};"
                         f"border-radius:5px;padding:1px 8px;font-family:DM Mono,monospace;"
                         f"font-size:0.72rem;font-weight:700;white-space:nowrap;'>{cond}</span>"
                         f"<span style='color:#2e3d1a;'>{desc}</span></div>",
@@ -7709,10 +7715,10 @@ def page_strategy():
                 st.markdown("**Trade Plan:**")
                 details = [
                     ("🎯 Entry",    strat["entry"]),
-                    ("🛑 Stop Loss", strat["stop_loss"]),
-                    ("💰 Targets",  strat["targets"]),
-                    ("📊 R:R",      strat["rr"]),
-                    ("⭐ Max Score", f"{strat['score_max']}/20"),
+                    ("🛑 Stop Loss", strat.get("stop_loss", strat.get("sl","—"))),
+                    ("💰 Targets",  strat.get("targets", strat.get("target","—"))),
+                    ("📊 R:R",      strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1")),
+                    ("⭐ Max Score", f"{strat.get("score_max", strat.get("strength_threshold",60))}/20"),
                 ]
                 for label, val in details:
                     st.markdown(
@@ -7774,13 +7780,13 @@ def _strategy_backtest_launcher(strat: dict):
         ):
             # Map strategy direction to backtest direction filter
             dir_map = {"Bullish": "Bullish Only", "Bearish": "Bearish Only", "Both": "Both"}
-            bt_dir  = dir_map.get(strat["direction"], "Both")
+            bt_dir  = dir_map.get(strat.get("direction","Both"), "Both")
 
             # Map R:R string
             rr_str = "1:2"
-            if "1:3" in strat["rr"]: rr_str = "1:3"
-            elif "1:4" in strat["rr"]: rr_str = "1:4"
-            elif "1:1" in strat["rr"]: rr_str = "1:1"
+            if "1:3" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:3"
+            elif "1:4" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:4"
+            elif "1:1" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:1"
 
             st.session_state.update({
                 "bt_prefill_sym":      sym,
