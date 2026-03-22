@@ -7651,22 +7651,26 @@ def page_strategy():
 
     # ── Strategy cards ────────────────────────────────────────────────────
     for strat in filtered:
-        bull = strat.get("direction","Both") == "Bullish"
-        bear = strat.get("direction","Both") == "Bearish"
+        bull   = strat.get("direction","Both") == "Bullish"
+        bear   = strat.get("direction","Both") == "Bearish"
+        s_col  = strat.get("color","#3d5a1c")
+        s_bg   = strat.get("bg","#f5f8ed")
+        s_bdr  = strat.get("border","#b8c89a")
+        s_icon = strat.get("icon", strat.get("emoji","📊"))
 
         # Card container
         st.markdown(
-            f"<div style='background:#fff;border:1.5px solid {strat.get("border","#b8c89a")};"
+            f"<div style='background:#fff;border:1.5px solid {s_bdr};"
             f"border-radius:12px;padding:1rem 1.1rem 0.75rem;margin-bottom:1rem;"
-            f"border-left:5px solid {strat.get("color","#3d5a1c")};'>"
+            f"border-left:5px solid {s_col};'>"
 
             # Header
             f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;'>"
-            f"<span style='font-size:1.2rem;'>{strat.get("icon", strat.get("emoji","📊"))}</span>"
+            f"<span style='font-size:1.2rem;'>{s_icon}</span>"
             f"<span style='font-family:DM Sans,sans-serif;font-size:1rem;"
             f"font-weight:800;color:#0e1308;'>{strat['name']}</span>"
-            f"<span style='margin-left:auto;background:{strat.get("bg","#f5f8ed")};"
-            f"color:{strat.get("color","#3d5a1c")};border:1px solid {strat.get("border","#b8c89a")};"
+            f"<span style='margin-left:auto;background:{s_bg};"
+            f"color:{s_col};border:1px solid {s_bdr};"
             f"border-radius:20px;padding:2px 10px;font-size:0.68rem;"
             f"font-family:DM Mono,monospace;font-weight:700;'>{strat['category']}</span>"
             f"{'<span style="background:#e4f5e8;color:#1a6b2e;border-radius:20px;padding:2px 8px;font-size:0.65rem;font-family:DM Mono,monospace;font-weight:700;margin-left:4px;">▲ BULL</span>' if bull else ''}"
@@ -7702,13 +7706,13 @@ def page_strategy():
             with cc1:
                 st.markdown("**Entry Conditions:**")
                 for cond in strat.get("conditions",[]):
+                    bg_c  = strat.get("bg","#f5f8ed")
+                    col_c = strat.get("color","#3d5a1c")
                     st.markdown(
                         f"<div style='display:flex;gap:8px;margin-bottom:4px;"
-                        f"font-family:DM Sans,sans-serif;font-size:0.85rem;'>"
-                        f"<span style='background:{strat.get("bg","#f5f8ed")};color:{strat.get("color","#3d5a1c")};"
-                        f"border-radius:5px;padding:1px 8px;font-family:DM Mono,monospace;"
-                        f"font-size:0.72rem;font-weight:700;white-space:nowrap;'>{cond}</span>"
-                        f"<span style='color:#2e3d1a;'>{desc}</span></div>",
+                        f"font-family:DM Sans,sans-serif;font-size:0.83rem;'>"
+                        f"<span style='color:{col_c};font-weight:700;flex-shrink:0;'>✓</span>"
+                        f"<span style='color:#2e3d1a;'>{cond}</span></div>",
                         unsafe_allow_html=True,
                     )
             with cc2:
@@ -7717,8 +7721,8 @@ def page_strategy():
                     ("🎯 Entry",    strat["entry"]),
                     ("🛑 Stop Loss", strat.get("stop_loss", strat.get("sl","—"))),
                     ("💰 Targets",  strat.get("targets", strat.get("target","—"))),
-                    ("📊 R:R",      strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1")),
-                    ("⭐ Max Score", f"{strat.get("score_max", strat.get("strength_threshold",60))}/20"),
+                    ("📊 R:R",      strat.get("rr", "Min " + str(strat.get("rr_min",1.5)) + ":1")),
+                    ("⭐ Min Strength", str(strat.get("score_max", strat.get("strength_threshold",60))) + "%"),
                 ]
                 for label, val in details:
                     st.markdown(
@@ -7784,8 +7788,9 @@ def _strategy_backtest_launcher(strat: dict):
 
             # Map R:R string
             rr_str = "1:2"
-            if "1:3" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:3"
-            elif "1:4" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:4"
+            _strat_rr_str = strat.get("rr", "Min " + str(strat.get("rr_min",1.5)) + ":1")
+            if "1:3" in _strat_rr_str: rr_str = "1:3"
+            elif "1:4" in _strat_rr_str: rr_str = "1:4"
             elif "1:1" in strat.get("rr", f"Min {strat.get("rr_min",1.5)}:1"): rr_str = "1:1"
 
             st.session_state.update({
