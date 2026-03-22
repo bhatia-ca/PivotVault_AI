@@ -921,16 +921,16 @@ def fetch_nifty200_list() -> list:
     except Exception:
         # Hardcoded Nifty 200 fallback (top liquid stocks)
         return [
-            "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","HDFC","SBIN","BHARTIARTL",
+            "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
             "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
             "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
             "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
             "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
             "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS",
             "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM",
-            "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE","BAJAJ-AUTO",
+            "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE",
             "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHL",
-            "MCDOWELL-N","UNITED SPIRITS","TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
+            "TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
             "NAUKRI","ZOMATO","PAYTM","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
             "CHOLAFIN","MANAPPURAM","RECLTD","PFC","CANBK","BANKBARODA","PNB","FEDERALBNK",
             "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","DOMINOS","VOLTAS",
@@ -941,10 +941,10 @@ def fetch_nifty200_list() -> list:
             "UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH","PGHH","EMAMILTD",
             "JYOTHYLAB","VSTIND","RADICO","UNITDSPR","TATACOMM","LTTS","MPHASIS","COFORGE",
             "PERSISTENT","ZENSARTECH","HEXAWARE","KPITTECH","TATAELXSI","INFY","OFSS",
-            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","L&TFH","SRTRANSFIN",
-            "SUNDARMFIN","M&MFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
+            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","SRTRANSFIN",
+            "SUNDARMFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
             "CROMPTON","ORIENTELEC","POLYCAB","FINOLEX","KEI","STERLITE","KPIL","NCC","AHLUCONT",
-            "PNCINFRA","IRB","HG INFRA","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
+            "PNCINFRA","IRB","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
             "MUNDRAPORT","RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
             "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
         ]
@@ -963,7 +963,7 @@ def fetch_nifty200_by_marketcap() -> list:
         "AXISBANK","TITAN","ADANIENT","ADANIPORTS","ASIANPAINT","WIPRO","ULTRACEMCO",
         "NTPC","POWERGRID","NESTLEIND","TATAMOTORS","BAJAJFINSV","JSWSTEEL","TATASTEEL",
         "COALINDIA","ONGC","BPCL","TECHM","HINDALCO","GRASIM","M&M","INDUSINDBK",
-        "CIPLA","DRREDDY","DIVISLAB","EICHERMOT","HEROMOTOCO","BAJAJ-AUTO","BRITANNIA",
+        "CIPLA","DRREDDY","DIVISLAB","EICHERMOT","HEROMOTOCO","BRITANNIA",
         "APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS","DABUR","GODREJCP","HAVELLS",
         "BERGEPAINT","ICICIPRULI","SBILIFE","HDFCLIFE","SHREECEM","AMBUJACEM","VEDL",
         "SAIL","NMDC","IOCL","HINDPETRO","TATAPOWER","ADANIGREEN","ADANITRANS",
@@ -978,11 +978,11 @@ def fetch_nifty200_by_marketcap() -> list:
         "PERSISTENT","TATAELXSI","OFSS","RAMCOCEM","JKCEMENT","KPITTECH","BIRLASOFT",
         "SRF","DEEPAKNI","AARTIIND","CUMMINSIND","THERMAX","CROMPTON","POLYCAB",
         "KEI","FINOLEX","KPIL","NCC","IRB","DLF","PRESTIGE","OBEROIRLTY",
-        "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","MCDOWELL-N","SCHAEFFLER",
+        "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SCHAEFFLER",
         "ACC","HEIDELBERG","PRISM","UNITDSPR","VSTIND","PAYTM","DELHIVERY",
-        "BLUEDART","UJJIVAN","EQUITAS","AUBANK","M&MFIN","SRTRANSFIN","SUNDARMFIN",
+        "BLUEDART","UJJIVAN","EQUITAS","AUBANK","SRTRANSFIN","SUNDARMFIN",
         "SCUF","ORIENTELEC","NHPC","SJVN","NBCC","HUDCO","IRFC","RITES","GPPL",
-        "AHLUCONT","PNCINFRA","KNRCON","ASHOKA","SADBHAV","HG INFRA","NAKODA",
+        "AHLUCONT","PNCINFRA","KNRCON","ASHOKA","SADBHAV","NAKODA",
         "NARAYANA","METROPOLIS","THYROCARE","LALPATHLAB","PGHL","SUNTECK","MAHINDCIE",
     ]
 
@@ -2929,7 +2929,13 @@ def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
     """Compute trade targets and SL from pivot levels and ATR."""
     try:
         df = yf.Ticker(symbol + ".NS").history(period="60d", interval="1d")
-        df.index = df.index.tz_localize(None)
+        try:
+            if df.index.tz is not None:
+                df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
+            else:
+                df.index = df.index.tz_localize(None)
+        except Exception:
+            pass
         if df.empty or len(df) < 15:
             return {}
         close, high, low = df["Close"], df["High"], df["Low"]
@@ -2987,7 +2993,13 @@ def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d",
     try:
         df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
         if not df.empty:
-            df.index = df.index.tz_localize(None)
+            try:
+                if df.index.tz is not None:
+                    df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
+                else:
+                    df.index = df.index.tz_localize(None)
+            except Exception:
+                pass
             return df
     except Exception:
         pass
@@ -3803,11 +3815,32 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 except Exception:
                     df = pd.DataFrame()
             if df.empty:
-                df = yf.Ticker(sym+".NS").history(period=period, interval=interval)
+                df = yf.Ticker(sym+".NS").history(period=period, interval=interval, auto_adjust=True)
+                if not df.empty and hasattr(df.columns, 'levels'):
+                    df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
                 if not df.empty:
-                    df.index = df.index.tz_localize(None)
+                    if df.index.tz is not None:
+                        df.index = df.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                    else:
+                        try:
+                            try:
+                                if df.index.tz is not None:
+                                    df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
+                                else:
+                                    df.index = df.index.tz_localize(None)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
             if not df.empty:
-                df.columns = [c.title() for c in df.columns]
+                # Normalise column names — handle both lowercase and Title case
+                col_map = {c: c.title() for c in df.columns}
+                # yfinance sometimes returns tuple columns (MultiIndex) — flatten
+                if hasattr(df.columns, 'levels'):
+                    df.columns = [c[0].title() if isinstance(c, tuple) else c.title() 
+                                  for c in df.columns]
+                else:
+                    df.columns = [c.title() for c in df.columns]
             return sym, df
         except Exception:
             return sym, pd.DataFrame()
@@ -4793,7 +4826,24 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     )
 
     if scan_df.empty:
-        st.info("No data found. Try clicking 🔄 Scan Now or switch timeframe.")
+        st.warning("⚠️ Scanner returned no results. Click 🔄 Scan Now to retry.")
+        with st.expander("🔍 Debug — What to check if scanner shows no data"):
+            st.markdown("""
+**Common causes:**
+
+1. **First run** — Click **🔄 Scan Now** manually to trigger the first scan.
+
+2. **yfinance rate limit** — NSE/yfinance blocks frequent requests from cloud IPs.
+   Connect Upstox in ⚙️ Broker Settings for live data that always works.
+
+3. **Weekend / market closed** — Scanner still works but data is from last trading day.
+
+4. **All CPR widths > 2%** — All stocks filtered out. Try switching to **1 Day** timeframe
+   which typically has more narrow CPR setups.
+
+5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
+            """)
+            st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
         return
 
     # ── All bullish & bearish — no strength cutoff ────────────────────────────
@@ -4821,8 +4871,9 @@ def page_cpr_scanner(nse500: pd.DataFrame):
             f"<div style='text-align:center;padding:2rem;background:#f7f9f2;"
             f"border:2px dashed #dce3ed;border-radius:10px;"
             f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8a9a78;'>"
-            f"No directional setups found on {tf_tag.upper()} right now.<br>"
-            f"<span style='font-size:0.72rem;'>Try 🔄 Scan Now or switch to a different timeframe.</span>"
+            f"Scanned <b>{n_scanned}</b> stocks on {tf_tag.upper()} — no directional CPR setups found right now.<br>"
+            f"<span style='font-size:0.72rem;'>All CPR widths may be > 2%, or no RSI/HMA confirmation. "
+            f"Try switching to 📅 1 Day timeframe or 🔄 Scan Now again.</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -5132,7 +5183,13 @@ def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = 
         df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
         if df.empty or len(df) < 20:
             return {}
-        df.index = df.index.tz_localize(None)
+        try:
+            if df.index.tz is not None:
+                df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
+            else:
+                df.index = df.index.tz_localize(None)
+        except Exception:
+            pass
 
         close = df["Close"]
         high  = df["High"]
