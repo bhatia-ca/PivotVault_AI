@@ -7120,6 +7120,7 @@ def render_sidebar():
         ("📈", "Pivot Boss", "Pivot Boss Analysis"),
         ("📡", "Scanner",    "CPR Scanner"),
         ("🔔", "Signals",    "Trade Signals"),
+        ("🔬", "Backtest",   "Backtest"),
         ("📝", "Test Trade", "Paper Trading"),
         ("⚙️",  "Broker",    "Broker Settings"),
         ("⭐", "Watchlist",  "Watchlist"),
@@ -7218,6 +7219,7 @@ def main():
     elif page == "Pivot Boss Analysis": page_pivot_boss(nse500)
     elif page == "CPR Scanner":         page_cpr_scanner(nse500)
     elif page == "Trade Signals":       page_trade_signals(nse500)
+    elif page == "Backtest":            page_backtest()
     elif page == "Paper Trading":       page_paper_trading()
     elif page == "Broker Settings":     page_broker_settings()
     elif page == "Watchlist":           page_watchlist()
