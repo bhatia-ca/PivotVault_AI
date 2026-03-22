@@ -6163,34 +6163,61 @@ def _ft_get_ltp(symbol: str) -> float:
 def ft_add_signal(s: dict, source: str = "Scanner"):
     """
     Auto-add a scanner signal as a Forward Test position.
-    Called automatically every time the scanner finds a signal.
-    Skips if same symbol+side already open.
+
+    Rules:
+    - ONLY enters during live market hours (9:15–15:30 IST Mon-Fri)
+    - Entry price = FIRST live tick from Upstox/yfinance at moment of signal
+    - Never re-enters same symbol+side that already traded today
+    - Never re-enters same symbol+side already OPEN
+    - All positions auto-close at 15:30 IST at live price
     """
+    from datetime import timezone as _tz, time as _time
+
+    # ── Only enter during live market hours ──────────────────────────────
+    IST     = _tz(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    mkt_open_time  = now_ist.replace(hour=9,  minute=15, second=0, microsecond=0)
+    mkt_close_time = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    in_market_hours = (now_ist.weekday() < 5 and
+                       mkt_open_time <= now_ist <= mkt_close_time)
+    if not in_market_hours:
+        return   # Never paper-trade outside market hours
+
     ft    = _ft_state()
     sym   = s.get("symbol","")
     side  = s.get("side","BUY")
-    # Skip if already open for this symbol+side
+    today = now_ist.strftime("%Y-%m-%d")
+
+    # ── Skip if already OPEN for this symbol+side ────────────────────────
     for p in ft["positions"]:
-        if p["status"] == "OPEN" and p["symbol"] == sym and p["side"] == side:
+        if p["status"] in ("OPEN","T1 HIT — TRAILING") and            p["symbol"] == sym and p["side"] == side:
             return
 
+    # ── Skip if already TRADED today for this symbol+side ────────────────
+    # Prevents re-entering after SL hit or exit in same session
+    traded_today = ft.get("traded_today", {})
+    traded_key   = f"{today}:{sym}:{side}"
+    if traded_key in traded_today:
+        return
+
+    # ── Get LIVE first tick from data feed ───────────────────────────────
     ltp = _ft_get_ltp(sym)
-    if not ltp: ltp = s.get("entry", 0)
-    if not ltp: return
+    if not ltp or ltp <= 0:
+        return  # No live price — skip
 
     bal  = ft["balance"]
     qty  = 100                         # Fixed 100 units per trade
     cost = round(ltp * qty, 2)
     if cost > bal:
-        st.session_state["ft_low_bal_alert"] = True   # flag for notification
-        return          # insufficient balance — skip silently
+        st.session_state["ft_low_bal_alert"] = True
+        return
 
     pos_id = len(ft["positions"]) + 1
     pos = {
         "id":         pos_id,
         "symbol":     sym,
         "side":       side,
-        "entry":      ltp,
+        "entry":      ltp,              # FIRST live tick = entry price
         "qty":        qty,
         "sl":         s.get("sl",  round(ltp*(0.98 if side=="BUY" else 1.02), 2)),
         "target":     s.get("t1", round(ltp*(1.03 if side=="BUY" else 0.97), 2)),
@@ -6209,11 +6236,17 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "strategy":   s.get("rationale", s.get("strategy","CPR"))[:60],
         "candle":     s.get("candle","—"),
         "strength":   s.get("strength", 0),
-        "opened_at":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "opened_at":  now_ist.strftime("%Y-%m-%d %H:%M:%S"),
         "closed_at":  None,
+        "date":       today,
     }
     ft["positions"].append(pos)
     ft["balance"] = round(bal - cost, 2)
+
+    # Mark this symbol+side as traded today
+    if "traded_today" not in ft:
+        ft["traded_today"] = {}
+    ft["traded_today"][traded_key] = now_ist.strftime("%H:%M:%S")
 
     # Log ENTRY event
     ft["events"].append({
@@ -6229,29 +6262,126 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "rr":       pos["rr"],
         "source":   source,
         "strategy": pos["strategy"],
+        "tf":       pos.get("tf","—"),
         "pnl":      0.0,
+        "note":     f"First live tick entry @ ₹{ltp}",
     })
     _ft_flush()
 
 # ── Trigger checker ───────────────────────────────────────────────────────
 
+def _ft_auto_close_eod() -> list:
+    """
+    Auto-close ALL open positions at 15:30 IST at live price.
+    Called every trigger cycle — fires only once per day.
+    Returns list of fired close events.
+    """
+    from datetime import timezone as _tz
+    IST      = _tz(timedelta(hours=5, minutes=30))
+    now_ist  = datetime.now(IST)
+    today    = now_ist.strftime("%Y-%m-%d")
+
+    # Only fire after 15:30
+    if now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 30):
+        return []
+    # Only on weekdays
+    if now_ist.weekday() >= 5:
+        return []
+
+    ft       = _ft_state()
+    fired    = []
+    eod_key  = f"eod_closed_{today}"
+
+    # Already closed today
+    if ft.get(eod_key):
+        return []
+
+    open_positions = [p for p in ft["positions"]
+                      if p["status"] in ("OPEN","T1 HIT — TRAILING")]
+    if not open_positions:
+        ft[eod_key] = True
+        # Reset traded_today for tomorrow
+        ft["traded_today"] = {}
+        _ft_flush()
+        return []
+
+    close_time = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+    for pos in open_positions:
+        ltp = _ft_get_ltp(pos["symbol"])
+        if not ltp or ltp <= 0:
+            ltp = pos.get("ltp", pos["entry"])  # fallback to last known
+
+        bull    = pos["side"] == "BUY"
+        rem_qty = pos.get("qty_remaining", pos["qty"])
+
+        # Full position P&L (including any T1 partial already booked)
+        pnl     = round((ltp - pos["entry"]) * rem_qty if bull
+                        else (pos["entry"] - ltp) * rem_qty, 2)
+        total_pnl = round(pnl + pos.get("t1_pnl", 0.0), 2)
+        pnl_pct   = round(total_pnl / max(pos["cost"], 1) * 100, 2)
+        rem_cost  = round(pos["cost"] * rem_qty / max(pos["qty"], 1), 2)
+
+        pos.update({
+            "status":    "EOD CLOSE",
+            "exit_px":   ltp,
+            "pnl":       total_pnl,
+            "pnl_pct":   pnl_pct,
+            "upnl":      0.0,
+            "closed_at": close_time,
+            "exit_type": "EOD 15:30 Auto-Close",
+            "qty_remaining": 0,
+        })
+        ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
+
+        ft["events"].append({
+            "time":     close_time,
+            "type":     "EOD AUTO-CLOSE",
+            "id":       pos["id"],
+            "symbol":   pos["symbol"],
+            "side":     pos["side"],
+            "price":    ltp,
+            "entry":    pos["entry"],
+            "qty":      rem_qty,
+            "pnl":      total_pnl,
+            "pnl_pct":  pnl_pct,
+            "source":   pos["source"],
+            "strategy": pos["strategy"],
+            "tf":       pos.get("tf","—"),
+            "note":     f"Auto-closed at 15:30 IST @ ₹{ltp}. "
+                        f"T1 booked: ₹{pos.get('t1_pnl',0)}",
+        })
+        fired.append({
+            "symbol":   pos["symbol"],
+            "hit":      "EOD AUTO-CLOSE @ 15:30",
+            "pnl":      total_pnl,
+            "strategy": pos["strategy"],
+            "note":     f"Closed @ ₹{ltp}",
+        })
+
+    # Mark EOD done + reset daily tracking for tomorrow
+    ft[eod_key]         = True
+    ft["traded_today"]  = {}
+    _ft_flush()
+    return fired
+
+
 def _ft_run_triggers() -> list:
     """
     Live trigger engine — checks every OPEN position against LTP.
-    
-    Two-stage exit logic (Frank Ochoa style):
-    Stage 1 — T1 reached:
-        • Book partial profit (50% qty exits at T1)
-        • Remaining 50% continues with SL moved to ENTRY (breakeven trailing SL)
-        • Target now moves to T2
-    Stage 2 — T2 reached:
-        • Remaining qty exits at T2
-        • Position fully closed
 
-    SL Hit at any stage → full position closes at SL.
+    Flow each 15s cycle:
+    1. Check 15:30 EOD auto-close first
+    2. Stage 1 — T1 hit → partial exit + SL moves to entry (trailing breakeven)
+    3. Stage 2 — T2 hit → remaining qty exits (full close)
+    4. SL hit → full position closes
+
+    Entry only from FIRST live tick during market hours (handled in ft_add_signal).
     """
+    # ── EOD auto-close at 15:30 ──────────────────────────────────────────
+    eod_fired = _ft_auto_close_eod()
+
     ft    = _ft_state()
-    fired = []
+    fired = list(eod_fired)
 
     for pos in ft["positions"]:
         if pos["status"] not in ("OPEN", "T1 HIT — TRAILING"): continue
@@ -6453,15 +6583,30 @@ def page_forward_test():
         <h1>Forward Testing Simulator</h1>
     </div>""", unsafe_allow_html=True)
 
+    from datetime import timezone as _tz2
+    _IST2    = _tz2(timedelta(hours=5, minutes=30))
+    _now_ist = datetime.now(_IST2)
+    _today   = _now_ist.strftime("%Y-%m-%d")
+    _ft_data = _ft_state()
+    _eod_done= _ft_data.get(f"eod_closed_{_today}", False)
+    _traded  = len(_ft_data.get("traded_today", {}))
+
+    if _eod_done:
+        _status_msg = "🔴 15:30 EOD CLOSE executed — all positions closed at live price"
+        _status_bg  = "#fbe8e6"; _status_bdr = "#dc9090"; _status_col = "#9e2018"
+    elif mkt_open:
+        _status_msg = f"🟢 Market OPEN · {data_src} · Triggers every 15s · {_traded} symbol(s) traded today"
+        _status_bg  = "#e4f5e8"; _status_bdr = "#8dcc9a"; _status_col = "#1a6b2e"
+    else:
+        _nxt = "Opens Monday 9:15 AM" if _now_ist.weekday()>=4 else "Opens tomorrow 9:15 AM"
+        _status_msg = f"🟡 Market Closed · {_nxt} · Entry only on live market tick"
+        _status_bg  = "#fdf3d4"; _status_bdr = "#e0c060"; _status_col = "#7a5800"
+
     st.markdown(
         f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
-        f"padding:6px 14px;border-radius:7px;margin-bottom:0.75rem;"
-        f"background:{'#e4f5e8' if mkt_open else '#fdf3d4'};"
-        f"border:1px solid {'#8dcc9a' if mkt_open else '#e0c060'};"
-        f"color:{'#1a6b2e' if mkt_open else '#7a5800'};'>"
-        f"{'🟢 Market OPEN' if mkt_open else '🔴 Market Closed'} "
-        f"· {data_src} · "
-        f"Auto-trigger: {'every 15s' if mkt_open else 'on refresh only'}"
+        f"padding:7px 14px;border-radius:7px;margin-bottom:0.75rem;"
+        f"background:{_status_bg};border:1px solid {_status_bdr};color:{_status_col};'>"
+        f"{_status_msg}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -6647,28 +6792,42 @@ def page_forward_test():
         st.info("Events appear here automatically: ENTRY → SL HIT / TARGET HIT / MANUAL EXIT")
     else:
         # Quick stats
-        ev_tgt  = [e for e in events if e["type"] == "TARGET HIT"]
-        ev_sl   = [e for e in events if e["type"] == "SL HIT"]
-        ev_men  = [e for e in events if e["type"] == "MANUAL EXIT"]
         ev_ent  = [e for e in events if e["type"] == "ENTRY"]
-        s1,s2,s3,s4 = st.columns(4)
-        s1.metric("📥 Entries",     len(ev_ent))
-        s2.metric("🎯 Target Hits", len(ev_tgt),
-                  f"₹{sum(e.get('pnl',0) for e in ev_tgt):+,.0f}")
-        s3.metric("🛑 SL Hits",     len(ev_sl),
+        ev_t1   = [e for e in events if e["type"] == "T1 HIT — PARTIAL EXIT"]
+        ev_t2   = [e for e in events if e["type"] == "T2 HIT — FULL EXIT"]
+        ev_sl   = [e for e in events if e["type"] in ("SL HIT","TRAILING SL HIT")]
+        ev_eod  = [e for e in events if e["type"] == "EOD AUTO-CLOSE"]
+        ev_men  = [e for e in events if e["type"] == "MANUAL EXIT"]
+        s1,s2,s3,s4,s5,s6 = st.columns(6)
+        s1.metric("📥 Entries",       len(ev_ent))
+        s2.metric("🎯 T1 Hits",       len(ev_t1),
+                  f"₹{sum(e.get('pnl',0) for e in ev_t1):+,.0f}")
+        s3.metric("🎯🎯 T2 Hits",      len(ev_t2),
+                  f"₹{sum(e.get('pnl',0) for e in ev_t2):+,.0f}")
+        s4.metric("🛑 SL Hits",       len(ev_sl),
                   f"₹{sum(e.get('pnl',0) for e in ev_sl):+,.0f}")
-        s4.metric("✋ Manual Exits",len(ev_men),
+        s5.metric("🕞 EOD Closes",    len(ev_eod),
+                  f"₹{sum(e.get('pnl',0) for e in ev_eod):+,.0f}")
+        s6.metric("✋ Manual Exits",  len(ev_men),
                   f"₹{sum(e.get('pnl',0) for e in ev_men):+,.0f}")
 
         for e in reversed(events[-50:]):  # show last 50
             etype  = e["type"]
             pnl    = e.get("pnl", 0)
             icon   = {"ENTRY":"📥","TARGET HIT":"🎯","SL HIT":"🛑",
-                      "MANUAL EXIT":"✋"}.get(etype,"●")
+                      "T1 HIT — PARTIAL EXIT":"🎯½","T2 HIT — FULL EXIT":"🎯🎯",
+                      "TRAILING SL HIT":"🔒","MANUAL EXIT":"✋",
+                      "EOD AUTO-CLOSE":"🕞","FUND TOP-UP":"💰"}.get(etype,"●")
             bg     = {"ENTRY":"#f0f4e8","TARGET HIT":"#e4f5e8",
-                      "SL HIT":"#fbe8e6","MANUAL EXIT":"#f5f0e8"}.get(etype,"#fff")
+                      "T1 HIT — PARTIAL EXIT":"#e4f5e8","T2 HIT — FULL EXIT":"#d4f0dc",
+                      "SL HIT":"#fbe8e6","TRAILING SL HIT":"#fff7e6",
+                      "MANUAL EXIT":"#f5f0e8","EOD AUTO-CLOSE":"#e8f0ff",
+                      "FUND TOP-UP":"#eeedfe"}.get(etype,"#fff")
             bdr    = {"ENTRY":"#b8c89a","TARGET HIT":"#8dcc9a",
-                      "SL HIT":"#dc9090","MANUAL EXIT":"#e0b870"}.get(etype,"#b8c89a")
+                      "T1 HIT — PARTIAL EXIT":"#8dcc9a","T2 HIT — FULL EXIT":"#4dbb6a",
+                      "SL HIT":"#dc9090","TRAILING SL HIT":"#e0c060",
+                      "MANUAL EXIT":"#e0b870","EOD AUTO-CLOSE":"#90a8dc",
+                      "FUND TOP-UP":"#afa9ec"}.get(etype,"#b8c89a")
             pnl_c  = "#1a6b2e" if pnl>0 else ("#9e2018" if pnl<0 else "#4a5e32")
             side_c = "#1a6b2e" if e.get("side","")=="BUY" else "#9e2018"
             pnl_str= f" · P&L <b style='color:{pnl_c};'>₹{pnl:+,.2f}</b>" if etype!="ENTRY" else ""
