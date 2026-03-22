@@ -124,6 +124,7 @@ def _upstox_auto_renew() -> tuple:
             return False, f"No auth code in response: {r3.json()}"
 
         # Step 5: Exchange code for token
+        # Note: redirect_uri is NOT sent in TOTP/programmatic flow
         r4 = session.post(
             "https://api.upstox.com/v2/login/authorization/token",
             headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
@@ -131,7 +132,6 @@ def _upstox_auto_renew() -> tuple:
                 "code":          auth_code,
                 "client_id":     api_key,
                 "client_secret": api_secret,
-                "redirect_uri":  redirect,
                 "grant_type":    "authorization_code",
             },
             timeout=10,
