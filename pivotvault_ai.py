@@ -523,23 +523,7 @@ UPSTOX_INTERVAL_MAP = {
     "1wk": "week",     "1mo": "month",
 }
 
-def _upstox_instrument_key(symbol: str) -> str:
-    """Return correct NSE_EQ|ISIN key for a symbol."""
-    isin = UPSTOX_ISIN_MAP.get(symbol.upper().strip())
-    if isin:
-        return f"NSE_EQ|{isin}"
-    return f"NSE_EQ|{symbol}"   # fallback
 
-def _upstox_headers() -> dict:
-    token = st.session_state.get("upstox_access_token", "")
-    if not token:
-        return {}
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-
-def _upstox_connected() -> bool:
-    return bool(st.session_state.get("upstox_access_token", "").strip())
-
-@st.cache_data(ttl=15)
 def upstox_get_quote(instrument_key: str) -> dict:
     """Live LTP + OHLC via Upstox Market Quote API."""
     if not _upstox_connected():
@@ -3793,90 +3777,6 @@ def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
 
 
 @st.cache_data(ttl=900)
-def _build_strategy_name(row: dict) -> str:
-    """
-    Build a unique, human-readable strategy name from signal parameters.
-    Format: [Timeframe] [CPR Type] [Candle] [Direction] — [Key Indicators]
-    Examples:
-      "15M · Narrow CPR · Hammer · BUY — RSI Oversold + HMA↑"
-      "1H · Virgin CPR · Bearish Engulfing · SELL — Osc Cross + Vol Surge"
-      "15M · Wide CPR · No Pattern · BUY — Pivot R1 Break + HMA↑"
-    """
-    tf        = row.get("tf_label", "")
-    cpr_type  = row.get("CPR Type",  "CPR")
-    candle    = row.get("Candle",    "—")
-    pattern   = row.get("Pattern",  "Bullish")
-    rsi       = float(row.get("RSI", 50))
-    hma       = str(row.get("HMA",  "—"))
-    vol       = str(row.get("Vol Surge", "—"))
-    osc       = str(row.get("Osc Cross", "—"))
-    cpr_w     = float(row.get("CPR Width%", 0))
-    strength  = int(row.get("Strength%", 0))
-    virgin    = row.get("Virgin", False)
-
-    side = "BUY" if pattern == "Bullish" else "SELL"
-
-    # ── Part 1: Timeframe prefix ──────────────────────────────────────────
-    tf_short = tf.replace("⚡ ", "").replace("🕐 ", "").replace(" Min","M").replace(" Hour","H")
-
-    # ── Part 2: CPR descriptor ────────────────────────────────────────────
-    if virgin:
-        cpr_desc = "Virgin CPR"
-    elif cpr_w < 0.25:
-        cpr_desc = "Narrow CPR"
-    elif cpr_w < 0.5:
-        cpr_desc = "Moderate CPR"
-    else:
-        cpr_desc = "Wide CPR"
-
-    # ── Part 3: Candle pattern (short) ───────────────────────────────────
-    candle_short = candle if candle not in ("—", "", None) else "No Pattern"
-
-    # ── Part 4: Indicator confluence ─────────────────────────────────────
-    confluences = []
-    if pattern == "Bullish":
-        if rsi < 40:             confluences.append("RSI Oversold")
-        elif 50 < rsi < 70:      confluences.append("RSI Momentum")
-    else:
-        if rsi > 60:             confluences.append("RSI Overbought")
-        elif 30 < rsi < 50:      confluences.append("RSI Momentum")
-
-    if "▲" in hma and pattern == "Bullish":   confluences.append("HMA↑")
-    elif "▼" in hma and pattern == "Bearish": confluences.append("HMA↓")
-
-    if "🔼" in osc and pattern == "Bullish":  confluences.append("Osc Cross↑")
-    elif "🔽" in osc and pattern == "Bearish":confluences.append("Osc Cross↓")
-
-    if "✅" in vol: confluences.append("Vol Surge")
-
-    # Strength tier
-    if strength >= 85:   tier = "A+"
-    elif strength >= 75: tier = "A"
-    elif strength >= 65: tier = "B"
-    else:                tier = "C"
-
-    conf_str = " + ".join(confluences[:3]) if confluences else "CPR Signal"
-
-    name = f"{tf_short} · {cpr_desc} · {candle_short} · {side} [{tier}] — {conf_str}"
-    return name
-
-
-def _get_strategy_description(strategy_name: str) -> str:
-    """Return a one-line explanation of what this strategy tests."""
-    parts = strategy_name.split(" · ")
-    if len(parts) < 3: return "CPR Pivot Boss signal backtest."
-
-    descs = {
-        "Narrow CPR":   "Narrow CPR = trending day setup. High probability breakout.",
-        "Virgin CPR":   "Virgin CPR = untested level. Strong magnetic reaction expected.",
-        "Moderate CPR": "Moderate CPR = balanced day. Breakout or pullback both valid.",
-        "Wide CPR":     "Wide CPR = sideways/consolidation. Lower probability setup.",
-    }
-    for k, v in descs.items():
-        if k in strategy_name:
-            return v
-    return "CPR Pivot Boss signal backtest."
-
 
 def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
@@ -4793,7 +4693,6 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
         # ── Store signals + fire desktop notifications ────────────────────────
         if not result.empty:
-            import json as _json
             top3_bull = result[result["Pattern"]=="Bullish"].head(3)
             top3_bear = result[result["Pattern"]=="Bearish"].head(3)
             notif_signals = []
@@ -4817,7 +4716,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
             # ── Fire desktop notifications via window.parent ──────────────────
             # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
-            notif_js_list = _json.dumps([
+            notif_js_list = json.dumps([
                 {"sym": s["symbol"], "side": s["side"],
                  "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
                  "rr": s["rr"], "str": s["strength"]}
@@ -5903,7 +5802,7 @@ def _trade_buttons(s: dict):
     def _log_broker_trade(broker_name: str):
         """Log this signal as a Forward Test trade when broker button is clicked."""
         try:
-            ltp = _ft_ltp(sym)
+            ltp = _ft_get_ltp(sym)
             if not ltp: ltp = s.get("entry", 0)
         except Exception:
             ltp = s.get("entry", 0)
@@ -6131,65 +6030,6 @@ def _trade_buttons(s: dict):
 UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # Order placement endpoint
 UPSTOX_GTT_BASE = "https://api.upstox.com/v2"        # GTT orders endpoint
 
-def _upstox_headers() -> dict:
-    token = st.session_state.get("upstox_access_token", "")
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type":  "application/json",
-        "Accept":        "application/json",
-    }
-
-def upstox_place_order(
-    symbol:    str,
-    side:      str,          # "BUY" or "SELL"
-    qty:       int,
-    order_type:str = "MARKET",  # "MARKET" or "LIMIT"
-    price:     float = 0.0,
-    product:   str = "I",    # "I" = Intraday (MIS), "D" = Delivery (CNC)
-    tag:       str = "PivotVaultAI",
-) -> dict:
-    """
-    Place a single order via Upstox API v2.
-    Returns {"success": bool, "order_id": str, "message": str}
-    SEBI-compliant: called only on explicit user click, never automated.
-    """
-    if not _upstox_connected():
-        return {"success": False, "order_id": "", "message": "Upstox not connected. Add token in ⚙️ Broker."}
-
-    instrument_key = _upstox_instrument_key(symbol)
-
-    payload = {
-        "quantity":           qty,
-        "product":            product,
-        "validity":           "DAY",
-        "price":              round(price, 2) if order_type == "LIMIT" else 0,
-        "tag":                tag,
-        "instrument_token":   instrument_key,
-        "order_type":         order_type,
-        "transaction_type":   side.upper(),
-        "disclosed_quantity": 0,
-        "trigger_price":      0,
-        "is_amo":             False,
-    }
-
-    try:
-        r = requests.post(
-            f"{UPSTOX_HFT_BASE}/order/place",
-            headers=_upstox_headers(),
-            json=payload,
-            timeout=8,
-        )
-        data = r.json()
-        if r.status_code == 200 and data.get("status") == "success":
-            order_id = data.get("data", {}).get("order_id", "")
-            return {"success": True, "order_id": order_id,
-                    "message": f"Order placed. ID: {order_id}"}
-        else:
-            err = data.get("errors", [{}])
-            msg = err[0].get("message", str(data)) if err else str(data)
-            return {"success": False, "order_id": "", "message": f"API Error: {msg}"}
-    except Exception as e:
-        return {"success": False, "order_id": "", "message": f"Request failed: {e}"}
 
 
 def upstox_place_gtt_sl_target(
@@ -6287,20 +6127,6 @@ def upstox_cancel_order(order_id: str) -> dict:
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
-def upstox_get_positions() -> list:
-    """Get current open positions from Upstox."""
-    try:
-        r = requests.get(
-            f"{UPSTOX_BASE}/portfolio/short-term-positions",
-            headers=_upstox_headers(),
-            timeout=6,
-        )
-        if r.status_code == 200:
-            return r.json().get("data", [])
-    except Exception:
-        pass
-    return []
 
 
 def upstox_exit_all_positions() -> dict:
@@ -6454,23 +6280,10 @@ def page_order_execution():
 
     # Send this signal to Live Order Execution
     if _upstox_connected():
-        if st.button(f"⚡ Send to Live Orders — {sym}",
-                     key=f"oe_{sym}_{s['side']}_{s.get('tf','')}",
+        if st.button(f"⚡ Place Order — {sym}",
+                     key=f"oe_place_{sym}_{side}",
                      use_container_width=True):
-            st.session_state["oe_pending_signal"] = {
-                "symbol":   sym,
-                "side":     s["side"],
-                "entry":    s.get("entry", 0),
-                "sl":       s.get("sl",    0),
-                "t1":       s.get("t1",    0),
-                "t2":       s.get("t2",    0),
-                "rr":       s.get("rr1",   2.0),
-                "source":   f"Signal · {s.get('tf','—')}",
-                "strategy": s.get("rationale","CPR Signal")[:50],
-            }
-            st.session_state["current_page"] = "Order Execution"
-            st.toast(f"⚡ Signal sent to Order Execution for {sym}", icon="⚡")
-            st.rerun()
+            pass  # handled by PLACE ORDER button below
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
@@ -6942,7 +6755,7 @@ def _ft_load():
     try:
         if _os.path.exists(_FT_FILE):
             with open(_FT_FILE) as f:
-                d = _json.load(f)
+                d = json.load(f)
                 if "positions" not in d: d["positions"] = []
                 if "events"    not in d: d["events"]    = []
                 if "balance"   not in d: d["balance"]   = 10000000.0
@@ -6955,7 +6768,7 @@ def _ft_load():
 def _ft_save(state: dict):
     try:
         with open(_FT_FILE, "w") as f:
-            _json.dump(state, f, indent=2, default=str)
+            json.dump(state, f, indent=2, default=str)
     except Exception:
         pass
 
@@ -7680,7 +7493,7 @@ def page_forward_test():
         with ecol1:
             if st.button("📥 Export Events JSON", key="ft_ev_export"):
                 st.download_button("⬇️ Download",
-                    data=_json.dumps(events, indent=2, default=str),
+                    data=json.dumps(events, indent=2, default=str),
                     file_name=f"ft_events_{datetime.now().strftime('%Y%m%d')}.json",
                     mime="application/json", key="ft_ev_dl")
         with ecol2:
