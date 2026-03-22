@@ -4704,8 +4704,8 @@ function zerodhaUrl(sym, side) {{
            sym + "&transaction_type=" + side;
 }}
 function upstoxUrl(sym, side) {{
-    return "https://login.upstox.com/?f=1&tradingsymbol=" + sym +
-           "&exchange=NSE&transaction_type=" + side;
+    var action = (side === "BUY" || side === "buy") ? "buy" : "sell";
+    return "https://upstox.com/trading/instruments/NSE/" + sym + "/?action=" + action;
 }}
 
 function buildCards() {{
@@ -4871,59 +4871,73 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Notification permission bar ─────────────────────────────────────────
+    # ── Notification bar — device-aware ─────────────────────────────────────
     st.markdown("""
-    <div id="pv-notif-bar" style="background:#1a1f0e;color:#f4f7ec;
-         border-radius:10px;padding:10px 16px;margin-bottom:0.75rem;
-         font-family:DM Mono,monospace;font-size:0.78rem;
-         display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <span>🔔 Enable desktop notifications to get instant alerts when signals appear</span>
-        <button id="pv-allow-btn" onclick="pvRequestNotif()"
-            style="margin-left:auto;background:#4e6130;color:#fff;border:none;
-                   border-radius:6px;padding:6px 16px;font-size:0.75rem;
-                   font-family:DM Mono,monospace;cursor:pointer;font-weight:700;
-                   transition:background 0.2s;">
-            🔔 Allow Notifications
-        </button>
+    <div id="pvNBar" style="border-radius:9px;padding:9px 14px;
+         margin-bottom:0.75rem;font-family:DM Mono,monospace;font-size:0.76rem;
+         border:1.5px solid #b8c89a;background:#f0f4e8;min-height:38px;">
+        <div id="pvNContent"></div>
     </div>
     <script>
-    function pvRequestNotif() {
-        var w = window.parent || window;
-        if (!("Notification" in w)) {
-            alert("Your browser does not support desktop notifications.");
-            return;
-        }
-        w.Notification.requestPermission().then(function(perm) {
-            var btn = document.getElementById("pv-allow-btn");
-            var bar = document.getElementById("pv-notif-bar");
-            if (perm === "granted") {
-                w._pvNotifReady = true;
-                if (btn) btn.innerText = "✅ Notifications ON";
-                if (btn) btn.style.background = "#2d7a3a";
-                // Fire a test notification immediately
-                w.pvNotify(
-                    "✅ PivotVault AI Notifications Active",
-                    "You will now get instant alerts when trade signals appear.",
-                    "pv-test"
-                );
-                // Hide bar after 3s
-                setTimeout(function() {
-                    if (bar) bar.style.display = "none";
-                }, 3000);
-            } else {
-                if (btn) btn.innerText = "❌ Blocked — Enable in browser settings";
-                if (btn) btn.style.background = "#c0392b";
+    (function(){
+        var w  = window.parent||window;
+        var ua = navigator.userAgent||"";
+        var isIOS     = /iPhone|iPad|iPod/i.test(ua);
+        var isAndroid = /Android/i.test(ua);
+        var isPWA     = window.matchMedia("(display-mode:standalone)").matches||
+                        window.navigator.standalone===true;
+        var isMobile  = isIOS||isAndroid;
+        var el = document.getElementById("pvNContent");
+        if(!el) return;
+
+        function render(){
+            if(isIOS && !isPWA){
+                el.innerHTML = "📱 <b>iOS:</b> Notifications not supported in Safari. "
+                    +"<span style='color:#7a5800;'>Add to Home Screen (PWA) to enable.</span>";
+                return;
             }
-        });
-    }
-    // Auto-hide bar if already granted
-    (function() {
-        var w = window.parent || window;
-        if ("Notification" in w && w.Notification.permission === "granted") {
-            var bar = document.getElementById("pv-notif-bar");
-            if (bar) bar.style.display = "none";
-            w._pvNotifReady = true;
+            if(!("Notification" in w)){
+                el.innerHTML = "⚠️ Browser doesn't support notifications. Use Chrome/Edge.";
+                return;
+            }
+            var p = w.Notification.permission;
+            if(p==="granted"){
+                document.getElementById("pvNBar").style.background="#e4f5e8";
+                document.getElementById("pvNBar").style.borderColor="#8dcc9a";
+                el.innerHTML = "<span style='color:#1a6b2e;font-weight:700;'>✅ Notifications active</span>"
+                    +" · <span style='color:#2e3d1a;'>"+(isMobile?"Android Chrome":"Desktop browser")+"</span>"
+                    +" <button onclick='pvSendTest()' style='margin-left:8px;background:#1a6b2e;"
+                    +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                    +"font-size:0.72rem;cursor:pointer;font-weight:700;'>🧪 Test</button>";
+            } else if(p==="denied"){
+                document.getElementById("pvNBar").style.background="#fbe8e6";
+                document.getElementById("pvNBar").style.borderColor="#dc9090";
+                el.innerHTML = "❌ Notifications blocked. "
+                    +(isAndroid?"Chrome → 3-dot menu → Site settings → Notifications → Allow."
+                    :"Browser Settings → Notifications → Allow this site.");
+            } else {
+                el.innerHTML = "🔔 Enable "+(isMobile?"mobile":"desktop")+" notifications for instant signal alerts"
+                    +" <button onclick='pvAskNotif()' style='margin-left:8px;background:#3d5a1c;"
+                    +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                    +"font-size:0.72rem;cursor:pointer;font-weight:700;'>Allow</button>";
+            }
         }
+        window.pvAskNotif = function(){
+            w.Notification.requestPermission().then(function(){ render(); });
+        };
+        window.pvSendTest = function(){
+            try{
+                var n = new w.Notification("🧪 PivotVault AI — Test",{
+                    body:"RELIANCE BUY · Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800 · R:R 2.1x",
+                    icon:"/static/icon-192.png", tag:"pv-test"
+                });
+                n.onclick=function(){w.focus();n.close();};
+                el.innerHTML="<span style='color:#1a6b2e;font-weight:700;'>"
+                    +"✅ Test sent! Check your "+(isMobile?"phone":"desktop")+".</span>";
+                setTimeout(render,3500);
+            }catch(e){ el.innerHTML="❌ "+e.message; }
+        };
+        render();
     })();
     </script>
     """, unsafe_allow_html=True)
@@ -6084,7 +6098,8 @@ def _trade_buttons(s: dict):
     # ── URLs ──────────────────────────────────────────────────────────────
     groww_url  = f"https://groww.in/stocks/{sym.lower()}-share-price"
     kite_url   = f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={s['side']}"
-    upstox_url = f"https://trade.upstox.com/stocks/{sym}/trade?exchange=NSE&type={s['side'].lower()}"
+    _up_side   = 'buy' if bull else 'sell'
+    upstox_url = f"https://upstox.com/trading/instruments/NSE/{sym}/?action={_up_side}"
 
     # Styles
     btn_style  = (
@@ -8411,19 +8426,19 @@ def _calc_max_drawdown(results: list) -> float:
 
 def render_sidebar():
     PAGES = [
-        ("📊", "Market",     "Market Snapshot"),
+        ("📊", "Market", "Market Snapshot"),
         ("📈", "Pivot Boss", "Pivot Boss Analysis"),
-        ("📡", "Scanner",    "CPR Scanner"),
-        ("🔔", "Signals",    "Trade Signals"),
-        ("🎯", "Alerts",     "Price Alerts"),
+        ("📡", "Scanner", "CPR Scanner"),
+        ("🔔", "Signals", "Trade Signals"),
+        ("🎯", "Alerts", "Price Alerts"),
         ("📚", "Strategies", "Strategies"),
-        ("🔬", "Backtest",   "Backtest"),
-        ("📝", "Journal",    "Journal"),
-        ("📊", "Analytics",  "Analytics"),
-        ("🏦", "Intel",      "Market Intelligence"),
-        ("💼", "Trades",     "Paper Trading"),
-        ("⚙️",  "Broker",    "Broker Settings"),
-        ("⭐", "Watchlist",  "Watchlist"),
+        ("🔬", "Backtest", "Backtest"),
+        ("📝", "Journal", "Journal"),
+        ("📊", "Analytics", "Analytics"),
+        ("🏦", "Intel", "Market Intelligence"),
+        ("💼", "Trades", "Paper Trading"),
+        ("⚙️", "Broker", "Broker Settings"),
+        ("⭐", "Watchlist", "Watchlist"),
     ]
 
     if "current_page" not in st.session_state:
@@ -8431,79 +8446,127 @@ def render_sidebar():
     current = st.session_state["current_page"]
 
     st.markdown("""
-    <style>
-    .block-container { padding-top: 0.25rem !important; }
-    section[data-testid="stSidebar"]        { display: none !important; }
-    [data-testid="collapsedControl"]         { display: none !important; }
-    button[data-testid="baseButton-header"]  { display: none !important; }
-    .nav-btn > div > button {
-        background: transparent !important;
-        border: none !important;
-        border-bottom: 3px solid transparent !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        color: #5a6a48 !important;
-        font-family: DM Sans, sans-serif !important;
-        font-size: 0.78rem !important;
-        font-weight: 600 !important;
-        padding: 0.45rem 0.2rem !important;
-        width: 100% !important;
-        transition: color 0.15s, border-color 0.15s !important;
-        white-space: nowrap !important;
-    }
-    .nav-btn > div > button:hover {
-        color: #3a4a22 !important;
-        border-bottom-color: #7a9651 !important;
-        background: rgba(97,122,61,0.05) !important;
-    }
-    .nav-btn-active > div > button {
-        color: #3a4a22 !important;
-        border-bottom-color: #4e6130 !important;
-        font-weight: 800 !important;
-        background: rgba(78,97,48,0.07) !important;
-    }
-    </style>
+<style>
+.block-container{padding-top:0.4rem !important;padding-left:0.6rem !important;padding-right:0.6rem !important;}
+section[data-testid="stSidebar"]{display:none !important;}
+[data-testid="collapsedControl"]{display:none !important;}
+button[data-testid="baseButton-header"]{display:none !important;}
+.pv-nav{display:flex;flex-wrap:wrap;gap:5px;padding:0.3rem 0 0.45rem;
+        border-bottom:2px solid #b8c89a;margin-bottom:0.5rem;}
+.pv-pill{display:inline-flex;align-items:center;gap:3px;
+         padding:6px 12px;border-radius:20px;border:1.5px solid #b8c89a;
+         background:#ffffff;font-family:DM Sans,sans-serif;
+         font-size:0.8rem;font-weight:600;color:#2e3d1a;
+         cursor:pointer;white-space:nowrap;
+         -webkit-tap-highlight-color:transparent;
+         user-select:none;line-height:1.4;}
+.pv-pill:hover{background:#dce8c4;border-color:#638534;color:#1e2c0d;}
+.pv-pill.active{background:#3d5a1c !important;
+                border-color:#3d5a1c !important;
+                color:#f8faf0 !important;
+                font-weight:700 !important;}
+.pv-hbtns{height:0;overflow:hidden;opacity:0;pointer-events:none;position:absolute;}
+@media(max-width:480px){.pv-pill{font-size:0.74rem;padding:5px 9px;}}
+</style>
     """, unsafe_allow_html=True)
 
-    cols = st.columns([1.6] + [1]*len(PAGES) + [1.3])
-
-    with cols[0]:
-        st.markdown(
-            "<div style='padding:0.45rem 0.4rem 0.3rem;white-space:nowrap;'>"
-            "<span style='font-family:DM Sans,sans-serif;font-weight:900;"
-            "font-size:0.92rem;color:#1a1f0e;'>🏦 PivotVault</span>"
-            "<span style='font-family:DM Sans,sans-serif;font-weight:900;"
-            "font-size:0.92rem;color:#4e6130;'> AI</span></div>",
-            unsafe_allow_html=True,
-        )
-
-    for i, (icon, short, page_key) in enumerate(PAGES):
-        with cols[i + 1]:
-            cls = "nav-btn-active" if current == page_key else "nav-btn"
-            st.markdown(f'<div class="{cls}">', unsafe_allow_html=True)
-            if st.button(f"{icon} {short}", key=f"nav_{i}", use_container_width=True):
-                st.session_state["current_page"] = page_key
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    with cols[-1]:
-        wl    = len(st.session_state.get("watchlist", []))
-        uname = st.session_state.get("username", "")[:10]
-        st.markdown(
-            f"<div style='font-family:DM Mono,monospace;font-size:0.62rem;"
-            f"color:#5a6a48;text-align:right;padding-top:0.15rem;'>"
-            f"👤{uname} ⭐{wl}</div>",
-            unsafe_allow_html=True,
-        )
+    wl    = len(st.session_state.get("watchlist", []))
+    uname = st.session_state.get("username", "")[:12]
+    tc1, tc2 = st.columns([4, 1])
+    with tc1:
+        nm = f"🏦 PivotVault <span style='color:#3d5a1c;'>AI</span>"
+        st.markdown(f"<p style='font-family:DM Sans,sans-serif;font-weight:900;font-size:0.95rem;color:#0e1308;margin:0.2rem 0 0.1rem;'>{nm}</p>", unsafe_allow_html=True)
+    with tc2:
         if st.button("🚪 Logout", key="top_logout", use_container_width=True):
             st.session_state["logged_in"] = False
             st.session_state["current_page"] = "Market Snapshot"
             st.rerun()
+        st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;color:#4a5e32;text-align:right;'>👤{uname} ⭐{wl}</div>", unsafe_allow_html=True)
 
-    st.markdown("<hr style='margin:0 0 0.5rem 0;border-color:#dae0cb;'>",
-                unsafe_allow_html=True)
+    pills = []
+    css = "pv-pill active" if current == "Market Snapshot" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn0').click()\">📊 Market</span>")
+    css = "pv-pill active" if current == "Pivot Boss Analysis" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn1').click()\">📈 Pivot Boss</span>")
+    css = "pv-pill active" if current == "CPR Scanner" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn2').click()\">📡 Scanner</span>")
+    css = "pv-pill active" if current == "Trade Signals" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn3').click()\">🔔 Signals</span>")
+    css = "pv-pill active" if current == "Price Alerts" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn4').click()\">🎯 Alerts</span>")
+    css = "pv-pill active" if current == "Strategies" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn5').click()\">📚 Strategies</span>")
+    css = "pv-pill active" if current == "Backtest" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn6').click()\">🔬 Backtest</span>")
+    css = "pv-pill active" if current == "Journal" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn7').click()\">📝 Journal</span>")
+    css = "pv-pill active" if current == "Analytics" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn8').click()\">📊 Analytics</span>")
+    css = "pv-pill active" if current == "Market Intelligence" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn9').click()\">🏦 Intel</span>")
+    css = "pv-pill active" if current == "Paper Trading" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn10').click()\">💼 Trades</span>")
+    css = "pv-pill active" if current == "Broker Settings" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn11').click()\">⚙️ Broker</span>")
+    css = "pv-pill active" if current == "Watchlist" else "pv-pill"
+    pills.append("<span class='" + css + "' onclick=\"document.getElementById('pvbtn12').click()\">⭐ Watchlist</span>")
+    st.markdown("<div class='pv-nav'>" + "".join(pills) + "</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='pv-hbtns'>", unsafe_allow_html=True)
+    if st.button("Market", key="nav_0"):
+        st.session_state["current_page"] = "Market Snapshot"
+        st.rerun()
+    if st.button("Pivot Boss", key="nav_1"):
+        st.session_state["current_page"] = "Pivot Boss Analysis"
+        st.rerun()
+    if st.button("Scanner", key="nav_2"):
+        st.session_state["current_page"] = "CPR Scanner"
+        st.rerun()
+    if st.button("Signals", key="nav_3"):
+        st.session_state["current_page"] = "Trade Signals"
+        st.rerun()
+    if st.button("Alerts", key="nav_4"):
+        st.session_state["current_page"] = "Price Alerts"
+        st.rerun()
+    if st.button("Strategies", key="nav_5"):
+        st.session_state["current_page"] = "Strategies"
+        st.rerun()
+    if st.button("Backtest", key="nav_6"):
+        st.session_state["current_page"] = "Backtest"
+        st.rerun()
+    if st.button("Journal", key="nav_7"):
+        st.session_state["current_page"] = "Journal"
+        st.rerun()
+    if st.button("Analytics", key="nav_8"):
+        st.session_state["current_page"] = "Analytics"
+        st.rerun()
+    if st.button("Intel", key="nav_9"):
+        st.session_state["current_page"] = "Market Intelligence"
+        st.rerun()
+    if st.button("Trades", key="nav_10"):
+        st.session_state["current_page"] = "Paper Trading"
+        st.rerun()
+    if st.button("Broker", key="nav_11"):
+        st.session_state["current_page"] = "Broker Settings"
+        st.rerun()
+    if st.button("Watchlist", key="nav_12"):
+        st.session_state["current_page"] = "Watchlist"
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    _nav_labels = ['Market', 'Pivot Boss', 'Scanner', 'Signals', 'Alerts', 'Strategies', 'Backtest', 'Journal', 'Analytics', 'Intel', 'Trades', 'Broker', 'Watchlist']
+    _nav_js = "<script>(function(){function a(){"
+    _nav_js += "var bs=window.parent.document.querySelectorAll('button');"
+    _nav_js += "var ls=" + str(_nav_labels).replace('"', '\\"') + ";"
+    _nav_js += "bs.forEach(function(x){"
+    _nav_js += "var t=(x.innerText||x.textContent||'').trim();"
+    _nav_js += "var idx=ls.indexOf(t);"
+    _nav_js += "if(idx>=0)x.id='pvbtn'+idx;"
+    _nav_js += "});"
+    _nav_js += "}a();setTimeout(a,500);setTimeout(a,1500);})()</script>"
+    st.markdown(_nav_js, unsafe_allow_html=True)
+
     return current
-
 
 def main():
     if not st.session_state["logged_in"]:
