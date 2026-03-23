@@ -600,10 +600,35 @@ def upstox_get_index_quote(yf_ticker: str) -> dict:
     return upstox_get_quote(inst_key)
 
 def upstox_get_ltp(symbol: str) -> float:
-    if not _upstox_connected():
-        return 0.0
-    q = upstox_get_quote(_upstox_instrument_key(symbol))
-    return q.get("ltp", 0.0)
+    """Get LTP — Upstox primary, yfinance automatic fallback."""
+    # Try Upstox if connected
+    if _upstox_connected():
+        try:
+            q = upstox_get_quote(_upstox_instrument_key(symbol))
+            ltp = q.get("ltp", 0.0)
+            if ltp and ltp > 0:
+                return round(float(ltp), 2)
+        except Exception:
+            pass
+    # yfinance fallback (always tried if Upstox fails or not connected)
+    try:
+        fi  = yf.Ticker(symbol + ".NS").fast_info
+        ltp = float(getattr(fi, "last_price", 0) or
+                    getattr(fi, "regularMarketPrice", 0) or 0)
+        if ltp > 0:
+            return round(ltp, 2)
+        # History fallback
+        hist = yf.Ticker(symbol + ".NS").history(period="1d", interval="1m")
+        if not hist.empty:
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = [c[0] for c in hist.columns]
+            hist.columns = [str(c).strip().title() for c in hist.columns]
+            if "Close" in hist.columns:
+                return round(float(hist["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    return 0.0
+
 
 # ─────────────────────────────────────────────
 #  CONFIGURATION
@@ -850,18 +875,65 @@ st.markdown("""
 
 
 # ─────────────────────────────────────────────
-#  SESSION STATE
+#  SESSION STATE  +  PERSISTENT LOGIN
+#  Session survives page refresh via local JSON.
+#  Cleared only when user explicitly logs out.
 # ─────────────────────────────────────────────
+
+_SESSION_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_session.json")
+
+def _load_session():
+    """Load persisted session from disk on app startup."""
+    try:
+        if os.path.exists(_SESSION_FILE):
+            with open(_SESSION_FILE) as f:
+                data = json.load(f)
+            # Restore auth fields only — not volatile scan data
+            for k in ["logged_in","username","user_email","user_phone",
+                      "user_id","upstox_api_key","upstox_api_secret",
+                      "upstox_access_token","broker","zerodha_api_key",
+                      "zerodha_api_secret","zerodha_access_token",
+                      "broker_connected","current_page"]:
+                if k in data and k not in st.session_state:
+                    st.session_state[k] = data[k]
+    except Exception:
+        pass
+
+def _save_session():
+    """Persist auth/broker state to disk so refresh doesn't log out user."""
+    try:
+        data = {k: st.session_state.get(k,"") for k in
+                ["logged_in","username","user_email","user_phone",
+                 "user_id","upstox_api_key","upstox_api_secret",
+                 "upstox_access_token","broker","zerodha_api_key",
+                 "zerodha_api_secret","zerodha_access_token",
+                 "broker_connected","current_page"]}
+        with open(_SESSION_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def _clear_session():
+    """Delete persisted session on logout."""
+    try:
+        if os.path.exists(_SESSION_FILE):
+            os.remove(_SESSION_FILE)
+    except Exception:
+        pass
+
 defaults = {
-    'watchlist': [],
-    'cpr_scan_df':  None,
-    'user_id':      None,
-    'user_email':   '',
-    'user_phone':   '',
-    'auth_mode':    'login',
-    'otp_code':     '',
-    'otp_target':   '',
-    # Broker config
+    # Auth
+    'logged_in':           False,
+    'username':            '',
+    'user_id':             None,
+    'user_email':          '',
+    'user_phone':          '',
+    'auth_mode':           'login',
+    'otp_code':            '',
+    'otp_target':          '',
+    # Navigation
+    'current_page':        'Market Snapshot',
+    # Broker / API
     'broker':              'none',
     'zerodha_api_key':     '',
     'zerodha_api_secret':  '',
@@ -870,20 +942,38 @@ defaults = {
     'upstox_api_secret':   '',
     'upstox_access_token': '',
     'broker_connected':    False,
-    # Paper trading
-    'paper_trades':     [],
-    'paper_balance':    100000.0,  # Rs 1 lakh starting capital
-    'paper_positions':  {},
-    'cpr_scan_15m': None,
-    'cpr_scan_30m': None,
-    'cpr_scan_1h':  None,
-    'cpr_scan_1d':  None,
-    'cpr_scan_1wk': None,
-    'cpr_scan_1mo': None,
-    'logged_in':    False,
-    'wl_data':      {},
-    'wl_last_refresh': None,
-    'smtp_cfg': {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""},
+    # Scanner results
+    'cpr_scan_df':         None,
+    'cpr_scan_15m':        None,
+    'cpr_scan_30m':        None,
+    'cpr_scan_1h':         None,
+    'cpr_scan_1d':         None,
+    'cpr_scan_1wk':        None,
+    'cpr_scan_1mo':        None,
+    'pending_signals':     [],
+    'price_alerts':        {},
+    'alert_notifications': [],
+    # Paper trading (legacy)
+    'paper_trades':        [],
+    'paper_balance':       10000000.0,   # ₹1 Crore
+    'paper_positions':     {},
+    # Forward Testing
+    '_ft_loaded':          False,
+    '_ft':                 {},
+    'ft_confirm_reset':    False,
+    'ft_low_bal_alert':    False,
+    'ft_pending_signal':   None,
+    # Live order execution
+    'upstox_live_orders':  [],
+    'upstox_order_log':    [],
+    'upstox_order_preview':None,
+    'oe_pending_signal':   None,
+    # Watchlist
+    'watchlist':           [],
+    'wl_data':             {},
+    'wl_last_refresh':     None,
+    # Misc
+    'smtp_cfg':            {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -1046,15 +1136,14 @@ def get_market_movers():
 @st.cache_data(ttl=15)
 def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
     """
-    Fetch live index price.
-    Priority: Upstox API → NSE API → yfinance fast_info → yfinance history
-    upstox_token passed as param so cache works (no session_state inside).
+    Fetch live index price — dual feed, upstox_token as param (no session_state in cache).
+    Priority: Upstox → NSE API → yfinance
     """
-    # ── Method 0: Upstox (if access token passed) ─────────────────────────
+    # ── Method 0: Upstox if token provided ────────────────────────────────
     if upstox_token:
         try:
             q = upstox_get_index_quote(ticker)
-            if q and q.get("ltp"):
+            if q and q.get("ltp") and float(q.get("ltp",0)) > 0:
                 return {
                     "ltp":    q["ltp"],
                     "change": q.get("pct_change", 0),
@@ -2246,6 +2335,7 @@ def page_login():
                         ok, user = verify_login(identifier, pin)
                         if ok:
                             st.session_state["logged_in"]  = True
+                            _save_session()  # persist so refresh keeps user logged in
                             st.session_state["username"]   = user["name"]
                             st.session_state["user_id"]    = user["email"]
                             st.session_state["user_email"] = user["email"]
@@ -3806,52 +3896,98 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     """
     rows = []
 
-    def _fetch_one(sym):
-        """Fetch OHLCV for one symbol — runs in thread pool."""
+    def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
+        """Standardise any OHLCV DataFrame regardless of source/version."""
+        if df is None or df.empty:
+            return pd.DataFrame()
         try:
-            df = pd.DataFrame()
-            if _upstox_connected():
+            # Flatten MultiIndex columns (yfinance >= 0.2.50)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [c[0] if isinstance(c, tuple) else str(c)
+                               for c in df.columns]
+            # Normalise column names to Title case
+            df.columns = [str(c).strip().split("(")[0].strip().title()
+                          for c in df.columns]
+            # Fix timezone-aware index
+            if hasattr(df.index, "tz") and df.index.tz is not None:
                 try:
-                    lb_map = {"15m":"60d","30m":"90d","1h":"180d",
-                              "1d":"365d","1wk":"730d","1mo":"1825d"}
-                    days    = int(lb_map.get(interval,"90d").replace("d",""))
-                    from_dt = (datetime.now()-timedelta(days=days)).strftime("%Y-%m-%d")
-                    to_dt   = datetime.now().strftime("%Y-%m-%d")
-                    df      = upstox_get_historical(sym, interval, from_dt, to_dt)
+                    df.index = df.index.tz_convert("Asia/Kolkata").tz_localize(None)
                 except Exception:
-                    df = pd.DataFrame()
-            if df.empty:
-                df = yf.Ticker(sym+".NS").history(period=period, interval=interval, auto_adjust=True)
-                if not df.empty and hasattr(df.columns, 'levels'):
-                    df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-                if not df.empty:
-                    if df.index.tz is not None:
-                        df.index = df.index.tz_convert("Asia/Kolkata").tz_localize(None)
-                    else:
-                        try:
-                            try:
-                                if df.index.tz is not None:
-                                    df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
-                                else:
-                                    df.index = df.index.tz_localize(None)
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-            if not df.empty:
-                # Normalise column names — handle both lowercase and Title case
-                col_map = {c: c.title() for c in df.columns}
-                # yfinance sometimes returns tuple columns (MultiIndex) — flatten
-                if hasattr(df.columns, 'levels'):
-                    df.columns = [c[0].title() if isinstance(c, tuple) else c.title() 
-                                  for c in df.columns]
-                else:
-                    df.columns = [c.title() for c in df.columns]
-            return sym, df
+                    try:
+                        df.index = df.index.tz_localize(None)
+                    except Exception:
+                        pass
+            # Must have OHLCV
+            if not {"Open","High","Low","Close","Volume"}.issubset(set(df.columns)):
+                return pd.DataFrame()
+            # Drop rows with NaN in key columns
+            df = df.dropna(subset=["Open","High","Low","Close"])
+            # Ensure numeric
+            for col in ["Open","High","Low","Close","Volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            df = df.dropna(subset=["Open","High","Low","Close"])
+            return df
         except Exception:
+            return pd.DataFrame()
+
+    def _fetch_yfinance(sym: str) -> pd.DataFrame:
+        """Fetch from yfinance with full error handling."""
+        try:
+            # Map interval for yfinance (it uses different strings)
+            yf_interval_map = {
+                "15m":"15m","30m":"30m","1h":"60m",
+                "1d":"1d","1wk":"1wk","1mo":"1mo"
+            }
+            yf_iv = yf_interval_map.get(interval, interval)
+            ticker = yf.Ticker(sym + ".NS")
+            df = ticker.history(
+                period=period,
+                interval=yf_iv,
+                auto_adjust=True,
+                repair=False,
+                raise_errors=False,
+            )
+            return _normalise_df(df)
+        except Exception:
+            return pd.DataFrame()
+
+    def _fetch_upstox(sym: str) -> pd.DataFrame:
+        """Fetch from Upstox historical API."""
+        try:
+            lb_map = {"15m":"60d","30m":"90d","1h":"180d",
+                      "1d":"365d","1wk":"730d","1mo":"1825d"}
+            days    = int(lb_map.get(interval,"90d").replace("d",""))
+            from_dt = (datetime.now()-timedelta(days=days)).strftime("%Y-%m-%d")
+            to_dt   = datetime.now().strftime("%Y-%m-%d")
+            df      = upstox_get_historical(sym, interval, from_dt, to_dt)
+            return _normalise_df(df)
+        except Exception:
+            return pd.DataFrame()
+
+    def _fetch_one(sym):
+        """
+        Dual data feed — tries both sources, uses whichever returns data.
+        Upstox first (more reliable on cloud), yfinance as fallback.
+        If Upstox data is thin (< 22 bars), also try yfinance.
+        """
+        df = pd.DataFrame()
+        upstox_ok = _upstox_connected()
+
+        # Primary: Upstox (no rate limits on Streamlit Cloud)
+        if upstox_ok:
+            df = _fetch_upstox(sym)
+
+        # Fallback or supplement: yfinance
+        if df.empty or len(df) < 22:
+            yf_df = _fetch_yfinance(sym)
+            if not yf_df.empty and len(yf_df) > len(df):
+                df = yf_df  # use whichever has more data
+
+        if df.empty or len(df) < 22:
             return sym, pd.DataFrame()
 
-    # Parallel fetch — 10 workers, ~5x faster than sequential
+        return sym, df
+
     sym_list  = symbols[:max_stocks]
     sym_data  = {}
     workers   = min(10, len(sym_list))
@@ -3859,13 +3995,13 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
         futures = {pool.submit(_fetch_one, s): s for s in sym_list}
         for fut in as_completed(futures):
             s, df = fut.result()
-            if not df.empty and len(df) >= 22:
+            if not df.empty and len(df) >= 10:   # relax minimum for intraday
                 sym_data[s] = df
 
     for sym in sym_list:
         try:
             df = sym_data.get(sym, pd.DataFrame())
-            if df.empty or len(df) < 22:
+            if df.empty or len(df) < 10:
                 continue
 
             close  = df["Close"];  high = df["High"]
@@ -3879,7 +4015,9 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             TC  = (P - BC) + P
             width = abs(TC - BC) / P * 100 if P else 0
 
-            if width > 2.0:
+            # Wider CPR acceptable for shorter timeframes
+            max_width = 3.0 if interval in ("15m","30m") else (2.5 if interval == "1h" else 2.0)
+            if width > max_width:
                 continue
 
             ltp = float(close.iloc[-1])
@@ -4564,10 +4702,10 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     """
 
     TF_CONFIG = {
-        "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"5d",  "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
-        "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"10d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
-        "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"30d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
-        "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"90d", "tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
+        "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+        "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
+        "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"60d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
+        "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"120d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
         "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
         "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
     }
@@ -4693,13 +4831,35 @@ def page_cpr_scanner(nse500: pd.DataFrame):
 
     # ── Run scan only for selected timeframe ──────────────────────────────────
     if needs_refresh:
-        with st.spinner(f"Scanning Nifty 200 on {tf_tag.upper()} ({cfg['label']})…"):
-            result = scan_cpr_multi_tf(
-                fetch_nifty200_list(),
-                interval=cfg["interval"],
-                period=cfg["period"],
-                max_stocks=200,
+        # Warn if Upstox not connected — yfinance may be blocked on Streamlit Cloud
+        if not _upstox_connected():
+            st.info(
+                "💡 **Tip:** Connect your Upstox API token in ⚙️ Broker Settings for reliable data. "
+                "yfinance may be rate-limited on Streamlit Cloud.",
+                icon="ℹ️",
             )
+        n_stocks = 200 if _upstox_connected() else 100
+        src_label = "Upstox Live" if _upstox_connected() else "yfinance"
+        with st.spinner(f"Scanning {n_stocks} stocks on {tf_tag.upper()} via {src_label}…"):
+            try:
+                result = scan_cpr_multi_tf(
+                    fetch_nifty200_list(),
+                    interval=cfg["interval"],
+                    period=cfg["period"],
+                    max_stocks=n_stocks,
+                )
+                if result.empty:
+                    st.warning(
+                        f"⚠️ Scanner found no setups on {tf_tag.upper()}. "
+                        f"This can happen if: market is closed, all CPR widths > threshold, "
+                        f"or yfinance is rate-limited. "
+                        f"{'Try connecting Upstox for reliable data.' if not _upstox_connected() else 'Try a different timeframe.'}"
+                    )
+                else:
+                    st.toast(f"✅ Scan complete — {len(result)} setups found", icon="📡")
+            except Exception as e:
+                st.error(f"Scanner error: {str(e)[:150]}. {'Connect Upstox for reliable data.' if not _upstox_connected() else 'Try refreshing.'}")
+                result = pd.DataFrame()
         st.session_state[scan_key]      = result
         st.session_state[scan_time_key] = now
 
@@ -6281,6 +6441,21 @@ def page_order_execution():
     # Pre-fill from pending signal if available
     pending = st.session_state.pop("oe_pending_signal", None)
 
+    # Show available margin if connected
+    if _upstox_connected():
+        funds = upstox_get_funds()
+        avail = funds.get("available", 0)
+        if avail > 0:
+            st.markdown(
+                f"<div style='background:#e4f5e8;border:1px solid #8dcc9a;"
+                f"border-radius:7px;padding:6px 14px;margin-bottom:0.75rem;"
+                f"font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>"
+                f"💰 Available Margin: <b>₹{avail:,.2f}</b> · "
+                f"Used: ₹{funds.get('used',0):,.2f} · "
+                f"Total: ₹{funds.get('total',0):,.2f}</div>",
+                unsafe_allow_html=True,
+            )
+
     oc1, oc2, oc3 = st.columns(3)
     with oc1:
         sym  = st.text_input("Symbol (NSE)",
@@ -6850,13 +7025,10 @@ def _ft_flush():
 # ── LTP fetch ────────────────────────────────────────────────────────────
 
 def _ft_get_ltp(symbol: str) -> float:
-    try:
-        if _upstox_connected():
-            v = upstox_get_ltp(symbol)
-            if v and v > 0: return float(v)
-        return round(float(yf.Ticker(symbol + ".NS").fast_info.last_price), 2)
-    except Exception:
-        return 0.0
+    """Get LTP for forward testing — tries Upstox then yfinance automatically."""
+    # upstox_get_ltp already has yfinance fallback built in
+    ltp = upstox_get_ltp(symbol)
+    return ltp if ltp > 0 else 0.0
 
 # ── Signal auto-entry (called from scanner + signal tab) ─────────────────
 
@@ -8199,6 +8371,9 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
 
 
 def main():
+    # Load persisted session on every run (survives refresh)
+    _load_session()
+
     if not st.session_state["logged_in"]:
         page_login()
         return
