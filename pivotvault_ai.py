@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import json
+import logging
 try:
     from streamlit_autorefresh import st_autorefresh
     _HAS_AUTOREFRESH = True
@@ -18,6 +20,11 @@ from io import StringIO
 from datetime import datetime, timedelta
 import time
 import smtplib
+
+if not logging.root.handlers:
+    logging.basicConfig(level=logging.WARNING,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+_log = logging.getLogger(__name__)
 try:
     from mobile_patch import inject_mobile
     _MOBILE_PATCH = True
@@ -199,6 +206,14 @@ def upstox_place_order(symbol: str, side: str, qty: int,
     product: "I" = intraday MIS, "D" = delivery CNC
     Returns {"success": bool, "order_id": str, "message": str}
     """
+    # Input validation
+    if not symbol or not isinstance(symbol, str):
+        return {"success": False, "order_id": "", "message": "Invalid symbol"}
+    if side.upper() not in ("BUY", "SELL"):
+        return {"success": False, "order_id": "", "message": f"Invalid side '{side}'; must be BUY or SELL"}
+    if not isinstance(qty, (int, np.integer)) or qty <= 0:
+        return {"success": False, "order_id": "", "message": f"Invalid quantity {qty}; must be a positive integer"}
+
     instrument_key = _upstox_instrument_key(symbol)
     payload = {
         "quantity":          qty,
@@ -902,7 +917,7 @@ def _load_credentials():
                 if k in data and not st.session_state.get(k):
                     st.session_state[k] = data[k]
     except Exception:
-        pass
+        _log.warning("Failed to load broker credentials from %s", _CREDS_FILE, exc_info=True)
 
 
 def _load_session():
@@ -916,16 +931,9 @@ def _load_session():
                 if k in data and k not in st.session_state:
                     st.session_state[k] = data[k]
     except Exception:
-        pass
-    # Always load broker credentials (persisted permanently)
+        _log.warning("Failed to load session from %s", _SESSION_FILE, exc_info=True)
+    # Load broker credentials (API key/secret persist permanently)
     _load_credentials()
-    # Always load broker credentials (API key/secret persist permanently)
-    _load_credentials()
-    # Always load broker credentials (they persist until user resets)
-    try:
-        _load_credentials()
-    except Exception:
-        pass
 
 
 def _save_credentials():
@@ -939,7 +947,7 @@ def _save_credentials():
         with open(_CREDS_FILE, "w") as f:
             json.dump(data, f)
     except Exception:
-        pass
+        _log.warning("Failed to save broker credentials to %s", _CREDS_FILE, exc_info=True)
 
 
 def _upstox_token_expired() -> bool:
@@ -977,7 +985,7 @@ def _save_session():
         # Also save credentials separately
         _save_credentials()
     except Exception:
-        pass
+        _log.warning("Failed to save session to %s", _SESSION_FILE, exc_info=True)
 
 def _clear_session():
     """Delete persisted session on logout."""
@@ -985,7 +993,7 @@ def _clear_session():
         if os.path.exists(_SESSION_FILE):
             os.remove(_SESSION_FILE)
     except Exception:
-        pass
+        _log.warning("Failed to clear session file %s", _SESSION_FILE, exc_info=True)
 
 defaults = {
     # Auth
@@ -1805,7 +1813,6 @@ def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
     - Volume bars
     - Overall bias header
     """
-    import json
 
     # ── Get price data ────────────────────────────────────────────────────
     TF_MAP = {
@@ -4601,7 +4608,6 @@ def _render_groww_signals(signals: list):
     - Upstox one-click order
     - Paper trade button
     """
-    import json
     broker      = st.session_state.get("broker", "none")
     signals_json = json.dumps(signals)
 
@@ -5750,7 +5756,6 @@ def page_trade_signals(nse500: pd.DataFrame):
     Shows 15Min and 1Hour scanner results as actionable trade cards.
     Refreshes automatically when scanner refreshes.
     """
-    import json
 
     # ── Header ────────────────────────────────────────────────────────────
     h1, h2 = st.columns([5, 1])
@@ -6308,7 +6313,7 @@ def _trade_buttons(s: dict):
     preview = st.session_state.get("upstox_order_preview")
     if preview and preview.get("symbol") == sym:
         try:    ltp = _ft_get_ltp(sym) or s.get("entry",0)
-        except: ltp = s.get("entry",0)
+        except Exception: ltp = s.get("entry",0)
         qty  = 100
         cost = round(ltp * qty, 2)
         sl   = preview.get("sl",0)
@@ -6627,7 +6632,7 @@ def page_order_execution():
 
     with oc2:
         try:   live_px = _ft_get_ltp(sym)
-        except: live_px = 0.0
+        except Exception: live_px = 0.0
         entry_px = st.number_input("Entry Price ₹",
                                     value=float(pending["entry"] if pending else live_px or 100.0),
                                     step=0.25, key="oe_entry")
@@ -7115,15 +7120,13 @@ def page_broker_settings():
 #  • Full P&L statement strategy-wise at day end
 # ══════════════════════════════════════════════════════════════════════════════
 
-import json as _json, os as _os
-
-_FT_FILE = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
+_FT_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_ft.json")
 
 # ── Persistence helpers ───────────────────────────────────────────────────
 
 def _ft_load():
     try:
-        if _os.path.exists(_FT_FILE):
+        if os.path.exists(_FT_FILE):
             with open(_FT_FILE) as f:
                 d = json.load(f)
                 if "positions" not in d: d["positions"] = []
@@ -7981,7 +7984,7 @@ def page_forward_test():
                               index=0 if (not pending or pending.get("side")=="BUY") else 1)
         with ns2:
             try:    _ltp = _ft_get_ltp(n_sym)
-            except: _ltp = 0.0
+            except Exception: _ltp = 0.0
             n_entry  = st.number_input("Entry ₹",
                 value=float(pending["entry"] if pending else _ltp or 100.0),
                 step=0.25, key="ft_nentry")
