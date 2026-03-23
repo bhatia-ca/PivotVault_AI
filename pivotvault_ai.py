@@ -411,9 +411,15 @@ def upstox_get_live_ltp_batch(symbols: list) -> dict:
     return {}
 
 def _upstox_connected() -> bool:
-    """Return True if a valid Upstox access token is saved in session state."""
+    """Return True if a valid Upstox access token is in session state."""
     token = st.session_state.get("upstox_access_token", "")
-    return bool(token and token.strip() and token.startswith("eyJ"))
+    return bool(token and len(token.strip()) > 100 and token.strip().startswith("eyJ"))
+
+def _upstox_has_credentials() -> bool:
+    """True if API key+secret saved (even if token expired)."""
+    key    = st.session_state.get("upstox_api_key","")
+    secret = st.session_state.get("upstox_api_secret","")
+    return bool(key and secret)
 
 
 def _upstox_redirect_uri() -> str:
@@ -882,34 +888,94 @@ st.markdown("""
 
 _SESSION_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_session.json")
 
-def _load_session():
-    """Load persisted session from disk on app startup."""
+_CREDS_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json")
+
+def _load_credentials():
+    """Load persisted broker credentials on startup."""
     try:
-        if os.path.exists(_SESSION_FILE):
-            with open(_SESSION_FILE) as f:
+        if os.path.exists(_CREDS_FILE):
+            with open(_CREDS_FILE) as f:
                 data = json.load(f)
-            # Restore auth fields only — not volatile scan data
-            for k in ["logged_in","username","user_email","user_phone",
-                      "user_id","upstox_api_key","upstox_api_secret",
-                      "upstox_access_token","broker","zerodha_api_key",
-                      "zerodha_api_secret","zerodha_access_token",
-                      "broker_connected","current_page"]:
-                if k in data and k not in st.session_state:
+            for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
+                      "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
+                      "broker","broker_connected"]:
+                if k in data and not st.session_state.get(k):
                     st.session_state[k] = data[k]
     except Exception:
         pass
 
+
+def _load_session():
+    """Load persisted session + credentials from disk on every app startup."""
+    try:
+        if os.path.exists(_SESSION_FILE):
+            with open(_SESSION_FILE) as f:
+                data = json.load(f)
+            for k in ["logged_in","username","user_email","user_phone",
+                      "user_id","current_page"]:
+                if k in data and k not in st.session_state:
+                    st.session_state[k] = data[k]
+    except Exception:
+        pass
+    # Always load broker credentials (persisted permanently)
+    _load_credentials()
+    # Always load broker credentials (API key/secret persist permanently)
+    _load_credentials()
+    # Always load broker credentials (they persist until user resets)
+    try:
+        _load_credentials()
+    except Exception:
+        pass
+
+
+def _save_credentials():
+    """Persist broker credentials permanently (API key/secret stay forever)."""
+    try:
+        data = {k: st.session_state.get(k,"") for k in
+                ["upstox_api_key","upstox_api_secret","upstox_access_token",
+                 "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
+                 "broker","broker_connected"]}
+        data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(_CREDS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _upstox_token_expired() -> bool:
+    """
+    Check if Upstox token is expired by making a lightweight API call.
+    Returns True if token needs refresh.
+    """
+    token = st.session_state.get("upstox_access_token","")
+    if not token or not token.startswith("eyJ"):
+        return False  # No token — not expired, just not set
+    try:
+        import base64 as _b64
+        # Decode JWT payload (middle part) to check expiry
+        parts = token.split(".")
+        if len(parts) >= 2:
+            payload_b64 = parts[1] + "==" * (4 - len(parts[1]) % 4)
+            payload     = json.loads(_b64.b64decode(payload_b64).decode())
+            exp         = payload.get("exp", 0)
+            if exp > 0:
+                from datetime import timezone as _tzcheck
+                now_ts = datetime.now(_tzcheck.utc).timestamp()
+                return now_ts > exp
+    except Exception:
+        pass
+    return False
+
 def _save_session():
-    """Persist auth/broker state to disk so refresh doesn't log out user."""
+    """Persist auth state to disk so refresh keeps user logged in."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["logged_in","username","user_email","user_phone",
-                 "user_id","upstox_api_key","upstox_api_secret",
-                 "upstox_access_token","broker","zerodha_api_key",
-                 "zerodha_api_secret","zerodha_access_token",
-                 "broker_connected","current_page"]}
+                 "user_id","current_page"]}
         with open(_SESSION_FILE, "w") as f:
             json.dump(data, f)
+        # Also save credentials separately
+        _save_credentials()
     except Exception:
         pass
 
@@ -2031,11 +2097,81 @@ def is_market_open() -> bool:
     return market_open <= now <= market_close
 
 
+def is_auto_trade_open() -> bool:
+    """Auto-trade window: 9:30–15:15 IST (avoids volatile open + pre-close)."""
+    from datetime import timezone
+    IST  = timezone(timedelta(hours=5, minutes=30))
+    now  = datetime.now(IST)
+    if now.weekday() >= 5:
+        return False
+    trade_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+    trade_close = now.replace(hour=15, minute=15, second=0, microsecond=0)
+    return trade_open <= now <= trade_close
+
+
+
+def _show_token_refresh_popup():
+    """Show token expiry dialog anywhere in the app."""
+    api_key    = st.session_state.get("upstox_api_key","")
+    api_secret = st.session_state.get("upstox_api_secret","")
+
+    # Check if token is expired
+    token_expired = (
+        st.session_state.get("upstox_api_key","") and   # has credentials
+        (not _upstox_connected() or _upstox_token_expired())  # but token invalid
+    )
+
+    if not token_expired:
+        return
+
+    st.markdown("""
+    <div style='background:#1a1f0e;border:2px solid #7c3aed;border-radius:12px;
+                padding:1rem 1.25rem;margin-bottom:0.75rem;'>
+      <div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#c8a0f0;
+                  letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem;'>
+        ⚡ Upstox Token Refresh Required
+      </div>
+      <div style='font-family:DM Mono,monospace;font-size:0.8rem;color:#f8faf0;'>
+        Your Upstox access token has expired or is invalid.
+        Paste today's token below to restore live data feed and trading.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([4,1])
+    with col1:
+        new_token = st.text_input(
+            "Paste new Upstox access token",
+            key="token_refresh_input",
+            type="password",
+            placeholder="eyJ0eXAiOiJKV1Qi...",
+            label_visibility="collapsed",
+        )
+    with col2:
+        if st.button("✅ Activate", key="token_refresh_btn", use_container_width=True):
+            t = (new_token or "").strip()
+            if t and t.startswith("eyJ") and len(t) > 100:
+                st.session_state["upstox_access_token"] = t
+                st.session_state["broker_connected"]    = True
+                st.session_state["upstox_token_expired"]= False
+                _save_credentials()
+                st.cache_data.clear()
+                st.success("✅ Token updated! Live data feed restored.")
+                st.rerun()
+            else:
+                st.error("Invalid token. Must start with 'eyJ' and be 500+ characters.")
+
+    st.markdown("---")
+
+
 def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     open_  = is_market_open()
+
+    # ── Token expiry popup (shown if Upstox creds saved but token expired) ──
+    _show_token_refresh_popup()
 
     # Show Upstox renewal error if any (non-blocking)
     renewal_err = st.session_state.pop("upstox_renewal_error", None)
@@ -3952,7 +4088,10 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     def _fetch_upstox(sym: str) -> pd.DataFrame:
-        """Fetch from Upstox historical API."""
+        """Fetch from Upstox historical API — tries whenever any token exists."""
+        # Use Upstox if token present (connected) OR if creds saved (try anyway)
+        if not _upstox_connected() and not _upstox_has_credentials():
+            return pd.DataFrame()
         try:
             lb_map = {"15m":"60d","30m":"90d","1h":"180d",
                       "1d":"365d","1wk":"730d","1mo":"1825d"}
@@ -3966,24 +4105,25 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
     def _fetch_one(sym):
         """
-        Dual data feed — tries both sources, uses whichever returns data.
-        Upstox first (more reliable on cloud), yfinance as fallback.
-        If Upstox data is thin (< 22 bars), also try yfinance.
+        Dual data feed with intelligent fallback:
+        1. Upstox (whenever credentials/token available — no cloud rate limits)
+        2. yfinance (automatic fallback if Upstox fails or no creds)
+        Whichever gives more data wins.
         """
-        df = pd.DataFrame()
-        upstox_ok = _upstox_connected()
+        df     = pd.DataFrame()
+        has_up = _upstox_connected() or _upstox_has_credentials()
 
-        # Primary: Upstox (no rate limits on Streamlit Cloud)
-        if upstox_ok:
+        # Primary: Upstox (reliable, no NSE rate limits on Streamlit Cloud)
+        if has_up:
             df = _fetch_upstox(sym)
 
-        # Fallback or supplement: yfinance
-        if df.empty or len(df) < 22:
+        # Fallback/supplement: yfinance
+        if df.empty or len(df) < 10:
             yf_df = _fetch_yfinance(sym)
             if not yf_df.empty and len(yf_df) > len(df):
-                df = yf_df  # use whichever has more data
+                df = yf_df
 
-        if df.empty or len(df) < 22:
+        if df.empty or len(df) < 10:
             return sym, pd.DataFrame()
 
         return sym, df
@@ -4838,9 +4978,19 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                 "yfinance may be rate-limited on Streamlit Cloud.",
                 icon="ℹ️",
             )
-        n_stocks = 200 if _upstox_connected() else 100
-        src_label = "Upstox Live" if _upstox_connected() else "yfinance"
-        with st.spinner(f"Scanning {n_stocks} stocks on {tf_tag.upper()} via {src_label}…"):
+        upstox_live  = _upstox_connected()
+        has_creds    = _upstox_has_credentials()
+        n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
+
+        if has_creds and not upstox_live:
+            st.warning(
+                "⚠️ Upstox token expired — scanner will use yfinance. "
+                "Paste today's token above to restore Upstox live feed.",
+                icon="🔑",
+            )
+
+        src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
+        with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
             try:
                 result = scan_cpr_multi_tf(
                     fetch_nifty200_list(),
@@ -4850,15 +5000,13 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                 )
                 if result.empty:
                     st.warning(
-                        f"⚠️ Scanner found no setups on {tf_tag.upper()}. "
-                        f"This can happen if: market is closed, all CPR widths > threshold, "
-                        f"or yfinance is rate-limited. "
-                        f"{'Try connecting Upstox for reliable data.' if not _upstox_connected() else 'Try a different timeframe.'}"
+                        f"⚠️ No setups found on {tf_tag.upper()}. "
+                        f"{'Market may be closed — data is from last session.' if not is_market_open() else 'All stocks filtered out — try a different timeframe.'}"
                     )
                 else:
-                    st.toast(f"✅ Scan complete — {len(result)} setups found", icon="📡")
+                    st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
             except Exception as e:
-                st.error(f"Scanner error: {str(e)[:150]}. {'Connect Upstox for reliable data.' if not _upstox_connected() else 'Try refreshing.'}")
+                st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
                 result = pd.DataFrame()
         st.session_state[scan_key]      = result
         st.session_state[scan_time_key] = now
@@ -5997,8 +6145,17 @@ def _trade_buttons(s: dict):
         next_open = ""
 
     # Status bar
-    if mkt_open:
-        status_html = "<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span> · Live trading"
+    from datetime import timezone as _tzs
+    _ISTs   = _tzs(timedelta(hours=5, minutes=30))
+    _now_s  = datetime.now(_ISTs)
+    _auto_ok = is_auto_trade_open()
+
+    if mkt_open and _auto_ok:
+        status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
+                       " · Auto-trade ACTIVE (9:30–15:15)")
+    elif mkt_open and not _auto_ok:
+        status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
+                       " · Auto-trade starts 9:30 AM IST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
@@ -6737,196 +6894,171 @@ def page_broker_settings():
     #  UPSTOX — Data Feed + Trading
     # ══════════════════════════════
     with tab_upstox:
-        st.markdown("### 📡 Upstox — Free Live Data + Trading")
+        st.markdown("### 📡 Upstox — Live Data + Order Execution")
 
-        # Status banner
-        upstox_ok = _upstox_connected()
-        if upstox_ok:
-            st.success("✅ Upstox Live Data Feed is ACTIVE — all market data uses Upstox real-time feed.")
+        # ── Overall status ────────────────────────────────────────────────
+        has_creds     = _upstox_has_credentials()
+        token_ok      = _upstox_connected()
+        token_expired = _upstox_token_expired()
+
+        if token_ok and not token_expired:
+            st.success("✅ Upstox ACTIVE — live data feed and order execution enabled.")
+        elif has_creds:
+            st.warning("⚠️ Credentials saved. Daily access token needs refresh — paste below.")
         else:
-            st.info("📡 Connect Upstox for free NSE real-time data. Currently using yfinance (delayed).")
+            st.info("📡 Set up Upstox once to enable live NSE data. Only the access token needs daily refresh.")
 
         st.divider()
 
-        # ── API Credentials ───────────────────────────────────────────────
-        st.markdown("**API Credentials**")
-        st.caption("Get these from upstox.com/developer → My Apps → Create App")
+        # ── STEP 1: API Key + Secret (permanent) ─────────────────────────
+        st.markdown("#### Step 1 — API Credentials *(save once, permanent)*")
+        st.caption("Get from upstox.com/developer → My Apps. These never expire.")
+
+        if has_creds:
+            st.markdown(
+                "<div style='background:#e4f5e8;border:1px solid #8dcc9a;"
+                "border-radius:7px;padding:6px 12px;margin-bottom:0.5rem;"
+                "font-family:DM Mono,monospace;font-size:0.75rem;color:#1a6b2e;'>"
+                "🔐 API Key & Secret are saved permanently</div>",
+                unsafe_allow_html=True,
+            )
+
         c1, c2 = st.columns(2)
         with c1:
-            uak  = st.text_input("API Key",    value=st.session_state.get("upstox_api_key",""),    key="up_ak",  type="password", placeholder="your-api-key")
+            uak  = st.text_input("API Key",
+                value=st.session_state.get("upstox_api_key",""),
+                key="up_ak", type="password", placeholder="your-api-key")
         with c2:
-            uaks = st.text_input("API Secret", value=st.session_state.get("upstox_api_secret",""), key="up_aks", type="password", placeholder="your-api-secret")
+            uaks = st.text_input("API Secret",
+                value=st.session_state.get("upstox_api_secret",""),
+                key="up_aks", type="password", placeholder="your-api-secret")
+
+        if st.button("💾 Save API Key & Secret Permanently",
+                     key="save_up_creds", use_container_width=True):
+            k = uak.strip(); s = uaks.strip()
+            if not k or not s:
+                st.warning("Enter both API Key and API Secret.")
+            else:
+                st.session_state["upstox_api_key"]    = k
+                st.session_state["upstox_api_secret"] = s
+                st.session_state["broker"]            = "upstox"
+                _save_credentials()
+                st.success("✅ API Key & Secret saved permanently.")
+                st.rerun()
 
         st.divider()
 
-        # ── Access Token (main action) ────────────────────────────────────
-        st.markdown("**Access Token**")
-        st.caption("Paste your daily access token here. Generate it from Upstox app or developer portal each morning.")
+        # ── STEP 2: Daily Access Token ────────────────────────────────────
+        st.markdown("#### Step 2 — Daily Access Token *(refresh every morning)*")
+        st.caption("Upstox tokens expire daily. Paste fresh token here each morning.")
+
         uat = st.text_input(
             "Access Token",
             value=st.session_state.get("upstox_access_token",""),
-            key="up_at",
-            type="password",
+            key="up_at", type="password",
             placeholder="eyJ0eXAiOiJKV1QiLCJhbGci...",
             label_visibility="collapsed",
         )
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("💾 Save & Activate", use_container_width=True, key="save_up_token"):
+            if st.button("⚡ Activate Token", key="save_up_token",
+                         use_container_width=True):
                 t = uat.strip()
                 if not t:
                     st.warning("Paste your access token first.")
-                elif not t.startswith("eyJ"):
-                    st.error(
-                        "❌ This doesn't look like a valid Upstox token.\n\n"
-                        "A valid token starts with **eyJ** (it's a JWT string, ~500+ characters long).\n\n"
-                        "Make sure you copied the full token without any extra spaces."
-                    )
+                elif len(t) < 50 or not t.startswith("eyJ"):
+                    st.error("❌ Invalid token — must start with 'eyJ' and be 500+ chars.")
                 else:
                     st.session_state.update({
-                        "upstox_access_token": t,
-                        "upstox_api_key":      uak.strip() or st.session_state.get("upstox_api_key",""),
-                        "upstox_api_secret":   uaks.strip() or st.session_state.get("upstox_api_secret",""),
-                        "broker":              "upstox",
-                        "broker_connected":    True,
+                        "upstox_access_token":  t,
+                        "upstox_api_key":       uak.strip() or st.session_state.get("upstox_api_key",""),
+                        "upstox_api_secret":    uaks.strip() or st.session_state.get("upstox_api_secret",""),
+                        "broker":               "upstox",
+                        "broker_connected":     True,
+                        "upstox_token_expired": False,
                     })
+                    _save_session()
+                    _save_credentials()
                     st.cache_data.clear()
-                    st.success(f"✅ Token saved! ({len(t)} chars) — Upstox live data feed is now ACTIVE.")
+                    st.success(f"✅ Token activated ({len(t)} chars) — Upstox live feed is ON.")
                     st.rerun()
         with col2:
-            if _upstox_connected():
-                if st.button("🔌 Disconnect", use_container_width=True, key="btn_disconnect_up"):
-                    st.session_state.update({"upstox_access_token":"","broker":"none","broker_connected":False})
+            if token_ok:
+                if st.button("🔌 Revoke Token", key="btn_disconnect_up",
+                             use_container_width=True):
+                    st.session_state.update({
+                        "upstox_access_token": "",
+                        "broker_connected":    False,
+                    })
+                    _save_credentials()
                     st.cache_data.clear()
-                    st.info("Disconnected.")
+                    st.info("Token revoked. API Key & Secret still saved.")
                     st.rerun()
 
         st.divider()
 
-        # ── Generate Token via OAuth ──────────────────────────────────────
-        st.divider()
-        st.markdown("**Generate Token via OAuth**")
+        # ── STEP 3: Generate Token via OAuth ─────────────────────────────
+        st.markdown("#### Step 3 — Generate Token via OAuth *(each morning)*")
         st.caption("Use this each morning to get a fresh access token. Takes 30 seconds.")
 
         api_key_for_oauth = uak.strip() or st.session_state.get("upstox_api_key","")
-        api_sec_for_oauth = uaks.strip() or st.session_state.get("upstox_api_secret","")
-
         if not api_key_for_oauth:
-            st.warning("Enter your API Key above first.")
+            st.warning("Enter your API Key in Step 1 first.")
         else:
-            # Redirect URI selector
             redir_choice = st.radio(
-                "Redirect URI registered in Upstox app",
-                ["http://localhost:8501", "http://127.0.0.1:8501",
-                 "https://127.0.0.1", "Custom"],
-                horizontal=True,
-                key="redir_choice",
+                "Redirect URI", ["http://localhost:8501","http://127.0.0.1:8501",
+                                  "https://127.0.0.1","Custom"],
+                horizontal=True, key="redir_choice",
             )
-            if redir_choice == "Custom":
-                redir_uri = st.text_input("Custom Redirect URI",
-                    placeholder="https://your-app.streamlit.app", key="redir_custom")
-            else:
-                redir_uri = redir_choice
+            redir_uri = st.text_input("Custom URI", key="redir_custom") if redir_choice == "Custom" else redir_choice
+            import urllib.parse as _up
+            auth_url = (f"https://api.upstox.com/v2/login/authorization/dialog"
+                        f"?response_type=code&client_id={_up.quote(api_key_for_oauth)}"
+                        f"&redirect_uri={_up.quote(redir_uri)}")
+            st.markdown(f"**Step A:** [Click to authorise on Upstox ↗]({auth_url})")
+            st.caption("After authorizing, Upstox redirects to your URI with a `code=` parameter in the URL.")
 
-            # Step A — Login button
-            import urllib.parse as _ulp
-            auth_url = (
-                "https://api.upstox.com/v2/login/authorization/dialog"
-                f"?response_type=code&client_id={api_key_for_oauth}"
-                f"&redirect_uri={_ulp.quote(redir_uri, safe='')}"
-            )
-            st.markdown(
-                f"<a href='{auth_url}' target='_blank' style='"
-                f"display:inline-block;background:#7c3aed;color:#fff;"
-                f"padding:10px 22px;border-radius:8px;font-size:0.9rem;"
-                f"font-weight:700;text-decoration:none;margin-bottom:0.75rem;'>"
-                f"🔐 Step A — Login to Upstox &amp; Authorize →</a>",
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                "After clicking: login → allow → browser redirects to a URL like  "
-                f"`{redir_uri}?code=Ab1Cd2...`  — copy the full URL."
-            )
+            auth_code = st.text_input("Step B — Paste code from redirect URL",
+                key="up_auth_code", placeholder="abc123xyz...")
 
-            # Step B — Paste redirect URL, extract code
-            pasted_url = st.text_input(
-                "Step B — Paste full redirect URL (or just the code)",
-                key="pasted_redir_url",
-                placeholder=f"{redir_uri}?code=Ab1Cd2Ef3Gh4...",
-            )
-            extracted_code = ""
-            if pasted_url.strip():
-                if "code=" in pasted_url:
+            if st.button("🔑 Step C — Generate Access Token", key="gen_token_btn",
+                         use_container_width=True):
+                code = auth_code.strip()
+                if not code:
+                    st.warning("Paste the authorization code from Step B.")
+                else:
                     try:
-                        extracted_code = _ulp.parse_qs(
-                            _ulp.urlparse(pasted_url.strip()).query
-                        ).get("code", [""])[0]
-                        if extracted_code:
-                            st.success(f"✅ Code extracted — {len(extracted_code)} chars")
-                    except Exception:
-                        extracted_code = pasted_url.strip()
-                else:
-                    # User pasted just the code directly
-                    extracted_code = pasted_url.strip()
-
-            # Step C — Generate token
-            if st.button("🔑 Step C — Generate Access Token",
-                         use_container_width=True, key="btn_gen_token",
-                         disabled=not extracted_code):
-                if not api_sec_for_oauth:
-                    st.error("Enter your API Secret above first.")
-                else:
-                    with st.spinner("Exchanging code for token..."):
-                        try:
-                            r = requests.post(
-                                "https://api.upstox.com/v2/login/authorization/token",
-                                headers={
-                                    "Content-Type": "application/x-www-form-urlencoded",
-                                    "Accept":       "application/json",
-                                },
-                                data={
-                                    "code":          extracted_code,
-                                    "client_id":     api_key_for_oauth,
-                                    "client_secret": api_sec_for_oauth,
-                                    "redirect_uri":  redir_uri,
-                                    "grant_type":    "authorization_code",
-                                },
-                                timeout=10,
-                            )
-                            if r.status_code == 200:
-                                token = r.json().get("access_token","")
-                                if token:
-                                    st.session_state.update({
-                                        "upstox_access_token": token,
-                                        "upstox_api_key":      api_key_for_oauth,
-                                        "upstox_api_secret":   api_sec_for_oauth,
-                                        "broker":              "upstox",
-                                        "broker_connected":    True,
-                                    })
-                                    st.cache_data.clear()
-                                    st.success(f"✅ Token generated ({len(token)} chars)! Live data feed ACTIVE.")
-                                    st.rerun()
-                                else:
-                                    st.error(f"No token in response: {r.json()}")
+                        api_sec = uaks.strip() or st.session_state.get("upstox_api_secret","")
+                        import requests as _rq
+                        resp = _rq.post(
+                            "https://api.upstox.com/v2/login/authorization/token",
+                            data={"code": code, "client_id": api_key_for_oauth,
+                                  "client_secret": api_sec, "redirect_uri": redir_uri,
+                                  "grant_type": "authorization_code"},
+                            headers={"accept":"application/json","Content-Type":"application/x-www-form-urlencoded"},
+                            timeout=10,
+                        )
+                        if resp.status_code == 200:
+                            tok = resp.json().get("access_token","")
+                            if tok:
+                                st.session_state.update({
+                                    "upstox_access_token": tok,
+                                    "broker": "upstox",
+                                    "broker_connected": True,
+                                    "upstox_token_expired": False,
+                                })
+                                _save_session()
+                                _save_credentials()
+                                st.cache_data.clear()
+                                st.success(f"✅ Access token generated! ({len(tok)} chars) — Live feed ACTIVE.")
+                                st.rerun()
                             else:
-                                try:
-                                    err   = r.json()
-                                    ecode = err.get("errors",[{}])[0].get("errorCode","")
-                                    emsg  = err.get("errors",[{}])[0].get("message","Unknown")
-                                except Exception:
-                                    ecode, emsg = "", r.text[:200]
-                                st.error(f"❌ {ecode}: {emsg}")
-                                if "100068" in ecode:
-                                    st.info("Fix: Redirect URI must match exactly what's in Upstox developer app settings.")
-                                elif "100070" in ecode:
-                                    st.info("Fix: Check the redirect URI — it must be registered in your Upstox app.")
-                                elif "100067" in ecode or "expired" in emsg.lower():
-                                    st.info("Fix: Auth code expired (valid ~60 sec). Click Step A again to get a fresh code.")
-                                with st.expander("Full error details"):
-                                    st.json(r.json())
-                        except Exception as e:
-                            st.error(f"Request failed: {e}")
+                                st.error("Token generation succeeded but token was empty.")
+                        else:
+                            st.error(f"Token generation failed ({resp.status_code}): {resp.text[:200]}")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)[:150]}")
 
     with tab_zerodha:
         st.markdown("### ⚡ Zerodha Kite")
@@ -7048,12 +7180,13 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     # ── Only enter during live market hours ──────────────────────────────
     IST     = _tz(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    mkt_open_time  = now_ist.replace(hour=9,  minute=15, second=0, microsecond=0)
-    mkt_close_time = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    # Auto-trade starts 9:30 (not 9:15) — first 15 min is volatile price discovery
+    mkt_open_time  = now_ist.replace(hour=9,  minute=30, second=0, microsecond=0)
+    mkt_close_time = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)  # stop 15 min before close
     in_market_hours = (now_ist.weekday() < 5 and
                        mkt_open_time <= now_ist <= mkt_close_time)
     if not in_market_hours:
-        return   # Never paper-trade outside market hours
+        return   # Only auto-trade 9:30–15:15 IST on weekdays
 
     ft    = _ft_state()
     sym   = s.get("symbol","")
@@ -7742,32 +7875,89 @@ def page_forward_test():
     st.divider()
 
     # ══════════════════════════════════════════════════════════════
-    #  SECTION 4 — CLOSED TRADE HISTORY
+    #  SECTION 4 — CLOSED TRADE HISTORY + P&L FILTERS
     # ══════════════════════════════════════════════════════════════
     if closed_pos:
         st.markdown(f"#### 📋 Closed Trades ({len(closed_pos)})")
+
+        # ── P&L Filter controls ───────────────────────────────────
+        pnl_values = [p.get("pnl",0) for p in closed_pos]
+        min_pnl_all = min(pnl_values) if pnl_values else -10000
+        max_pnl_all = max(pnl_values) if pnl_values else 10000
+
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        with fc1:
+            pnl_filter = st.selectbox("Show trades", ["All","Wins only","Losses only","Break-even"],
+                                       key="ft_pnl_filter", label_visibility="collapsed")
+        with fc2:
+            tf_filter_cl = st.multiselect("Timeframe", ["15m","30m","1h","1d","Manual"],
+                                           default=[], key="ft_tf_filter",
+                                           placeholder="All TFs",
+                                           label_visibility="collapsed")
+        with fc3:
+            side_filter = st.selectbox("Side",["All","BUY only","SELL only"],
+                                        key="ft_side_filter", label_visibility="collapsed")
+        with fc4:
+            strat_list = sorted(set(p.get("strategy","—")[:25] for p in closed_pos))
+            strat_filter = st.selectbox("Strategy",["All"]+strat_list,
+                                         key="ft_strat_filter", label_visibility="collapsed")
+
+        # Apply filters
+        filtered_pos = closed_pos
+        if pnl_filter == "Wins only":     filtered_pos = [p for p in filtered_pos if p.get("pnl",0) > 0]
+        elif pnl_filter == "Losses only": filtered_pos = [p for p in filtered_pos if p.get("pnl",0) < 0]
+        elif pnl_filter == "Break-even":  filtered_pos = [p for p in filtered_pos if p.get("pnl",0) == 0]
+        if tf_filter_cl:  filtered_pos = [p for p in filtered_pos if p.get("tf","—") in tf_filter_cl]
+        if side_filter == "BUY only":     filtered_pos = [p for p in filtered_pos if p.get("side") == "BUY"]
+        elif side_filter == "SELL only":  filtered_pos = [p for p in filtered_pos if p.get("side") == "SELL"]
+        if strat_filter != "All":
+            filtered_pos = [p for p in filtered_pos if strat_filter in p.get("strategy","")]
+
+        # Filtered summary
+        if filtered_pos != closed_pos:
+            f_wins = [p for p in filtered_pos if p.get("pnl",0) > 0]
+            f_pnl  = round(sum(p.get("pnl",0) for p in filtered_pos), 2)
+            st.markdown(
+                f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+                f"background:#f5f8ed;border:1px solid #b8c89a;border-radius:7px;"
+                f"padding:5px 12px;margin-bottom:0.5rem;'>"
+                f"Filtered: <b>{len(filtered_pos)}</b> trades · "
+                f"Wins: <b>{len(f_wins)}</b> ({round(len(f_wins)/max(len(filtered_pos),1)*100)}%) · "
+                f"P&L: <b style='color:{'#1a6b2e' if f_pnl>=0 else '#9e2018'};"
+                f"'>₹{f_pnl:+,.2f}</b></div>",
+                unsafe_allow_html=True,
+            )
+
         rows = []
-        for p in reversed(closed_pos):
+        for p in reversed(filtered_pos):
+            pnl   = p.get("pnl",0)
+            pnl_c = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
             rows.append({
+                "":           pnl_c,
                 "Symbol":     p["symbol"],
                 "Side":       p["side"],
                 "Entry ₹":   f"₹{p['entry']:,.2f}",
                 "Exit ₹":    f"₹{p.get('exit_px',0):,.2f}",
                 "Qty":        p["qty"],
-                "P&L":        f"₹{p.get('pnl',0):+,.2f}",
+                "P&L":        f"₹{pnl:+,.2f}",
                 "P&L %":      f"{p.get('pnl_pct',0):+.2f}%",
                 "Exit Type":  p.get("exit_type","—"),
-                "Strategy":   p.get("strategy","—")[:30],
+                "Strategy":   p.get("strategy","—")[:28],
                 "TF":         p.get("tf","—"),
                 "Closed":     p.get("closed_at","—"),
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                     hide_index=True, height=280)
-        if st.button("📥 Export Trades CSV", key="ft_trades_csv"):
-            st.download_button("⬇️ Download",
-                data=pd.DataFrame(rows).to_csv(index=False),
-                file_name=f"ft_trades_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv", key="ft_tr_dl")
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                         hide_index=True, height=min(400, 60+len(rows)*38))
+        else:
+            st.info("No trades match the current filter.")
+
+        if rows:
+            if st.button("📥 Export Filtered CSV", key="ft_trades_csv"):
+                st.download_button("⬇️ Download",
+                    data=pd.DataFrame(rows).to_csv(index=False),
+                    file_name=f"ft_trades_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv", key="ft_tr_dl")
 
     st.divider()
 
@@ -8371,8 +8561,8 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
 
 
 def main():
-    # Load persisted session on every run (survives refresh)
-    _load_session()
+    # Load persisted session + credentials on every run (survives refresh)
+    _load_session()      # loads auth + calls _load_credentials inside
 
     if not st.session_state["logged_in"]:
         page_login()
@@ -8382,6 +8572,9 @@ def main():
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
+
+    # Show token refresh popup at top of every page if needed
+    _show_token_refresh_popup()
 
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
