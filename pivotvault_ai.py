@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import json
 try:
     from streamlit_autorefresh import st_autorefresh
     _HAS_AUTOREFRESH = True
@@ -917,15 +918,8 @@ def _load_session():
                     st.session_state[k] = data[k]
     except Exception:
         pass
-    # Always load broker credentials (persisted permanently)
+    # Load broker credentials (persisted permanently)
     _load_credentials()
-    # Always load broker credentials (API key/secret persist permanently)
-    _load_credentials()
-    # Always load broker credentials (they persist until user resets)
-    try:
-        _load_credentials()
-    except Exception:
-        pass
 
 
 def _save_credentials():
@@ -6406,9 +6400,6 @@ def _trade_buttons(s: dict):
 #  • 2FA token (access token) required — rotated daily by user
 #  • Intended for PERSONAL account trading only
 # ══════════════════════════════════════════════════════════════════════════════
-
-UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # Order placement endpoint
-UPSTOX_GTT_BASE = "https://api.upstox.com/v2"        # GTT orders endpoint
 
 
 
