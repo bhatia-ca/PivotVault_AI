@@ -127,7 +127,7 @@ def _build_strategy_name(s: dict) -> str:
 
     # ── Strength tier ────────────────────────────────────────────────────
     if   strength >= 85: grade = "A+"
-    elif strength >= 75: grade = "A"
+    elif strength >= 72: grade = "A"
     elif strength >= 65: grade = "B+"
     elif strength >= 55: grade = "B"
     else:                grade = "C"
@@ -1049,8 +1049,8 @@ for k, v in defaults.items():
 #  DATA HELPERS
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=3600)
-def fetch_nse100_list() -> pd.DataFrame:
-    url = "https://archives.nseindia.com/content/indices/ind_nifty100list.csv"
+def fetch_nse500_list() -> pd.DataFrame:
+    url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -1060,25 +1060,12 @@ def fetch_nse100_list() -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame({
-            "Symbol": [
-            "RELIANCE", "TCS", "HDFCBANK", "BHARTIARTL", "ICICIBANK", "INFY", "SBIN",
-            "HINDUNILVR", "ITC", "LT", "BAJFINANCE", "HCLTECH", "KOTAKBANK", "MARUTI",
-            "SUNPHARMA", "AXISBANK", "TITAN", "ADANIENT", "ADANIPORTS", "ASIANPAINT", "WIPRO",
-            "ULTRACEMCO", "NTPC", "POWERGRID", "NESTLEIND", "TATAMOTORS", "BAJAJFINSV", "JSWSTEEL",
-            "TATASTEEL", "COALINDIA", "ONGC", "BPCL", "TECHM", "HINDALCO", "GRASIM",
-            "M&M", "INDUSINDBK", "CIPLA", "DRREDDY", "DIVISLAB", "EICHERMOT", "HEROMOTOCO",
-            "BRITANNIA", "APOLLOHOSP", "TATACONSUM", "PIDILITIND", "SIEMENS", "DABUR", "GODREJCP",
-            "HAVELLS", "BERGEPAINT", "ICICIPRULI", "SBILIFE", "HDFCLIFE", "SHREECEM", "AMBUJACEM",
-            "VEDL", "IOCL", "TATAPOWER", "ADANIGREEN", "NAUKRI", "ZOMATO", "DMART",
-            "IRCTC", "CHOLAFIN", "RECLTD", "PFC", "BANKBARODA", "CANBK", "MUTHOOTFIN",
-            "LUPIN", "TORNTPHARM", "BOSCHLTD", "COLPAL", "MARICO", "INDHOTEL", "JUBLFOOD",
-            "VOLTAS", "MOTHERSON", "BALKRISIND", "CONCOR", "BANDHANBNK", "ZYDUSLIFE", "ABB",
-            "BEL", "HAL", "LICHSGFIN", "HDFCAMC", "NIPPONLIFE", "UTIAMC", "ICICIGI",
-            "GICRE", "EMAMILTD", "TATACOMM", "LTTS", "MPHASIS", "COFORGE", "PERSISTENT",
-            "TATAELXSI", "OFSS"
-            ],
-            "Industry": [""] * 100,
-            "Company Name": [""] * 100,
+            "Symbol": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
+                       "WIPRO", "TATAMOTORS", "SBIN", "AXISBANK", "LT"],
+            "Industry": ["Energy", "IT", "IT", "Financial Services", "Financial Services",
+                         "IT", "Auto", "Financial Services", "Financial Services", "Construction"],
+            "Company Name": ["Reliance Industries", "TCS", "Infosys", "HDFC Bank", "ICICI Bank",
+                             "Wipro", "Tata Motors", "SBI", "Axis Bank", "L&T"],
         })
 
 
@@ -2304,13 +2291,13 @@ def fetch_heatmap_performance(symbols: list, max_stocks: int = 120) -> pd.DataFr
     return pd.DataFrame(result)
 
 
-def build_sector_treemap(nse100: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
+def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
     """
     Sector-level only treemap.
     Uses plain Industry names as both ids and labels so on_select returns
     a clean, matchable sector name string.
     """
-    df = nse100.copy()
+    df = nse500.copy()
     if not perf_df.empty:
         df = df.merge(perf_df[["Symbol", "Change%"]], on="Symbol", how="left")
         df["Change%"] = df["Change%"].fillna(0.0)
@@ -2570,7 +2557,7 @@ def page_login():
                 )
 
 
-def page_market_snapshot(nse100: pd.DataFrame):
+def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1a1f0e;">Market Snapshot</h1>'
         f'<span class="ts" style="color:#5a6a48;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
@@ -2590,7 +2577,7 @@ def page_market_snapshot(nse100: pd.DataFrame):
             "letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
-            "Sectoral Heatmap · Nifty 100 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
+            "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
             unsafe_allow_html=True,
         )
     with legend_col:
@@ -2606,7 +2593,7 @@ def page_market_snapshot(nse100: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    symbols = nse100["Symbol"].dropna().tolist()
+    symbols = nse500["Symbol"].dropna().tolist()
 
     with st.spinner("Fetching live performance data for heatmap…"):
         perf_df = fetch_heatmap_performance(symbols, max_stocks=120)
@@ -2614,12 +2601,12 @@ def page_market_snapshot(nse100: pd.DataFrame):
     # (summary metrics removed — detail shown below on sector click)
 
     # ── Build sector lookup once (used both for chart and detail panel) ────────
-    df_merged = nse100.merge(perf_df[["Symbol","Change%"]], on="Symbol", how="left") if not perf_df.empty else nse100.copy()
+    df_merged = nse500.merge(perf_df[["Symbol","Change%"]], on="Symbol", how="left") if not perf_df.empty else nse500.copy()
     df_merged["Change%"] = df_merged.get("Change%", pd.Series(0.0, index=df_merged.index)).fillna(0.0)
     valid_sectors = set(df_merged["Industry"].dropna().unique())
 
     # ── Treemap — sector level only, click to drill down ─────────────────────
-    fig = build_sector_treemap(nse100, perf_df)
+    fig = build_sector_treemap(nse500, perf_df)
 
     # Persist selected sector across reruns in session_state
     if "heatmap_sector" not in st.session_state:
@@ -3274,7 +3261,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
         return False, str(e)
 
 
-def page_pivot_boss(nse100: pd.DataFrame):
+def page_pivot_boss(nse500: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
     _n200 = fetch_nifty200_list()
     st.markdown(
@@ -4228,88 +4215,77 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             virgin_cpr = not inside_cpr
 
             # ── Frank Ochoa Scoring ──────────────────────────────────────────
-            bull_pts = bear_pts = 0
-            bull_reasons = []; bear_reasons = []
-
-            # 1. CPR Position — core signal (3 pts)
-            if ltp > TC:
-                bull_pts += 3; bull_reasons.append("Price above CPR")
-            elif ltp < BC:
-                bear_pts += 3; bear_reasons.append("Price below CPR")
-
-            # Virgin CPR bonus (2 pts) — highest quality setup
-            if virgin_cpr and ltp > TC:
-                bull_pts += 2; bull_reasons.append("Virgin CPR breakout")
-            elif virgin_cpr and ltp < BC:
-                bear_pts += 2; bear_reasons.append("Virgin CPR breakdown")
-
-            # 2. HMA trend (2 pts)
-            if hma_up is True:
-                bull_pts += 2; bull_reasons.append("HMA trending up")
-            elif hma_up is False:
-                bear_pts += 2; bear_reasons.append("HMA trending down")
-
-            # 3. 3/10 Oscillator (2 pts fresh cross, 1 pt continuation)
-            if osc_cross_bull:
-                bull_pts += 2; bull_reasons.append("3/10 bullish crossover")
-            elif osc_cross_bear:
-                bear_pts += 2; bear_reasons.append("3/10 bearish crossover")
-            elif hist_val > 0:
-                bull_pts += 1; bull_reasons.append("3/10 osc positive")
-            else:
-                bear_pts += 1; bear_reasons.append("3/10 osc negative")
-
-            # 4. RSI zone (1 pt)
-            if rsi >= 55:
-                bull_pts += 1; bull_reasons.append(f"RSI {round(rsi,0)} bullish zone")
-            elif rsi <= 45:
-                bear_pts += 1; bear_reasons.append(f"RSI {round(rsi,0)} bearish zone")
-
-            # 5. VWAP (1 pt)
-            if above_vwap is True:
-                bull_pts += 1; bull_reasons.append("Above VWAP")
-            elif above_vwap is False:
-                bear_pts += 1; bear_reasons.append("Below VWAP")
-
-            # 6. Volume surge (1 pt)
-            if vol_surge:
-                if ltp >= P:
-                    bull_pts += 1; bull_reasons.append("Volume surge bullish")
-                else:
-                    bear_pts += 1; bear_reasons.append("Volume surge bearish")
-
-            # 7. Stochastic (1 pt)
-            if stk < 25 and stk > stk_prev:
-                bull_pts += 1; bull_reasons.append("Stoch oversold reversal")
-            elif stk > 75 and stk < stk_prev:
-                bear_pts += 1; bear_reasons.append("Stoch overbought reversal")
-
-            # 8. Candlestick (2 pts)
-            if candle_dir == "bull":
-                bull_pts += 2; bull_reasons.append(f"{candle_name} pattern")
-            elif candle_dir == "bear":
-                bear_pts += 2; bear_reasons.append(f"{candle_name} pattern")
-
-            # 9. Pivot position bonus (1 pt)
-            if ltp > P:
-                bull_pts += 1; bull_reasons.append("Above Pivot P")
-            elif ltp < P:
-                bear_pts += 1; bear_reasons.append("Below Pivot P")
-
-            # 10. CPR width bonus — narrow CPR = stronger signal (1 pt)
-            if width < 0.25:
-                if bull_pts >= bear_pts: bull_pts += 1; bull_reasons.append("Narrow CPR (<0.25%)")
-                else: bear_pts += 1; bear_reasons.append("Narrow CPR (<0.25%)")
-
-            total = bull_pts + bear_pts
-            if   bull_pts > bear_pts: pattern_main = "Bullish"; reasons = bull_reasons
-            elif bear_pts > bull_pts: pattern_main = "Bearish"; reasons = bear_reasons
-            else:                     pattern_main = "Neutral"; reasons = []
-
-            strength = round(max(bull_pts, bear_pts) / max(total, 1) * 100)
-
+            # ─────────────────────────────────────────────────────────────────
+            # FRANK OCHOA BEST SETUP ENGINE
+            # MANDATORY: ALL 3 must pass or signal is suppressed:
+            #  1. Price on correct CPR side (above TC=BUY / below BC=SELL)
+            #  2. HMA-20 trending in signal direction
+            #  3. 3/10 Oscillator OR RSI zone confirms momentum
+            # GRADE: A+(>=85) A(>=72) B+(>=60)=show  |  B/C=suppress
+            # ─────────────────────────────────────────────────────────────────
+            _bv   = int(ltp > TC) + int(osc_cross_bull) + int(hist_val > 0) + int(hma_up is True)
+            _sv   = int(ltp < BC) + int(osc_cross_bear) + int(hist_val <= 0) + int(hma_up is False)
+            _bull = _bv >= _sv
+            _price_ok = (_bull and ltp > TC) or (not _bull and ltp < BC)
+            _hma_ok   = (hma_up is True and _bull) or (hma_up is False and not _bull)
+            _osc_ok   = ((osc_cross_bull or hist_val > 0) and _bull) or ((osc_cross_bear or hist_val <= 0) and not _bull)
+            _rsi_ok   = (rsi >= 50 and _bull) or (rsi <= 50 and not _bull)
+            if not (_price_ok and _hma_ok and (_osc_ok or _rsi_ok)):
+                continue
+            _sc, _rsn = 0, []
+            if width < 0.25:   _sc += 20; _rsn.append(f"Narrow CPR ({width:.3f}%)")
+            elif width < 0.5:  _sc += 12; _rsn.append(f"Moderate CPR ({width:.3f}%)")
+            elif width < 1.0:  _sc += 5
+            if _bull and ltp > TC:       _sc += 20; _rsn.append("Price above TC")
+            elif not _bull and ltp < BC: _sc += 20; _rsn.append("Price below BC")
+            _sc += 15
+            _rsn.append("HMA Rising ↑" if _bull else "HMA Falling ↓")
+            if osc_cross_bull and _bull:       _sc += 20; _rsn.append("3/10 Cross ↑")
+            elif osc_cross_bear and not _bull: _sc += 20; _rsn.append("3/10 Cross ↓")
+            elif hist_val > 0 and _bull:       _sc += 10; _rsn.append("3/10 Positive")
+            elif hist_val <= 0 and not _bull:  _sc += 10; _rsn.append("3/10 Negative")
+            if _bull and 55 <= rsi <= 70:           _sc += 12; _rsn.append(f"RSI {round(rsi,0):.0f} ✓")
+            elif not _bull and 30 <= rsi <= 45:     _sc += 12; _rsn.append(f"RSI {round(rsi,0):.0f} ✓")
+            elif (_bull and 50<=rsi<55) or (not _bull and 45<rsi<=50): _sc += 5
+            elif (_bull and rsi > 75) or (not _bull and rsi < 25):     _sc -= 8
+            if vol_surge: _sc += 8; _rsn.append("Vol Surge ↑")
+            _bull_c = {"Hammer","Bull Pin Bar","Bullish Engulfing","Morning Star",
+                       "Piercing Line","Bullish Harami","Bullish Marubozu","Inside Bar"}
+            _bear_c = {"Shooting Star","Bear Pin Bar","Bearish Engulfing","Evening Star",
+                       "Dark Cloud Cover","Bearish Harami","Bearish Marubozu","Inside Bar"}
+            if candle_name and _bull and candle_name in _bull_c:       _sc += 8; _rsn.append(candle_name)
+            elif candle_name and not _bull and candle_name in _bear_c: _sc += 8; _rsn.append(candle_name)
+            if virgin_cpr:               _sc += 5; _rsn.append("Virgin CPR")
+            if _bull and ltp > P:        _sc += 3; _rsn.append("Above Pivot P")
+            elif not _bull and ltp < P:  _sc += 3; _rsn.append("Below Pivot P")
+            if above_vwap is True  and _bull:        _sc += 3; _rsn.append("Above VWAP")
+            elif above_vwap is False and not _bull:  _sc += 3; _rsn.append("Below VWAP")
+            if stk < 25 and stk > stk_prev and _bull:       _sc += 4; _rsn.append("Stoch Oversold ↑")
+            elif stk > 75 and stk < stk_prev and not _bull: _sc += 4; _rsn.append("Stoch Overbought ↓")
+            _sc = max(0, min(100, _sc))
+            if   _sc >= 85: _grade = "A+"
+            elif _sc >= 72: _grade = "A"
+            elif _sc >= 60: _grade = "B+"
+            elif _sc >= 50: _grade = "B"
+            else:           _grade = "C"
+            if _grade in ("B", "C"):
+                continue
+            _cross = osc_cross_bull or osc_cross_bear
+            _any_c = _bull_c | _bear_c
+            if   width < 0.25 and _cross and candle_name in _any_c: _setup = f"Narrow CPR + 3/10 + {candle_name}"
+            elif width < 0.25 and _cross:                           _setup = "Narrow CPR + 3/10 Crossover"
+            elif width < 0.25 and candle_name in _any_c:            _setup = f"Narrow CPR Reversal · {candle_name}"
+            elif width < 0.25:                                      _setup = "Narrow CPR Breakout"
+            elif _cross and hma_up is not None:                     _setup = "3/10 Cross + HMA Confluence"
+            elif virgin_cpr:                                        _setup = "Virgin CPR Test"
+            elif candle_name in _any_c and width < 1.0:             _setup = f"CPR Reversal · {candle_name}"
+            else:                                                   _setup = "CPR Multi-Confluence"
+            pattern_main = "Bullish" if _bull else "Bearish"
+            strength = _sc; reasons = _rsn
+            bull_pts = _sc if _bull else 0; bear_pts = _sc if not _bull else 0; total = 100
             if pattern_main == "Neutral":
                 continue
+
 
             # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
@@ -4365,7 +4341,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "CPR Width%": round(width,3),
                 "CPR Type":   cpr_type,
                 "Virgin CPR": "⭐ Yes" if virgin_cpr else "—",
-                "Strategy":   strat_name,
+                "Strategy":   _setup,
+                "Grade":      _grade,
                 "Rationale":  rationale,
                 "TC":         round(TC,2),  "BC": round(BC,2),  "Pivot P": round(P,2),
                 "R1": R1,  "R2": R2,  "R3": R3,
@@ -4841,7 +4818,7 @@ buildCards();
     st.markdown(groww_html, unsafe_allow_html=True)
 
 
-def page_cpr_scanner(nse100: pd.DataFrame):
+def page_cpr_scanner(nse500: pd.DataFrame):
     """
     CPR Scanner — one timeframe at a time.
     Each timeframe auto-refreshes at its own natural interval:
@@ -5037,6 +5014,8 @@ def page_cpr_scanner(nse100: pd.DataFrame):
                     "rr1":       row.get("RR1",     2.0),
                     "tf":        tf_tag,
                     "rationale": row.get("Rationale", row.get("Strategy","CPR")),
+                    "grade":      row.get("Grade", ""),
+                    "setup_name": row.get("Strategy", ""),
                     "strategy":  row.get("Strategy","CPR"),
                     "strength":  row.get("Strength%",0),
                     "candle":    row.get("Candle","—"),
@@ -5757,7 +5736,7 @@ def _signal_card(sig: dict) -> str:
 </div>"""
 
 
-def page_trade_signals(nse100: pd.DataFrame):
+def page_trade_signals(nse500: pd.DataFrame):
     """
     Trade Signal Board — synced live from CPR Scanner.
     Shows 15Min and 1Hour scanner results as actionable trade cards.
@@ -5989,6 +5968,10 @@ def page_trade_signals(nse100: pd.DataFrame):
         rr_col  = "#2d7a3a" if s["rr1"] >= 2 else ("#b8860b" if s["rr1"] >= 1.5 else "#c0392b")
         str_w   = min(s["strength"], 100)
         tf_c    = s["tf_color"]
+        _grade    = s.get("grade", "")
+        _setup_nm = s.get("setup_name", s.get("strategy_name", "—"))
+        _gmap = {"A+": ("00e5a0","003d25","A+"), "A": ("22c55e","ffffff","A"), "B+": ("d97706","ffffff","B+")}
+        _gc, _gt, _gl = _gmap.get(_grade, ("94a3b8","ffffff", _grade or ""))
         return f"""
 <div style="background:#ffffff;border:1px solid #dae0cb;border-radius:12px;
             padding:1rem 1.1rem;border-top:4px solid {ac};
@@ -5999,7 +5982,7 @@ def page_trade_signals(nse100: pd.DataFrame):
               color:{ac};background:{bg};border:1px solid {bdr};
               border-radius:6px;padding:3px 8px;margin-bottom:7px;
               letter-spacing:0.03em;line-height:1.4;">
-    🎯 {s.get('strategy_name','—')}
+    🎯 {_setup_nm}<span style='background:#{_gc};color:#{_gt};font-family:DM Mono,monospace;font-size:0.60rem;font-weight:900;padding:2px 7px;border-radius:8px;letter-spacing:0.05em;margin-left:6px'>{_gl}</span>
   </div>
   <!-- Header row -->
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
@@ -8584,21 +8567,21 @@ def main():
     page = render_sidebar()
     render_market_header()
     st.divider()
-    nse100 = fetch_nse100_list()
+    nse500 = fetch_nse500_list()
 
     # Show token refresh popup at top of every page if needed
     _show_token_refresh_popup()
 
-    if   page == "Market Snapshot":      page_market_snapshot(nse100)
-    elif page == "Pivot Boss Analysis":  page_pivot_boss(nse100)
-    elif page == "CPR Scanner":          page_cpr_scanner(nse100)
-    elif page == "Trade Signals":        page_trade_signals(nse100)
+    if   page == "Market Snapshot":      page_market_snapshot(nse500)
+    elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
+    elif page == "CPR Scanner":          page_cpr_scanner(nse500)
+    elif page == "Trade Signals":        page_trade_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
-    else:                                page_market_snapshot(nse100)
+    else:                                page_market_snapshot(nse500)
 
 if __name__ == "__main__":
     main()
