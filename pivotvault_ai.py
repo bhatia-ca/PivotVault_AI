@@ -1049,8 +1049,8 @@ for k, v in defaults.items():
 #  DATA HELPERS
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=3600)
-def fetch_nse500_list() -> pd.DataFrame:
-    url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+def fetch_nse100_list() -> pd.DataFrame:
+    url = "https://archives.nseindia.com/content/indices/ind_nifty100list.csv"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -1060,12 +1060,25 @@ def fetch_nse500_list() -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame({
-            "Symbol": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
-                       "WIPRO", "TATAMOTORS", "SBIN", "AXISBANK", "LT"],
-            "Industry": ["Energy", "IT", "IT", "Financial Services", "Financial Services",
-                         "IT", "Auto", "Financial Services", "Financial Services", "Construction"],
-            "Company Name": ["Reliance Industries", "TCS", "Infosys", "HDFC Bank", "ICICI Bank",
-                             "Wipro", "Tata Motors", "SBI", "Axis Bank", "L&T"],
+            "Symbol": [
+            "RELIANCE", "TCS", "HDFCBANK", "BHARTIARTL", "ICICIBANK", "INFY", "SBIN",
+            "HINDUNILVR", "ITC", "LT", "BAJFINANCE", "HCLTECH", "KOTAKBANK", "MARUTI",
+            "SUNPHARMA", "AXISBANK", "TITAN", "ADANIENT", "ADANIPORTS", "ASIANPAINT", "WIPRO",
+            "ULTRACEMCO", "NTPC", "POWERGRID", "NESTLEIND", "TATAMOTORS", "BAJAJFINSV", "JSWSTEEL",
+            "TATASTEEL", "COALINDIA", "ONGC", "BPCL", "TECHM", "HINDALCO", "GRASIM",
+            "M&M", "INDUSINDBK", "CIPLA", "DRREDDY", "DIVISLAB", "EICHERMOT", "HEROMOTOCO",
+            "BRITANNIA", "APOLLOHOSP", "TATACONSUM", "PIDILITIND", "SIEMENS", "DABUR", "GODREJCP",
+            "HAVELLS", "BERGEPAINT", "ICICIPRULI", "SBILIFE", "HDFCLIFE", "SHREECEM", "AMBUJACEM",
+            "VEDL", "IOCL", "TATAPOWER", "ADANIGREEN", "NAUKRI", "ZOMATO", "DMART",
+            "IRCTC", "CHOLAFIN", "RECLTD", "PFC", "BANKBARODA", "CANBK", "MUTHOOTFIN",
+            "LUPIN", "TORNTPHARM", "BOSCHLTD", "COLPAL", "MARICO", "INDHOTEL", "JUBLFOOD",
+            "VOLTAS", "MOTHERSON", "BALKRISIND", "CONCOR", "BANDHANBNK", "ZYDUSLIFE", "ABB",
+            "BEL", "HAL", "LICHSGFIN", "HDFCAMC", "NIPPONLIFE", "UTIAMC", "ICICIGI",
+            "GICRE", "EMAMILTD", "TATACOMM", "LTTS", "MPHASIS", "COFORGE", "PERSISTENT",
+            "TATAELXSI", "OFSS"
+            ],
+            "Industry": [""] * 100,
+            "Company Name": [""] * 100,
         })
 
 
@@ -2291,13 +2304,13 @@ def fetch_heatmap_performance(symbols: list, max_stocks: int = 120) -> pd.DataFr
     return pd.DataFrame(result)
 
 
-def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
+def build_sector_treemap(nse100: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figure:
     """
     Sector-level only treemap.
     Uses plain Industry names as both ids and labels so on_select returns
     a clean, matchable sector name string.
     """
-    df = nse500.copy()
+    df = nse100.copy()
     if not perf_df.empty:
         df = df.merge(perf_df[["Symbol", "Change%"]], on="Symbol", how="left")
         df["Change%"] = df["Change%"].fillna(0.0)
@@ -2557,7 +2570,7 @@ def page_login():
                 )
 
 
-def page_market_snapshot(nse500: pd.DataFrame):
+def page_market_snapshot(nse100: pd.DataFrame):
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span><h1 style="color:#1a1f0e;">Market Snapshot</h1>'
         f'<span class="ts" style="color:#5a6a48;">{datetime.now().strftime("%d %b %Y  %H:%M")}</span></div>',
@@ -2577,7 +2590,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             "letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
-            "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
+            "Sectoral Heatmap · Nifty 100 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
             unsafe_allow_html=True,
         )
     with legend_col:
@@ -2593,7 +2606,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    symbols = nse500["Symbol"].dropna().tolist()
+    symbols = nse100["Symbol"].dropna().tolist()
 
     with st.spinner("Fetching live performance data for heatmap…"):
         perf_df = fetch_heatmap_performance(symbols, max_stocks=120)
@@ -2601,12 +2614,12 @@ def page_market_snapshot(nse500: pd.DataFrame):
     # (summary metrics removed — detail shown below on sector click)
 
     # ── Build sector lookup once (used both for chart and detail panel) ────────
-    df_merged = nse500.merge(perf_df[["Symbol","Change%"]], on="Symbol", how="left") if not perf_df.empty else nse500.copy()
+    df_merged = nse100.merge(perf_df[["Symbol","Change%"]], on="Symbol", how="left") if not perf_df.empty else nse100.copy()
     df_merged["Change%"] = df_merged.get("Change%", pd.Series(0.0, index=df_merged.index)).fillna(0.0)
     valid_sectors = set(df_merged["Industry"].dropna().unique())
 
     # ── Treemap — sector level only, click to drill down ─────────────────────
-    fig = build_sector_treemap(nse500, perf_df)
+    fig = build_sector_treemap(nse100, perf_df)
 
     # Persist selected sector across reruns in session_state
     if "heatmap_sector" not in st.session_state:
@@ -3261,7 +3274,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
         return False, str(e)
 
 
-def page_pivot_boss(nse500: pd.DataFrame):
+def page_pivot_boss(nse100: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
     _n200 = fetch_nifty200_list()
     st.markdown(
@@ -4828,7 +4841,7 @@ buildCards();
     st.markdown(groww_html, unsafe_allow_html=True)
 
 
-def page_cpr_scanner(nse500: pd.DataFrame):
+def page_cpr_scanner(nse100: pd.DataFrame):
     """
     CPR Scanner — one timeframe at a time.
     Each timeframe auto-refreshes at its own natural interval:
@@ -5744,7 +5757,7 @@ def _signal_card(sig: dict) -> str:
 </div>"""
 
 
-def page_trade_signals(nse500: pd.DataFrame):
+def page_trade_signals(nse100: pd.DataFrame):
     """
     Trade Signal Board — synced live from CPR Scanner.
     Shows 15Min and 1Hour scanner results as actionable trade cards.
@@ -8571,21 +8584,21 @@ def main():
     page = render_sidebar()
     render_market_header()
     st.divider()
-    nse500 = fetch_nse500_list()
+    nse100 = fetch_nse100_list()
 
     # Show token refresh popup at top of every page if needed
     _show_token_refresh_popup()
 
-    if   page == "Market Snapshot":      page_market_snapshot(nse500)
-    elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
-    elif page == "CPR Scanner":          page_cpr_scanner(nse500)
-    elif page == "Trade Signals":        page_trade_signals(nse500)
+    if   page == "Market Snapshot":      page_market_snapshot(nse100)
+    elif page == "Pivot Boss Analysis":  page_pivot_boss(nse100)
+    elif page == "CPR Scanner":          page_cpr_scanner(nse100)
+    elif page == "Trade Signals":        page_trade_signals(nse100)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
     elif page == "Broker Settings":      page_broker_settings()
     elif page == "Watchlist":            page_watchlist()
-    else:                                page_market_snapshot(nse500)
+    else:                                page_market_snapshot(nse100)
 
 if __name__ == "__main__":
     main()
