@@ -5012,7 +5012,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.session_state[scan_time_key] = now
 
         # ── Auto-feed signals into Forward Testing ───────────────────────
-        if not result.empty and tf_tag in ("15m","30m"):  # Only 15m+30m auto-execute FT
+        if not result.empty and tf_tag in ("15m","30m","1h"):
             for _, row in result.iterrows():
                 sig = {
                     "symbol":    row.get("Symbol",""),
@@ -5947,14 +5947,6 @@ def page_trade_signals(nse500: pd.DataFrame):
                 and s["rr1"] >= min_rr]
 
     # Sort: strength desc, then CPR width asc
-    # ── Remove signals already sent to FWD Test (no duplicates in tab) ──
-    _ft_sent = st.session_state.get("ft_sent_signals", set())
-    if _ft_sent:
-        filtered = [
-            s for s in filtered
-            if f"{s['symbol']}_{s['side']}_{s.get('tf','')}" not in _ft_sent
-        ]
-
     filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
 
     if not filtered:
@@ -6296,40 +6288,18 @@ def _trade_buttons(s: dict):
             )
 
     with c4:
-        _ft_chk      = _ft_state()
-        _sent_sigs   = st.session_state.get("ft_sent_signals", set())
-        _sig_key     = f"{sym}_{s['side']}_{s.get('tf','')}"
-        _already_ft  = any(
-            p["symbol"] == sym and p["side"] == s["side"]
-            and p["status"] in ("OPEN", "T1 HIT — TRAILING")
-            for p in _ft_chk["positions"]
-        )
-        _already_sent = _sig_key in _sent_sigs
-        _btn_label    = "✅ In FT" if (_already_ft or _already_sent) else "🧪 FWD Test"
-
-        if st.button(_btn_label,
-                     key=f"fwd_{sym}_{s['side']}_{s['tf']}",
-                     use_container_width=True,
-                     disabled=(_already_ft or _already_sent)):
+        if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
+                     use_container_width=True):
             try:
                 live = _ft_get_ltp(sym) or s.get("entry", 0)
             except Exception:
                 live = s.get("entry", 0)
-            _sent_sigs.add(_sig_key)
-            st.session_state["ft_sent_signals"] = _sent_sigs
             st.session_state["ft_pending_signal"] = {
-                "symbol":   sym,
-                "side":     s["side"],
-                "entry":    live,
-                "sl":       s.get("sl",  0),
-                "t1":       s.get("t1",  0),
-                "t2":       s.get("t2",  0),
-                "rr":       s.get("rr1", 2.0),
-                "tf":       s.get("tf",  "—"),
-                "source":   f"Signal {s.get('tf','—')}",
-                "strategy": s.get("rationale", "CPR Signal")[:50],
-                "strength": s.get("strength", 0),
-                "candle":   s.get("candle", "—"),
+                "symbol": sym, "side": s["side"], "entry": live,
+                "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
+                "rr": s.get("rr1",2.0),
+                "source": f"Signal {s.get('tf','—')}",
+                "strategy": s.get("rationale","CPR Signal")[:50],
             }
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
@@ -7217,11 +7187,6 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
                        mkt_open_time <= now_ist <= mkt_close_time)
     if not in_market_hours:
         return   # Only auto-trade 9:30–15:15 IST on weekdays
-
-    # ── Only 15m & 30m auto-execute. 1h/1d/1wk require manual FWD Test ──
-    _raw_tf = str(s.get("tf", "")).lower().replace(" ", "").replace("min", "m")
-    if _raw_tf not in ("15m", "30m"):
-        return   # Other TFs must use manual FWD Test button
 
     ft    = _ft_state()
     sym   = s.get("symbol","")
@@ -8596,12 +8561,6 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
 
 
 def main():
-    # ── Reset FWD Test sent-signals tracker each new trading day ───────────
-    _today_str = datetime.now().strftime("%Y-%m-%d")
-    if st.session_state.get("ft_sent_date") != _today_str:
-        st.session_state["ft_sent_signals"] = set()
-        st.session_state["ft_sent_date"]    = _today_str
-
     # Load persisted session + credentials on every run (survives refresh)
     _load_session()      # loads auth + calls _load_credentials inside
 
