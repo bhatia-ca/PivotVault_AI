@@ -7339,71 +7339,83 @@ def _ft_get_ltp(symbol: str) -> float:
 
 # ── Signal auto-entry (called from scanner + signal tab) ─────────────────
 
-def ft_add_signal(s: dict, source: str = "Scanner"):
-    """
-    Auto-add a scanner signal as a Forward Test position.
+def _ft_debug_log(msg: str):
+    """Append entry to FT debug log (visible in FT tab debug panel)."""
+    from datetime import timezone as _tz2
+    _IST2 = _tz2(timedelta(hours=5, minutes=30))
+    ts    = datetime.now(_IST2).strftime("%H:%M:%S")
+    log   = st.session_state.get("ft_debug_log", [])
+    log.append(f"[{ts}] {msg}")
+    st.session_state["ft_debug_log"] = log[-60:]
 
-    Rules:
-    - ONLY enters during live market hours (9:15–15:30 IST Mon-Fri)
-    - Entry price = FIRST live tick from Upstox/yfinance at moment of signal
-    - Never re-enters same symbol+side that already traded today
-    - Never re-enters same symbol+side already OPEN
-    - All positions auto-close at 15:30 IST at live price
-    """
+
+def ft_add_signal(s: dict, source: str = "Scanner"):
+    """Auto-add a scanner signal as a Forward Test position."""
     from datetime import timezone as _tz, time as _time
 
-    # ── Only enter during live market hours ──────────────────────────────
+    sym     = s.get("symbol", "?")
+    side    = s.get("side",   "?")
+    raw_tf  = str(s.get("tf", ""))
+    _sig_tf = raw_tf.lower().replace(" ", "").replace("min", "m")
+
+    # ── Gate 1: Market hours ─────────────────────────────────────────────
     IST     = _tz(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    # Auto-trade starts 9:30 (not 9:15) — first 15 min is volatile price discovery
     mkt_open_time  = now_ist.replace(hour=9,  minute=30, second=0, microsecond=0)
-    mkt_close_time = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)  # stop 15 min before close
+    mkt_close_time = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)
     in_market_hours = (now_ist.weekday() < 5 and
                        mkt_open_time <= now_ist <= mkt_close_time)
     if not in_market_hours:
-        return   # Only auto-trade 9:30–15:15 IST on weekdays
+        _ft_debug_log(f"⏰ SKIP {sym} {side} — Outside market hours ({now_ist.strftime('%a %H:%M')} IST). Window: 9:30–15:15")
+        return
 
-    # ── AUTO-ENTRY ONLY FOR 30M SIGNALS ──────────────────────────────────
-    # Other timeframes (15m, 1h, 1d etc.) require manual user trigger
-    _sig_tf = str(s.get("tf", "")).lower().replace(" ", "")
-    if _sig_tf not in ("30m", "30min", "30 min", "30"):
-        return   # Only 30m signals auto-enter FT — other TFs = manual only
+    # ── Gate 2: 30m signals only ─────────────────────────────────────────
+    if _sig_tf != "30m":
+        _ft_debug_log(f"⏱ SKIP {sym} {side} — tf='{raw_tf}' (parsed='{_sig_tf}') ≠ 30m")
+        return
 
     ft    = _ft_state()
-    sym   = s.get("symbol","")
-    side  = s.get("side","BUY")
     today = now_ist.strftime("%Y-%m-%d")
 
-    # ── Skip if already OPEN for this symbol+side ────────────────────────
+    # ── Gate 3: Not already OPEN ─────────────────────────────────────────
     for p in ft["positions"]:
-        if p["status"] in ("OPEN","T1 HIT — TRAILING") and            p["symbol"] == sym and p["side"] == side:
+        if p["status"] in ("OPEN", "T1 HIT — TRAILING") and \
+           p["symbol"] == sym and p["side"] == side:
+            _ft_debug_log(f"🔄 SKIP {sym} {side} — Already OPEN (id={p['id']})")
             return
 
-    # ── Skip if already TRADED today for this symbol+side ────────────────
-    # Prevents re-entering after SL hit or exit in same session
+    # ── Gate 4: Not already traded today ────────────────────────────────
     traded_today = ft.get("traded_today", {})
     traded_key   = f"{today}:{sym}:{side}"
     if traded_key in traded_today:
+        _ft_debug_log(f"📅 SKIP {sym} {side} — Already traded today at {traded_today[traded_key]}")
         return
 
-    # ── Get LIVE first tick from data feed ───────────────────────────────
+    # ── Gate 5: Live LTP available ───────────────────────────────────────
     ltp = _ft_get_ltp(sym)
     if not ltp or ltp <= 0:
-        return  # No live price — skip
+        _ft_debug_log(f"📡 SKIP {sym} {side} — No live LTP (got: {ltp}). Connect Upstox token.")
+        return
 
+    # ── Gate 6: Sufficient balance ───────────────────────────────────────
     bal  = ft["balance"]
-    qty  = 100                         # Fixed 100 units per trade
+    qty  = 100
     cost = round(ltp * qty, 2)
     if cost > bal:
         st.session_state["ft_low_bal_alert"] = True
+        _ft_debug_log(f"💰 SKIP {sym} {side} — Low balance ₹{bal:,.0f} < cost ₹{cost:,.0f}")
         return
+
+    # ── ALL GATES PASSED — Enter position ────────────────────────────────
+    _ft_debug_log(f"✅ ENTRY {sym} {side} ltp=₹{ltp:.2f} qty={qty} cost=₹{cost:,.0f} bal_after=₹{bal-cost:,.0f}")
+    tg_signal_alert(s, tf_label=_sig_tf or "30m")
 
     pos_id = len(ft["positions"]) + 1
     pos = {
         "id":         pos_id,
         "symbol":     sym,
         "side":       side,
-        "entry":      ltp,              # FIRST live tick = entry price
+        "entry":      ltp,
         "qty":        qty,
         "sl":         s.get("sl",  round(ltp*(0.98 if side=="BUY" else 1.02), 2)),
         "target":     s.get("t1", round(ltp*(1.03 if side=="BUY" else 0.97), 2)),
@@ -7429,12 +7441,10 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     ft["positions"].append(pos)
     ft["balance"] = round(bal - cost, 2)
 
-    # Mark this symbol+side as traded today
     if "traded_today" not in ft:
         ft["traded_today"] = {}
     ft["traded_today"][traded_key] = now_ist.strftime("%H:%M:%S")
 
-    # Log ENTRY event
     ft["events"].append({
         "time":     pos["opened_at"],
         "type":     "ENTRY",
@@ -7453,6 +7463,7 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "note":     f"First live tick entry @ ₹{ltp}",
     })
     _ft_flush()
+
 
 # ── Trigger checker ───────────────────────────────────────────────────────
 
@@ -7827,6 +7838,79 @@ def _generate_pdf_journal(positions_data: list, today_str: str) -> bytes:
 def page_forward_test():
     """Forward Testing — auto-signal entry, live SL/Target, full P&L by strategy."""
 
+    # ── Consume pending signal from Signals tab "🧪 Fwd Test" button ─────
+    _pending = st.session_state.pop("ft_pending_signal", None)
+    if _pending:
+        _psym  = str(_pending.get("symbol","")).upper().strip()
+        _pside = _pending.get("side", "BUY")
+        _psl   = float(_pending.get("sl",  0) or 0)
+        _pt1   = float(_pending.get("t1",  0) or 0)
+        _pt2   = float(_pending.get("t2",  0) or 0)
+        _prr   = float(_pending.get("rr",  2.0) or 2.0)
+        _ptf   = _pending.get("source", "Signal")
+        _pstrat= _pending.get("strategy", "CPR Signal")
+        if _psym and _psl > 0 and _pt1 > 0:
+            _pltp = _ft_get_ltp(_psym)
+            if not _pltp or _pltp <= 0:
+                _pltp = float(_pending.get("entry", 0) or 0)
+            if _pltp > 0:
+                _pft   = _ft_state()
+                _ptday = datetime.now().strftime("%Y-%m-%d")
+                _pqty  = 100
+                _pcost = round(_pltp * _pqty, 2)
+                _pbal  = _pft["balance"]
+                _palready = any(
+                    p["symbol"] == _psym and p["side"] == _pside
+                    and p["status"] in ("OPEN","T1 HIT — TRAILING")
+                    for p in _pft["positions"]
+                )
+                if _palready:
+                    st.warning(f"⚠️ {_psym} {_pside} already OPEN in FT.")
+                elif _pcost > _pbal:
+                    st.error(f"❌ Insufficient balance ₹{_pbal:,.0f} < cost ₹{_pcost:,.0f}. Add virtual funds below.")
+                else:
+                    from datetime import timezone as _ptz2
+                    _PIST2 = _ptz2(timedelta(hours=5, minutes=30))
+                    _nowp2 = datetime.now(_PIST2)
+                    _pid2  = len(_pft["positions"]) + 1
+                    _pt2v  = _pt2 if _pt2 > 0 else round(_pltp + 2*(_pt1 - _pltp), 2)
+                    _pft["positions"].append({
+                        "id":        _pid2,    "symbol":    _psym,
+                        "side":      _pside,   "entry":     _pltp,
+                        "qty":       _pqty,    "sl":        _psl,
+                        "target":    _pt1,     "t2":        _pt2v,
+                        "rr":        _prr,     "cost":      _pcost,
+                        "status":    "OPEN",   "ltp":       _pltp,
+                        "upnl":      0.0,      "pnl":       0.0,
+                        "pnl_pct":   0.0,      "exit_px":   None,
+                        "exit_type": None,     "source":    "Signals Tab",
+                        "tf":        _ptf,     "strategy":  _pstrat,
+                        "candle":    "—",      "strength":  100,
+                        "opened_at": _nowp2.strftime("%Y-%m-%d %H:%M:%S"),
+                        "closed_at": None,     "date":      _ptday,
+                    })
+                    _pft["balance"] = round(_pbal - _pcost, 2)
+                    if "traded_today" not in _pft:
+                        _pft["traded_today"] = {}
+                    _pft["traded_today"][f"{_ptday}:{_psym}:{_pside}"] = _nowp2.strftime("%H:%M:%S")
+                    _pft["events"].append({
+                        "time":     _nowp2.strftime("%Y-%m-%d %H:%M:%S"),
+                        "type":     "ENTRY",    "id":       _pid2,
+                        "symbol":   _psym,      "side":     _pside,
+                        "price":    _pltp,      "qty":      _pqty,
+                        "sl":       _psl,       "target":   _pt1,
+                        "rr":       _prr,       "source":   "Signals Tab",
+                        "strategy": _pstrat,    "tf":       _ptf,
+                        "pnl":      0.0,
+                        "note":     f"Signal FWT entry @ ₹{_pltp:.2f} | SL ₹{_psl} | T1 ₹{_pt1}",
+                    })
+                    _ft_flush()
+                    _ft_debug_log(f"✅ SIGNAL BTN ENTRY {_psym} {_pside} ltp=₹{_pltp:.2f} sl=₹{_psl} t1=₹{_pt1}")
+                    st.success(f"✅ **{_psym} {_pside}** added to FWD Test! Entry ₹{_pltp:.2f} | SL ₹{_psl} | T1 ₹{_pt1} | R:R {_prr:.1f}:1")
+            else:
+                st.error(f"❌ Could not get live price for {_psym}. Check Upstox token.")
+
+
     # Auto-refresh 15s during market hours
     if _HAS_AUTOREFRESH and is_market_open():
         st_autorefresh(interval=15_000, limit=None, key="ft_ar")
@@ -7844,6 +7928,41 @@ def page_forward_test():
     starting = ft["starting"]
     IST      = __import__("datetime").timezone(__import__("datetime").timedelta(hours=5,minutes=30))
     today    = datetime.now(IST).strftime("%Y-%m-%d")
+
+
+    # ── 🔍 FT Debug Panel ────────────────────────────────────────────────
+    with st.expander("🔍 Signal Entry Debug Log — Why signals passed/skipped FT", expanded=False):
+        debug_log = st.session_state.get("ft_debug_log", [])
+        col_d1, col_d2 = st.columns([3,1])
+        with col_d2:
+            if st.button("🗑 Clear Log", key="ft_clear_debug"):
+                st.session_state["ft_debug_log"] = []
+                st.rerun()
+        with col_d1:
+            st.caption(f"{len(debug_log)} entries — updates on every scan")
+        if not debug_log:
+            st.info("No debug entries yet. Run the Scanner (30 Min tab) to see gate-check results here.")
+        else:
+            # Color-code by type
+            html_rows = ""
+            for entry in reversed(debug_log):
+                if "✅ ENTRY" in entry:
+                    color = "#1a6b3c"; bg = "#edf7ee"
+                elif "SKIP" in entry and "⏰" in entry:
+                    color = "#7c3aed"; bg = "#f5f3ff"
+                elif "SKIP" in entry and "📡" in entry:
+                    color = "#b45309"; bg = "#fff7ed"
+                elif "SKIP" in entry and "💰" in entry:
+                    color = "#dc2626"; bg = "#fdf0ee"
+                elif "SKIP" in entry:
+                    color = "#64748b"; bg = "#f8fafc"
+                else:
+                    color = "#1e293b"; bg = "#ffffff"
+                html_rows += f"""<div style='font-family:monospace;font-size:0.78rem;
+                    padding:4px 10px;margin:2px 0;border-radius:6px;
+                    background:{bg};color:{color};border-left:3px solid {color};'>
+                    {entry}</div>"""
+            st.markdown(html_rows, unsafe_allow_html=True)
 
     open_pos  = [p for p in positions if p["status"] == "OPEN"]
     closed_pos= [p for p in positions if p["status"] != "OPEN"]
