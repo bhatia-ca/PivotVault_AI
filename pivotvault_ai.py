@@ -2148,9 +2148,11 @@ def _show_token_refresh_popup():
 
     col1, col2 = st.columns([4,1])
     with col1:
+        # Dynamic key prevents Streamlit duplicate widget error
+        refresh_id = st.session_state.get("token_refresh_id", 0)
         new_token = st.text_input(
             "Paste new Upstox access token",
-            key="token_refresh_input",
+            key=f"upstox_token_{refresh_id}",
             type="password",
             placeholder="eyJ0eXAiOiJKV1Qi...",
             label_visibility="collapsed",
