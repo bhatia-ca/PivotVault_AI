@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 import os
 try:
@@ -4835,6 +4836,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
     ⚡ 15m & 30m → Auto-execute via Forward Testing
     🖐 1h / 1d / 1wk / 1mo → Manual execution only
     """
+    import json  # required for notification payloads
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
 
     # ─────────────────────────────────────────────────────────────────────
