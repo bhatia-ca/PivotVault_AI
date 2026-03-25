@@ -6,6 +6,7 @@ try:
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
+_TV_CHARTS = False   # Set True only if TradingView charts library is integrated
 import numpy as np
 import secrets
 import re
@@ -1070,9 +1071,9 @@ def fetch_nse500_list() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def fetch_nifty200_list() -> list:
-    """Fetch Nifty 200 symbols from NSE. Falls back to hardcoded top-200 subset."""
-    url = "https://archives.nseindia.com/content/indices/ind_nifty200list.csv"
+def fetch_nifty100_list() -> list:
+    """Fetch Nifty 100 symbols from NSE. Falls back to hardcoded top-100 subset."""
+    url = "https://archives.nseindia.com/content/indices/ind_nifty100list.csv"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -1081,7 +1082,7 @@ def fetch_nifty200_list() -> list:
         df.columns = df.columns.str.strip()
         return df["Symbol"].dropna().tolist()
     except Exception:
-        # Hardcoded Nifty 200 fallback (top liquid stocks)
+        # Hardcoded Nifty 100 fallback (top 100 liquid NSE stocks)
         return [
             "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
             "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
@@ -1089,36 +1090,26 @@ def fetch_nifty200_list() -> list:
             "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
             "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
             "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS",
-            "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM",
+            "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","TORNTPHARM",
             "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE",
-            "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHL",
+            "SHREECEM","AMBUJACEM","VEDL","IOCL","HINDPETRO",
             "TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
-            "NAUKRI","ZOMATO","PAYTM","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
-            "CHOLAFIN","MANAPPURAM","RECLTD","PFC","CANBK","BANKBARODA","PNB","FEDERALBNK",
-            "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","DOMINOS","VOLTAS",
-            "WHIRLPOOL","BLUEDART","DELHIVERY","ZYDUSLIFE","ALKEM","AUROPHARMA","CADILAHC",
-            "GLENMARK","IPCA","LALPATHLAB","METROPOLIS","THYROCARE","FORTIS","MAXHEALTH",
-            "NARAYANA","AARTIIND","DEEPAKNI","SRF","PIDILITIND","AIAENG","CUMMINSIND",
-            "THERMAX","ABB","BHEL","BEL","HAL","BEML","MFSL","LICHSGFIN","HDFCAMC","NIPPONLIFE",
-            "UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH","PGHH","EMAMILTD",
-            "JYOTHYLAB","VSTIND","RADICO","UNITDSPR","TATACOMM","LTTS","MPHASIS","COFORGE",
-            "PERSISTENT","ZENSARTECH","HEXAWARE","KPITTECH","TATAELXSI","INFY","OFSS",
-            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","SRTRANSFIN",
-            "SUNDARMFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
-            "CROMPTON","ORIENTELEC","POLYCAB","FINOLEX","KEI","STERLITE","KPIL","NCC","AHLUCONT",
-            "PNCINFRA","IRB","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
-            "MUNDRAPORT","RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
-            "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
+            "NAUKRI","ZOMATO","DMART","IRCTC","CHOLAFIN","RECLTD","PFC","BANKBARODA",
+            "CANBK","PNB","FEDERALBNK","IDFCFIRSTB","INDHOTEL","JUBLFOOD","VOLTAS",
+            "MOTHERSON","BALKRISIND","CONCOR","MANAPPURAM","BANDHANBNK",
+            "ZYDUSLIFE","ALKEM","AUROPHARMA","GLENMARK","LALPATHLAB","FORTIS",
+            "ABB","BEL","HAL","LICHSGFIN","HDFCAMC","NIPPONLIFE","ICICIGI",
+            "TATACOMM","LTTS","MPHASIS","COFORGE","PERSISTENT","TATAELXSI","OFSS",
         ]
 
 @st.cache_data(ttl=3600)
-def fetch_nifty200_by_marketcap() -> list:
+def fetch_nifty100_by_marketcap() -> list:
     """
-    Returns Nifty 200 symbols sorted by market cap (highest first).
+    Returns Nifty 100 symbols sorted by market cap (highest first).
     Fetches market cap from yfinance info in batches.
     Falls back to a pre-ranked hardcoded list if fetch fails.
     """
-    # Pre-ranked Nifty 200 by approximate market cap (as of 2025)
+    # Pre-ranked Nifty 100 by approximate market cap (as of 2025)
     RANKED = [
         "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFY","SBIN","LICI",
         "HINDUNILVR","ITC","LT","BAJFINANCE","HCLTECH","KOTAKBANK","MARUTI","SUNPHARMA",
@@ -1150,9 +1141,9 @@ def fetch_nifty200_by_marketcap() -> list:
 
     # Use pre-ranked list (avoids slow yfinance calls on every load)
     try:
-        n200_set = set(fetch_nifty200_list())
+        n200_set = set(fetch_nifty100_list())
         ranked = [s for s in RANKED if s in n200_set]
-        extras = [s for s in fetch_nifty200_list() if s not in set(RANKED)]
+        extras = [s for s in fetch_nifty100_list() if s not in set(RANKED)]
         return ranked + sorted(extras)
     except Exception:
         return RANKED
@@ -2256,7 +2247,7 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
 
 
 @st.cache_data(ttl=180)
-def fetch_heatmap_performance(symbols: list, max_stocks: int = 120) -> pd.DataFrame:
+def fetch_heatmap_performance(symbols: list, max_stocks: int = 100) -> pd.DataFrame:
     """
     Batch-fetch 1-day % change for up to `max_stocks` NSE symbols using
     yfinance download (single request = much faster than per-ticker calls).
@@ -2448,10 +2439,8 @@ def page_login():
     _, col, _ = st.columns([1, 2, 1])
     with col:
 
-        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Accounts"])
-
-        # ── Sign In ───────────────────────────────────────────────
-        with tab_login:
+        # ── Sign In ─────────────────────────────────────────────────────────
+        if True:
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
             method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
@@ -2523,39 +2512,6 @@ def page_login():
                             st.rerun()
 
         # ── Accounts tab ──────────────────────────────────────────
-        with tab_accounts:
-            st.markdown(
-                "<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
-                "color:#5a6a48;margin:0.5rem 0 1rem;'>"
-                "Use any of these accounts to sign in:</div>",
-                unsafe_allow_html=True,
-            )
-            for email, u in USERS.items():
-                if st.button(
-                    f"👤 {u['name']}",
-                    key=f"quick_{email}",
-                    use_container_width=True,
-                ):
-                    st.session_state.update({
-                        "logged_in": True,
-                        "username":  u["name"],
-                        "user_id":   email,
-                        "user_email": email,
-                        "user_phone": u["phone"],
-                    })
-                    st.rerun()
-                st.markdown(
-                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                    f"color:#5a6a48;margin:-0.4rem 0 0.5rem;padding:0.5rem 0.75rem;"
-                    f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:6px;'>"
-                    f"📧 {email}  &nbsp;&nbsp;"
-                    f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
-                    f"padding:1px 7px;font-weight:700;'>PIN: {u['pin']}</span>"
-                    f"&nbsp;&nbsp; 📱 {u['phone']}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
@@ -3263,7 +3219,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
 
 def page_pivot_boss(nse500: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
-    _n200 = fetch_nifty200_list()
+    _n200 = fetch_nifty100_list()
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
@@ -3646,15 +3602,15 @@ def page_watchlist():
     </div>
     """, unsafe_allow_html=True)
 
-    nifty200 = sorted(fetch_nifty200_list())
+    nifty100 = sorted(fetch_nifty100_list())
     wl       = st.session_state.get("watchlist", [])
 
     # ── Always-visible stock selector ────────────────────────────────────
-    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 200</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 100</div>", unsafe_allow_html=True)
     selected = st.multiselect(
         "wl_stocks",
-        options=nifty200,
-        default=[s for s in wl if s in nifty200],
+        options=nifty100,
+        default=[s for s in wl if s in nifty100],
         placeholder="Search — RELIANCE, TCS, INFY…",
         label_visibility="collapsed",
         key="wl_multiselect",
@@ -4861,7 +4817,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                         font-weight:700;color:#1a1f0e;">CPR Scanner</div>
             <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                         color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
-                Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+                Nifty 100 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
             </div>
         </div>
         <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
@@ -4990,10 +4946,10 @@ def page_cpr_scanner(nse500: pd.DataFrame):
             )
 
         src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
-        with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
+        with st.spinner(f"Scanning {n_stocks} Nifty 100 stocks · {tf_tag.upper()} · {src_label}…"):
             try:
                 result = scan_cpr_multi_tf(
-                    fetch_nifty200_list(),
+                    fetch_nifty100_list(),
                     interval=cfg["interval"],
                     period=cfg["period"],
                     max_stocks=n_stocks,
@@ -5012,7 +4968,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.session_state[scan_time_key] = now
 
         # ── Auto-feed signals into Forward Testing ───────────────────────
-        if not result.empty and tf_tag in ("15m","30m","1h"):
+        if not result.empty and tf_tag in ("15m","30m"):  # AUTO FT: 15m + 30m only
             for _, row in result.iterrows():
                 sig = {
                     "symbol":    row.get("Symbol",""),
@@ -5028,7 +4984,14 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                     "strength":  row.get("Strength%",0),
                     "candle":    row.get("Candle","—"),
                 }
-                if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
+                _entry  = sig.get("entry", 0)
+                _sl     = sig.get("sl", 0)
+                _t1     = sig.get("t1", 0)
+                _sl_pct = abs(_entry - _sl) / _entry * 100 if _entry and _sl else 0
+                _t1_pct = abs(_t1 - _entry) / _entry * 100 if _entry and _t1 else 0
+                if (sig["symbol"] and _entry
+                        and _sl_pct >= 0.5    # SL at least 0.5% from entry
+                        and _t1_pct >= 1.0):  # T1 at least 1.0% from entry
                     ft_add_signal(sig, source=f"Auto · {tf_tag.upper()}")
         last_scan = now
 
@@ -5478,7 +5441,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
     🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
     📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
     📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
-    <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+    <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 100 only
     </div>
     """, unsafe_allow_html=True)
 
@@ -5938,8 +5901,20 @@ def page_trade_signals(nse500: pd.DataFrame):
         min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
 
     # Apply filters
+    def _sig_quality_ok(s):
+        """SL must be ≥0.5% from entry AND T1 must be ≥1% from entry."""
+        entry = s.get("entry", 0) or s.get("ltp", 0)
+        if not entry or entry <= 0:
+            return False
+        sl_dist = abs(entry - s.get("sl", 0)) / entry * 100 if s.get("sl") else 0
+        t1_dist = abs(s.get("t1", 0) - entry) / entry * 100 if s.get("t1") else 0
+        return sl_dist >= 0.5 and t1_dist >= 1.0
+
+    _executed = st.session_state.get("ft_executed_signals", set())
     filtered = [s for s in all_signals
-                if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
+                if _sig_quality_ok(s)
+                and f"{s['symbol']}_{s['side']}_{s['tf']}" not in _executed
+                and s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min", "🕐 1 Hour"])
                 and (side_filter == "All"
                      or (side_filter == "BUY only"  and s["side"] == "BUY")
                      or (side_filter == "SELL only" and s["side"] == "SELL"))
@@ -6234,6 +6209,12 @@ def _trade_buttons(s: dict):
         _ft_save({"trades": trades, "balance": round(bal, 2),
                   "starting": st.session_state.get("ft_start", 100000.0)})
         st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
+        # Mark signal card executed → removed from Trade Signals
+        if "ft_executed_signals" not in st.session_state:
+            st.session_state["ft_executed_signals"] = set()
+        st.session_state["ft_executed_signals"].add(
+            f"{sym}_{s['side']}_{s['tf']}"
+        )
 
     # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
     c1, c2, c3, c4 = st.columns(4)
@@ -6301,6 +6282,12 @@ def _trade_buttons(s: dict):
                 "source": f"Signal {s.get('tf','—')}",
                 "strategy": s.get("rationale","CPR Signal")[:50],
             }
+            # Mark signal card executed → removed from Trade Signals
+            if "ft_executed_signals" not in st.session_state:
+                st.session_state["ft_executed_signals"] = set()
+            st.session_state["ft_executed_signals"].add(
+                f"{sym}_{s['side']}_{s['tf']}"
+            )
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
@@ -7188,6 +7175,18 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     if not in_market_hours:
         return   # Only auto-trade 9:30–15:15 IST on weekdays
 
+    # Only 15m and 30m auto-execute; 1h+ are manual only
+    _sig_tf = s.get("tf", "").lower().replace(" ", "").replace("min", "m")
+    if _sig_tf not in ("15m", "30m"):
+        return  # 1h / 1d / 1wk / 1mo → manual execution only
+
+    # Mark signal card executed → removes it from Trade Signals
+    if "ft_executed_signals" not in st.session_state:
+        st.session_state["ft_executed_signals"] = set()
+    st.session_state["ft_executed_signals"].add(
+        f"{s.get('symbol','')}_{s.get('side','')}_{s.get('tf','')}"
+    )
+
     ft    = _ft_state()
     sym   = s.get("symbol","")
     side  = s.get("side","BUY")
@@ -7209,6 +7208,12 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     ltp = _ft_get_ltp(sym)
     if not ltp or ltp <= 0:
         return  # No live price — skip
+
+    # Quality gate: re-validate SL ≥0.5% and T1 ≥1% vs live entry price
+    _sl_live = abs(ltp - s.get("sl", 0)) / ltp * 100 if s.get("sl") else 0
+    _t1_live = abs(s.get("t1", 0) - ltp) / ltp * 100 if s.get("t1") else 0
+    if _sl_live < 0.5 or _t1_live < 1.0:
+        return  # Signal too tight against live price — skip auto-entry
 
     bal  = ft["balance"]
     qty  = 100                         # Fixed 100 units per trade
