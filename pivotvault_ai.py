@@ -7449,7 +7449,7 @@ def page_forward_test():
 
     if not open_pos:
         st.info("No open positions. Signals from the CPR Scanner auto-appear here. "
-                "Or add manually below.")
+                "Use the Scanner tab to generate signals.")
     else:
         for pos in open_pos:
             bull   = pos["side"] == "BUY"
@@ -7648,7 +7648,7 @@ def page_forward_test():
             pnl_filter = st.selectbox("Show trades", ["All","Wins only","Losses only","Break-even"],
                                        key="ft_pnl_filter", label_visibility="collapsed")
         with fc2:
-            tf_filter_cl = st.multiselect("Timeframe", ["15m","30m","1h","1d","Manual"],
+            tf_filter_cl = st.multiselect("Timeframe", ["15m","30m","1h","1d"],
                                            default=[], key="ft_tf_filter",
                                            placeholder="All TFs",
                                            label_visibility="collapsed")
@@ -7718,78 +7718,6 @@ def page_forward_test():
                     mime="text/csv", key="ft_tr_dl")
 
     st.divider()
-
-    # ══════════════════════════════════════════════════════════════
-    #  SECTION 5 — MANUAL SIGNAL ENTRY
-    # ══════════════════════════════════════════════════════════════
-    with st.expander("➕ Add Manual Forward Test Entry", expanded=False):
-        # Also check for pending signal from signal tab
-        pending = st.session_state.pop("ft_pending_signal", None)
-
-        ns1, ns2, ns3 = st.columns(3)
-        with ns1:
-            n_sym  = st.selectbox("Symbol",
-                ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN",
-                 "HINDUNILVR","BAJFINANCE","BHARTIARTL","KOTAKBANK",
-                 "LT","AXISBANK","MARUTI","TITAN","SUNPHARMA",
-                 "WIPRO","HCLTECH","ADANIENT","NTPC","BAJAJHFL"],
-                index=0, key="ft_nsym")
-            n_side = st.radio("Side", ["BUY","SELL"], horizontal=True,
-                              key="ft_nside",
-                              index=0 if (not pending or pending.get("side")=="BUY") else 1)
-        with ns2:
-            try:    _ltp = _ft_get_ltp(n_sym)
-            except: _ltp = 0.0
-            n_entry  = st.number_input("Entry ₹",
-                value=float(pending["entry"] if pending else _ltp or 100.0),
-                step=0.25, key="ft_nentry")
-            n_sl     = st.number_input("Stop Loss ₹",
-                value=float(pending["sl"] if pending else
-                            round(n_entry*(0.98 if n_side=="BUY" else 1.02),2)),
-                step=0.25, key="ft_nsl")
-        with ns3:
-            n_t1     = st.number_input("Target ₹",
-                value=float(pending["t1"] if pending else
-                            round(n_entry*(1.03 if n_side=="BUY" else 0.97),2)),
-                step=0.25, key="ft_nt1")
-            n_strat  = st.text_input("Strategy label",
-                value=pending.get("strategy","Manual") if pending else "Manual",
-                key="ft_nstrat")
-
-        n_risk = max(abs(n_entry-n_sl), 0.01)
-        n_rr   = round(abs(n_t1-n_entry)/n_risk, 2)
-        n_qty  = 100                         # Fixed 100 units per trade
-        n_cost = round(n_entry*n_qty, 2)
-        st.markdown(
-            f"<div style='background:#f5f8ed;border:1px solid #b8c89a;"
-            f"border-radius:7px;padding:0.5rem 1rem;"
-            f"font-family:DM Mono,monospace;font-size:0.78rem;"
-            f"display:flex;gap:1.5rem;flex-wrap:wrap;'>"
-            f"<span>Qty: <b>{n_qty}</b></span>"
-            f"<span>Cost: <b>₹{n_cost:,.0f}</b></span>"
-            f"<span>Risk: <b>₹{round(n_risk*n_qty):,.0f}</b></span>"
-            f"<span>R:R: <b style='color:{'#1a6b2e' if n_rr>=2 else '#b8860b'};'>{n_rr}x</b></span>"
-            f"</div>", unsafe_allow_html=True)
-
-        if st.button("🧪 Start Forward Test", use_container_width=True, key="ft_add_manual"):
-            if n_cost > bal:
-                st.error(f"Insufficient balance. Need ₹{n_cost:,.0f}, have ₹{bal:,.0f}")
-            else:
-                fake_sig = {
-                    "symbol":    n_sym,
-                    "side":      n_side,
-                    "entry":     n_entry,
-                    "sl":        n_sl,
-                    "t1":        n_t1,
-                    "t2":        round(n_t1+(n_t1-n_entry)*0.5, 2),
-                    "rr1":       n_rr,
-                    "tf":        "Manual",
-                    "rationale": n_strat,
-                    "strategy":  n_strat,
-                }
-                ft_add_signal(fake_sig, source="Manual Entry")
-                st.success(f"✅ Forward test started: {n_side} {n_qty}×{n_sym} @ ₹{n_entry}")
-                st.rerun()
 
     st.divider()
 
