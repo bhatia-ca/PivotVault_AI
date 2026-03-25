@@ -3744,7 +3744,7 @@ def page_watchlist():
         )
     else:
         st.info("No watchlist stocks have active signals. Run CPR Scanner (15Min/1Hour) to generate signals.")
-        if st.button("Go to Scanner", key="wl_go_scanner"):
+        if st.button("Go to CPR Scanner", key="wl_go_scanner"):
             st.session_state["current_page"] = "Scanner & Signals"
             st.rerun()
 
@@ -4831,20 +4831,20 @@ buildCards();
 def page_scanner_signals(nse500: pd.DataFrame):
     """
     CPR Scanner + Trade Signals — merged into one page.
-    ⚡ 15m & 30m signals → Auto-execute via Forward Testing
+    ⚡ 15m & 30m → Auto-execute via Forward Testing
     🖐 1h / 1d / 1wk / 1mo → Manual execution only
     """
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
 
-    # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
     #  TAB 1 — CPR SCANNER
-    # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
     with tab_scan:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>15 Min &amp; 30 Min</b> → Auto-execute Forward Testing &nbsp;|&nbsp; "
+            "⚡ <b>15 Min &amp; 30 Min</b> → Auto Forward Testing &nbsp;|&nbsp; "
             "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required"
             "</div>",
             unsafe_allow_html=True,
@@ -5167,12 +5167,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
     5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
                 """)
                 st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
-            else:
-                pass  # data exists — fall through to render
+            pass  # empty state — stay in tab, do not exit function
 
         # ── All bullish & bearish — no strength cutoff ────────────────────────────
-        if not scan_df.empty:
-            all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
+        all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
         all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
 
         # ── Summary metrics ───────────────────────────────────────────────────────
@@ -5202,11 +5200,11 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            pass  # no bull/bear setups — show message, stay in tab
+            pass  # empty state — stay in tab, do not exit function
 
         # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
-        top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
-        top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
+        top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bull.empty else pd.DataFrame()
+        top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bear.empty else pd.DataFrame()
 
         def _cards(df, direction):
             is_bull = direction == "Bullish"
@@ -5493,15 +5491,9 @@ def page_scanner_signals(nse500: pd.DataFrame):
         </div>
         """, unsafe_allow_html=True)
 
-
-    # ═══════════════════════════════════════════════════════════════════
-    #  TRADE SIGNALS PAGE  (push notifications + live signal board)
-    # ═══════════════════════════════════════════════════════════════════
-
-    @st.cache_data(ttl=60)
-    # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
     #  TAB 2 — TRADE SIGNALS
-    # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
     with tab_sig:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
