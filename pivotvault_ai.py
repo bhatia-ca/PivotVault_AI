@@ -7,80 +7,35 @@ try:
 except ImportError:
     _HAS_AUTOREFRESH = False
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TELEGRAM NOTIFICATION HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
 def _tg_creds():
     cfg = st.session_state.get("telegram_cfg", {})
     return cfg.get("bot_token", ""), cfg.get("chat_id", "")
 
 def _send_telegram(message: str) -> bool:
-    """Send a Telegram message via Bot API. Silent on failure."""
     import requests as _req
     bot_token, chat_id = _tg_creds()
     if not bot_token or not chat_id:
         return False
     try:
-        resp = _req.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
-            timeout=5,
-        )
+        resp = _req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=5)
         return resp.status_code == 200
     except Exception:
         return False
 
-def _tg_signal_msg(s: dict, source: str = "Scanner") -> str:
-    side  = s.get("side", "BUY")
-    emoji = "🟢" if side == "BUY" else "🔴"
-    tf    = s.get("tf", "")
-    route = "⚡ AUTO → Forward Testing" if tf in ("15m","30m") else "🖐 MANUAL — action required"
-    return (
-        f"{emoji} <b>{side} {s.get('symbol','')}</b>  [{tf.upper()}]\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 Entry    : ₹{s.get('entry',0):,.2f}\n"
-        f"🎯 T1       : ₹{s.get('t1',0):,.2f}\n"
-        f"🎯 T2       : ₹{s.get('t2',0):,.2f}\n"
-        f"🛑 SL       : ₹{s.get('sl',0):,.2f}\n"
-        f"📊 R:R      : {s.get('rr1',0)}x\n"
-        f"💪 Strength : {s.get('strength',0)}%\n"
-        f"📖 Strategy : {s.get('rationale', s.get('strategy','CPR'))}\n"
-        f"🔁 Route    : {route}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>PivotVault AI · {source}</i>"
-    )
-
 def _tg_trade_msg(pos: dict, event_type: str = "ENTRY") -> str:
-    side  = pos.get("side", "BUY")
-    emoji = "🟢" if side == "BUY" else "🔴"
-    pnl   = pos.get("pnl", 0)
-    pe    = "✅" if pnl >= 0 else "❌"
+    side = pos.get("side","BUY"); emoji = "🟢" if side=="BUY" else "🔴"
+    pnl  = pos.get("pnl",0);     pe    = "✅" if pnl>=0 else "❌"
     if event_type == "ENTRY":
-        return (
-            f"⚡ <b>AUTO TRADE ENTERED</b>\n"
-            f"{emoji} <b>{side} {pos.get('symbol','')}</b>  [{pos.get('tf','')}]\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 Entry  : ₹{pos.get('entry',0):,.2f}\n"
-            f"🎯 Target : ₹{pos.get('target',0):,.2f}\n"
-            f"🛑 SL     : ₹{pos.get('sl',0):,.2f}\n"
-            f"📦 Qty    : {pos.get('qty',0)}\n"
-            f"💵 Cost   : ₹{pos.get('cost',0):,.0f}\n"
-            f"📊 R:R    : {pos.get('rr',0)}x\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>PivotVault AI · Forward Testing</i>"
-        )
-    return (
-        f"{pe} <b>TRADE CLOSED — {event_type}</b>\n"
-        f"{emoji} <b>{side} {pos.get('symbol','')}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Entry : ₹{pos.get('entry',0):,.2f}\n"
-        f"🏁 Exit  : ₹{pos.get('exit_px',0):,.2f}\n"
-        f"{pe} P&L   : ₹{pnl:,.2f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>PivotVault AI · Forward Testing</i>"
-    )
-
-_TV_CHARTS = False  # TradingView charts not integrated — use Plotly
+        return (f"⚡ <b>AUTO TRADE ENTERED</b>\n{emoji} <b>{side} {pos.get('symbol','')}</b>  [{pos.get('tf','')}]\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n💰 Entry  : ₹{pos.get('entry',0):,.2f}\n"
+                f"🎯 Target : ₹{pos.get('target',0):,.2f}\n🛑 SL     : ₹{pos.get('sl',0):,.2f}\n"
+                f"📦 Qty    : {pos.get('qty',0)}\n💵 Cost   : ₹{pos.get('cost',0):,.0f}\n"
+                f"📊 R:R    : {pos.get('rr',0)}x\n━━━━━━━━━━━━━━━━━━━━\n<i>PivotVault AI · Forward Testing</i>")
+    return (f"{pe} <b>TRADE CLOSED — {event_type}</b>\n{emoji} <b>{side} {pos.get('symbol','')}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n💰 Entry : ₹{pos.get('entry',0):,.2f}\n"
+            f"🏁 Exit  : ₹{pos.get('exit_px',0):,.2f}\n{pe} P&L   : ₹{pnl:,.2f}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n<i>PivotVault AI · Forward Testing</i>")
 
 import numpy as np
 import secrets
@@ -846,6 +801,94 @@ hr{border-color:#b8c89a !important;margin:0.75rem 0 !important;}
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ── PWA: manifest + service worker + install prompt ─────────────────────
+st.markdown("""
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiUGl2b3RWYXVsdCBBSSIsInNob3J0X25hbWUiOiJQaXZvdFZhdWx0IiwiZGVzY3JpcHRpb24iOiJDUFIgUGl2b3QgQm9zcyBUcmFkaW5nIEFwcCIsInN0YXJ0X3VybCI6Ii4iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3IiOiIjZjBmNGU4IiwidGhlbWVfY29sb3IiOiIjM2Q1YTFjIiwib3JpZW50YXRpb24iOiJhbnkiLCJpY29ucyI6W3sic3JjIjoiLi9hcHAvc3RhdGljL2ljb24tMTkyLnBuZyIsInNpemVzIjoiMTkyeDE5MiIsInR5cGUiOiJpbWFnZS9wbmcifSx7InNyYyI6Ii4vYXBwL3N0YXRpYy9pY29uLTUxMi5wbmciLCJzaXplcyI6IjUxMng1MTIiLCJ0eXBlIjoiaW1hZ2UvcG5nIn1dfQ==">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PivotVault AI">
+<meta name="theme-color" content="#3d5a1c">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="apple-touch-icon" href="./app/static/icon-192.png">
+<script>
+(function registerSW() {
+    if (!('serviceWorker' in navigator)) return;
+    var SW_SRC = `
+self.addEventListener('install',e=>{self.skipWaiting();});
+self.addEventListener('activate',e=>{e.waitUntil(clients.claim());});
+self.addEventListener('fetch',e=>{
+    if(e.request.method!=='GET')return;
+    e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
+});
+self.addEventListener('push',e=>{
+    var d=e.data?e.data.json():{};
+    e.waitUntil(self.registration.showNotification(d.title||'PivotVault AI',{
+        body:d.body||'',icon:d.icon||'/app/static/icon-192.png',tag:d.tag||'pv',requireInteraction:false
+    }));
+});
+`;
+    var blob = new Blob([SW_SRC],{type:'application/javascript'});
+    var swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl,{scope:'/'}).then(function(reg){
+        window.pvSWReg = reg;
+        // Store reg globally for push notification use
+        window.pvNotify = function(title, body, tag) {
+            if(reg.active) {
+                reg.active.postMessage({type:'NOTIFY',title:title,body:body,tag:tag});
+            } else if(Notification.permission==='granted') {
+                new Notification(title,{body:body,icon:'/app/static/icon-192.png',tag:tag});
+            }
+        };
+    }).catch(function(){});
+})();
+
+// ── Install prompt banner ────────────────────────────────────────────────────
+(function installPrompt() {
+    var deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        var bar = document.getElementById('pv-install-bar');
+        if (bar) bar.style.display = 'flex';
+    });
+    window.pvInstallApp = function() {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(function(r) {
+            deferredPrompt = null;
+            var bar = document.getElementById('pv-install-bar');
+            if (bar) bar.style.display = 'none';
+        });
+    };
+    // Hide bar if already installed (standalone mode)
+    if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+        setTimeout(function() {
+            var bar = document.getElementById('pv-install-bar');
+            if (bar) bar.style.display = 'none';
+        }, 500);
+    }
+})();
+</script>
+
+<!-- Install prompt bar -->
+<div id="pv-install-bar" style="display:none;align-items:center;gap:12px;
+    background:linear-gradient(90deg,#1a2e0a,#3d6b1a);
+    color:#f0f8e8;padding:10px 16px;border-radius:10px;margin-bottom:8px;
+    font-family:DM Sans,sans-serif;font-size:0.82rem;font-weight:600;
+    box-shadow:0 3px 12px rgba(30,60,10,0.25);">
+    <span style="font-size:1.3rem;">📲</span>
+    <span style="flex:1;">Install <b>PivotVault AI</b> on your phone for instant access!</span>
+    <button onclick="pvInstallApp()" style="background:#5a9a28;color:#fff;border:none;
+        border-radius:6px;padding:6px 14px;font-size:0.8rem;font-weight:700;cursor:pointer;">
+        ➕ Install App
+    </button>
+    <button onclick="document.getElementById('pv-install-bar').style.display='none'"
+        style="background:transparent;color:#b8d89a;border:none;font-size:1.1rem;cursor:pointer;">✕</button>
+</div>
+""", unsafe_allow_html=True)
+
 
 # ── Global notification bootstrap (injected once per page load) ───────────
 # Must use window.parent to escape Streamlit's iframe sandbox
@@ -4905,21 +4948,16 @@ buildCards();
 
 
 def page_scanner_signals(nse500: pd.DataFrame):
-    """
-    CPR Scanner + Trade Signals — merged.
-    ⚡ 15m/30m → Auto Forward Testing | 🖐 1h+ → Manual
-    """
+    """CPR Scanner + Trade Signals merged."""
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
-
     with tab_scan:
-        st.markdown(
-            "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
             "⚡ <b>15 Min &amp; 30 Min</b> → Auto Forward Testing &nbsp;|&nbsp; "
-            "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required"
-            "</div>", unsafe_allow_html=True)
+            "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required</div>",
+            unsafe_allow_html=True)
 
         TF_CONFIG = {
             "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
@@ -5085,14 +5123,13 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         )
                     else:
                         st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
-                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals", True):
-                            _tg_rows = result.head(3)
-                            _tg_lines = [f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
-                            for _, _r in _tg_rows.iterrows():
-                                _se = "🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
-                                _tg_lines.append(f"{_se} <b>{_r.get('Symbol','')}</b> · Entry ₹{_r.get('Entry',0):,.2f} · T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · Str {_r.get('Strength%',0):.0f}%")
-                            _tg_lines.append("<i>PivotVault AI · CPR Scanner</i>")
-                            _send_telegram("\n".join(_tg_lines))
+                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
+                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
+                            for _,_r in result.head(3).iterrows():
+                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
+                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
+                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
+                            _send_telegram("\n".join(_tl))
                 except Exception as e:
                     st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
                     result = pd.DataFrame()
@@ -5571,13 +5608,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
         """, unsafe_allow_html=True)
 
     with tab_sig:
-        st.markdown(
-            "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
             "⚡ <b>AUTO</b> (15m/30m) = Forward Test auto-executes &nbsp;|&nbsp; "
-            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button"
-            "</div>", unsafe_allow_html=True)
+            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button</div>",
+            unsafe_allow_html=True)
         import json
 
         # ── Header ────────────────────────────────────────────────────────────
@@ -6922,98 +6958,47 @@ def page_broker_settings():
 
     # ── Status summary ────────────────────────────────────────────────────
 
-    # ══════════════════════════════════════════════════════════════
-    #  TELEGRAM NOTIFICATIONS TAB
-    # ══════════════════════════════════════════════════════════════
     with tab_telegram:
         st.markdown("### 📨 Telegram Notifications")
-        st.markdown(
-            "<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-            "color:#2e3d1a;margin-bottom:1rem;'>"
-            "Get instant alerts on Telegram for: "
-            "⚡ New scanner signals (15m/30m) &nbsp;·&nbsp; "
-            "🟢 Auto-trade entered &nbsp;·&nbsp; "
-            "🎯 T1/T2 hit &nbsp;·&nbsp; "
-            "🛑 SL hit</div>",
-            unsafe_allow_html=True,
-        )
-        _tg_saved = st.session_state.get("telegram_cfg", {})
-
-        with st.expander("📖 Setup Instructions", expanded=not _tg_saved.get("bot_token")):
+        st.markdown("<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
+            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#2e3d1a;margin-bottom:1rem;'>"
+            "Instant alerts: ⚡ New signals &nbsp;·&nbsp; 🟢 Trade entry &nbsp;·&nbsp; 🎯 T1/T2 hit &nbsp;·&nbsp; 🛑 SL hit</div>",
+            unsafe_allow_html=True)
+        _tgs = st.session_state.get("telegram_cfg", {})
+        with st.expander("📖 Setup Instructions", expanded=not _tgs.get("bot_token")):
             st.markdown("""
-**Step 1 — Create a bot:**
-Open Telegram → search **@BotFather** → send `/newbot` → follow prompts → copy the **Bot Token**
-
-**Step 2 — Get your Chat ID:**
-- Send any message to your new bot
-- Open: `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
-- Find `"chat":{"id": 123456789}` — that number is your **Chat ID**
-
-**Step 3 — Paste below and Save ✅**
-            """)
-
+**Step 1** — Open Telegram → search **@BotFather** → `/newbot` → copy **Bot Token**
+**Step 2** — Send any message to your bot → open `https://api.telegram.org/bot<TOKEN>/getUpdates` → find your **Chat ID**
+**Step 3** — Paste below → Save → Test ✅""")
         st.divider()
-        _c1, _c2 = st.columns(2)
-        with _c1:
-            _bot_token = st.text_input("🤖 Bot Token", value=_tg_saved.get("bot_token",""),
-                type="password", placeholder="123456789:ABCdefGHI...", key="tg_bot_token")
-        with _c2:
-            _chat_id = st.text_input("💬 Chat ID", value=_tg_saved.get("chat_id",""),
-                placeholder="123456789 or -100123456789", key="tg_chat_id")
-
+        _c1,_c2 = st.columns(2)
+        with _c1: _bt=st.text_input("🤖 Bot Token",value=_tgs.get("bot_token",""),type="password",placeholder="123456789:ABCdef...",key="tg_bt")
+        with _c2: _ci=st.text_input("💬 Chat ID",value=_tgs.get("chat_id",""),placeholder="123456789",key="tg_ci")
         st.markdown("#### 🔔 Notification Toggles")
-        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
-        with _tc1: _n_sig = st.checkbox("📡 New Signals",      value=_tg_saved.get("notify_signals", True), key="tg_nsig")
-        with _tc2: _n_ent = st.checkbox("⚡ Trade Entry",       value=_tg_saved.get("notify_entry",   True), key="tg_nent")
-        with _tc3: _n_t1  = st.checkbox("🎯 T1 / T2 Hit",      value=_tg_saved.get("notify_t1",      True), key="tg_nt1")
-        with _tc4: _n_sl  = st.checkbox("🛑 SL / Trailing SL", value=_tg_saved.get("notify_sl",      True), key="tg_nsl")
-
+        _tc1,_tc2,_tc3,_tc4=st.columns(4)
+        with _tc1: _ns=st.checkbox("📡 New Signals",value=_tgs.get("notify_signals",True),key="tg_ns")
+        with _tc2: _ne=st.checkbox("⚡ Trade Entry",value=_tgs.get("notify_entry",True),key="tg_ne")
+        with _tc3: _nt=st.checkbox("🎯 T1/T2 Hit",value=_tgs.get("notify_t1",True),key="tg_nt")
+        with _tc4: _nl=st.checkbox("🛑 SL Hit",value=_tgs.get("notify_sl",True),key="tg_nl")
         st.markdown("")
-        _b1, _b2, _b3 = st.columns([2, 2, 1])
+        _b1,_b2,_b3=st.columns([2,2,1])
         with _b1:
-            if st.button("💾 Save Telegram Settings", use_container_width=True, key="tg_save"):
-                st.session_state["telegram_cfg"] = {
-                    "bot_token": _bot_token.strip(), "chat_id": _chat_id.strip(),
-                    "notify_signals": _n_sig, "notify_entry": _n_ent,
-                    "notify_t1": _n_t1, "notify_t2": _n_t1, "notify_sl": _n_sl,
-                }
+            if st.button("💾 Save Settings",use_container_width=True,key="tg_save"):
+                st.session_state["telegram_cfg"]={"bot_token":_bt.strip(),"chat_id":_ci.strip(),
+                    "notify_signals":_ns,"notify_entry":_ne,"notify_t1":_nt,"notify_t2":_nt,"notify_sl":_nl}
                 st.success("✅ Telegram settings saved!")
         with _b2:
-            if st.button("🧪 Send Test Message", use_container_width=True, key="tg_test"):
-                _ok = _send_telegram(
-                    "🧪 <b>PivotVault AI — Test Notification</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "🟢 <b>BUY RELIANCE</b>  [15m]\n"
-                    "📌 Entry   : ₹2,850.00\n"
-                    "🎯 T1      : ₹2,920.00\n"
-                    "🛑 SL      : ₹2,800.00\n"
-                    "📊 R:R     : 2.4x\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "<i>Telegram is working! ✅</i>"
-                )
-                if _ok:
-                    st.success("✅ Test sent! Check your Telegram.")
-                else:
-                    st.error("❌ Failed — save Bot Token & Chat ID first, then test.")
+            if st.button("🧪 Send Test Message",use_container_width=True,key="tg_test"):
+                _ok=_send_telegram("🧪 <b>PivotVault AI — Test</b>\n━━━━━━━━━━━━━━━━━━━━\n🟢 <b>BUY RELIANCE</b> [15m]\n📌 Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800\n✅ Telegram is working!")
+                st.success("✅ Sent! Check Telegram.") if _ok else st.error("❌ Failed — save credentials first.")
         with _b3:
-            if st.button("🗑 Clear", use_container_width=True, key="tg_clear"):
-                st.session_state["telegram_cfg"] = {}
-                st.rerun()
-
+            if st.button("🗑 Clear",use_container_width=True,key="tg_clr"):
+                st.session_state["telegram_cfg"]={};st.rerun()
         st.divider()
-        if _tg_saved.get("bot_token") and _tg_saved.get("chat_id"):
-            st.markdown(
-                "<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>"
-                "📨 <b>Telegram ACTIVE</b> — notifications enabled.</div>",
-                unsafe_allow_html=True)
+        if _tgs.get("bot_token") and _tgs.get("chat_id"):
+            st.markdown("<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>📨 <b>Telegram ACTIVE</b></div>",unsafe_allow_html=True)
         else:
-            st.markdown(
-                "<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#7a5800;'>"
-                "⚪ <b>Telegram not configured</b> — add Bot Token &amp; Chat ID above.</div>",
-                unsafe_allow_html=True)
+            st.markdown("<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#7a5800;'>⚪ <b>Telegram not configured</b> — add credentials above.</div>",unsafe_allow_html=True)
 
     st.divider()
     connected = st.session_state.get("broker_connected", False)
@@ -7195,8 +7180,8 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "note":     f"First live tick entry @ ₹{ltp}",
     })
     _ft_flush()
-    if st.session_state.get("telegram_cfg", {}).get("notify_entry", True):
-        _send_telegram(_tg_trade_msg(pos, "ENTRY"))
+    if st.session_state.get("telegram_cfg",{}).get("notify_entry",True):
+        _send_telegram(_tg_trade_msg(pos,"ENTRY"))
 
 # ── Trigger checker ───────────────────────────────────────────────────────
 
@@ -7458,18 +7443,14 @@ def _ft_run_triggers() -> list:
 
     if fired:
         _ft_flush()
-        _tg = st.session_state.get("telegram_cfg", {})
+        _tg=st.session_state.get("telegram_cfg",{})
         for _ev in fired:
-            _hit = _ev.get("hit",""); _sym = _ev.get("symbol",""); _pnl = _ev.get("pnl",0)
-            _pe = "✅" if _pnl >= 0 else "❌"; _st = _ev.get("strategy",""); _nt = _ev.get("note","")
-            if "T2 HIT" in _hit and _tg.get("notify_t2", True):
-                _send_telegram(f"🎯🎯 <b>T2 HIT — FULL EXIT — {_sym}</b>\nTotal P&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
-            elif "T1 HIT" in _hit and _tg.get("notify_t1", True):
-                _send_telegram(f"🎯 <b>T1 HIT — {_sym}</b>\nP&L: {_pe} ₹{_pnl:,.2f} · SL moved to entry\n<i>{_st}</i>")
-            elif "TRAILING" in _hit and _tg.get("notify_sl", True):
-                _send_telegram(f"🔒 <b>TRAILING SL — {_sym}</b>\nTotal P&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
-            elif "SL HIT" in _hit and _tg.get("notify_sl", True):
-                _send_telegram(f"🛑 <b>SL HIT — {_sym}</b>\nP&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
+            _h=_ev.get("hit","");_s=_ev.get("symbol","");_p=_ev.get("pnl",0)
+            _pe="✅" if _p>=0 else "❌";_st=_ev.get("strategy","");_nt=_ev.get("note","")
+            if "T2 HIT" in _h and _tg.get("notify_t2",True): _send_telegram(f"🎯🎯 <b>T2 HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "T1 HIT" in _h and _tg.get("notify_t1",True): _send_telegram(f"🎯 <b>T1 HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "TRAILING" in _h and _tg.get("notify_sl",True): _send_telegram(f"🔒 <b>TRAILING SL — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "SL HIT" in _h and _tg.get("notify_sl",True): _send_telegram(f"🛑 <b>SL HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
     return fired
 
 
