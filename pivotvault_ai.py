@@ -6,7 +6,6 @@ try:
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
-_TV_CHARTS = False   # Set True only if TradingView charts library is integrated
 import numpy as np
 import secrets
 import re
@@ -1071,9 +1070,9 @@ def fetch_nse500_list() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def fetch_nifty100_list() -> list:
-    """Fetch Nifty 100 symbols from NSE. Falls back to hardcoded top-100 subset."""
-    url = "https://archives.nseindia.com/content/indices/ind_nifty100list.csv"
+def fetch_nifty200_list() -> list:
+    """Fetch Nifty 200 symbols from NSE. Falls back to hardcoded top-200 subset."""
+    url = "https://archives.nseindia.com/content/indices/ind_nifty200list.csv"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -1082,6 +1081,7 @@ def fetch_nifty100_list() -> list:
         df.columns = df.columns.str.strip()
         return df["Symbol"].dropna().tolist()
     except Exception:
+        # Hardcoded Nifty 200 fallback (top liquid stocks)
         return [
             "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
             "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
@@ -1089,26 +1089,36 @@ def fetch_nifty100_list() -> list:
             "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
             "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
             "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS",
-            "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","TORNTPHARM",
+            "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM",
             "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE",
-            "SHREECEM","AMBUJACEM","VEDL","IOCL","HINDPETRO",
+            "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHL",
             "TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
-            "NAUKRI","ZOMATO","DMART","IRCTC","CHOLAFIN","RECLTD","PFC","BANKBARODA",
-            "CANBK","PNB","FEDERALBNK","IDFCFIRSTB","INDHOTEL","JUBLFOOD","VOLTAS",
-            "MOTHERSON","BALKRISIND","CONCOR","MANAPPURAM","BANDHANBNK",
-            "ZYDUSLIFE","ALKEM","AUROPHARBA","GLENMARK","LALPATHLAB","FORTIS",
-            "ABB","BEL","HAL","LICHSGFIN","HDFCAMC","NIPPONLIFE","ICICIGI",
-            "TATACOMM","LTTS","MPHASIS","COFORGE","PERSISTENT","TATAELXSI","OFSS",
+            "NAUKRI","ZOMATO","PAYTM","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
+            "CHOLAFIN","MANAPPURAM","RECLTD","PFC","CANBK","BANKBARODA","PNB","FEDERALBNK",
+            "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","DOMINOS","VOLTAS",
+            "WHIRLPOOL","BLUEDART","DELHIVERY","ZYDUSLIFE","ALKEM","AUROPHARMA","CADILAHC",
+            "GLENMARK","IPCA","LALPATHLAB","METROPOLIS","THYROCARE","FORTIS","MAXHEALTH",
+            "NARAYANA","AARTIIND","DEEPAKNI","SRF","PIDILITIND","AIAENG","CUMMINSIND",
+            "THERMAX","ABB","BHEL","BEL","HAL","BEML","MFSL","LICHSGFIN","HDFCAMC","NIPPONLIFE",
+            "UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH","PGHH","EMAMILTD",
+            "JYOTHYLAB","VSTIND","RADICO","UNITDSPR","TATACOMM","LTTS","MPHASIS","COFORGE",
+            "PERSISTENT","ZENSARTECH","HEXAWARE","KPITTECH","TATAELXSI","INFY","OFSS",
+            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","SRTRANSFIN",
+            "SUNDARMFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
+            "CROMPTON","ORIENTELEC","POLYCAB","FINOLEX","KEI","STERLITE","KPIL","NCC","AHLUCONT",
+            "PNCINFRA","IRB","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
+            "MUNDRAPORT","RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
+            "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
         ]
 
 @st.cache_data(ttl=3600)
-def fetch_nifty100_by_marketcap() -> list:
+def fetch_nifty200_by_marketcap() -> list:
     """
-    Returns Nifty 100 symbols sorted by market cap (highest first).
+    Returns Nifty 200 symbols sorted by market cap (highest first).
     Fetches market cap from yfinance info in batches.
     Falls back to a pre-ranked hardcoded list if fetch fails.
     """
-    # Pre-ranked Nifty 100 by approximate market cap (as of 2025)
+    # Pre-ranked Nifty 200 by approximate market cap (as of 2025)
     RANKED = [
         "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFY","SBIN","LICI",
         "HINDUNILVR","ITC","LT","BAJFINANCE","HCLTECH","KOTAKBANK","MARUTI","SUNPHARMA",
@@ -1140,9 +1150,9 @@ def fetch_nifty100_by_marketcap() -> list:
 
     # Use pre-ranked list (avoids slow yfinance calls on every load)
     try:
-        n200_set = set(fetch_nifty100_list())
+        n200_set = set(fetch_nifty200_list())
         ranked = [s for s in RANKED if s in n200_set]
-        extras = [s for s in fetch_nifty100_list() if s not in set(RANKED)]
+        extras = [s for s in fetch_nifty200_list() if s not in set(RANKED)]
         return ranked + sorted(extras)
     except Exception:
         return RANKED
@@ -2246,7 +2256,7 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
 
 
 @st.cache_data(ttl=180)
-def fetch_heatmap_performance(symbols: list, max_stocks: int = 100) -> pd.DataFrame:
+def fetch_heatmap_performance(symbols: list, max_stocks: int = 120) -> pd.DataFrame:
     """
     Batch-fetch 1-day % change for up to `max_stocks` NSE symbols using
     yfinance download (single request = much faster than per-ticker calls).
@@ -2438,8 +2448,10 @@ def page_login():
     _, col, _ = st.columns([1, 2, 1])
     with col:
 
-        # ── Sign In ─────────────────────────────────────────────────────────
-        if True:
+        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Accounts"])
+
+        # ── Sign In ───────────────────────────────────────────────
+        with tab_login:
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
             method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
@@ -2511,6 +2523,39 @@ def page_login():
                             st.rerun()
 
         # ── Accounts tab ──────────────────────────────────────────
+        with tab_accounts:
+            st.markdown(
+                "<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
+                "color:#5a6a48;margin:0.5rem 0 1rem;'>"
+                "Use any of these accounts to sign in:</div>",
+                unsafe_allow_html=True,
+            )
+            for email, u in USERS.items():
+                if st.button(
+                    f"👤 {u['name']}",
+                    key=f"quick_{email}",
+                    use_container_width=True,
+                ):
+                    st.session_state.update({
+                        "logged_in": True,
+                        "username":  u["name"],
+                        "user_id":   email,
+                        "user_email": email,
+                        "user_phone": u["phone"],
+                    })
+                    st.rerun()
+                st.markdown(
+                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                    f"color:#5a6a48;margin:-0.4rem 0 0.5rem;padding:0.5rem 0.75rem;"
+                    f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:6px;'>"
+                    f"📧 {email}  &nbsp;&nbsp;"
+                    f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
+                    f"padding:1px 7px;font-weight:700;'>PIN: {u['pin']}</span>"
+                    f"&nbsp;&nbsp; 📱 {u['phone']}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
@@ -3218,7 +3263,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
 
 def page_pivot_boss(nse500: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
-    _n200 = fetch_nifty100_list()
+    _n200 = fetch_nifty200_list()
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
@@ -3601,15 +3646,15 @@ def page_watchlist():
     </div>
     """, unsafe_allow_html=True)
 
-    nifty100 = sorted(fetch_nifty100_list())
+    nifty200 = sorted(fetch_nifty200_list())
     wl       = st.session_state.get("watchlist", [])
 
     # ── Always-visible stock selector ────────────────────────────────────
-    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 100</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 200</div>", unsafe_allow_html=True)
     selected = st.multiselect(
         "wl_stocks",
-        options=nifty100,
-        default=[s for s in wl if s in nifty100],
+        options=nifty200,
+        default=[s for s in wl if s in nifty200],
         placeholder="Search — RELIANCE, TCS, INFY…",
         label_visibility="collapsed",
         key="wl_multiselect",
@@ -4785,20 +4830,25 @@ buildCards();
 
 def page_scanner_signals(nse500: pd.DataFrame):
     """
-    CPR Scanner + Trade Signals — merged.
-    ⚡ 15m/30m → Auto Forward Testing
-    🖐 1h/1d/1wk/1mo → Manual execution
+    CPR Scanner + Trade Signals — merged into one page.
+    ⚡ 15m & 30m signals → Auto-execute via Forward Testing
+    🖐 1h / 1d / 1wk / 1mo → Manual execution only
     """
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
 
+    # ─────────────────────────────────────────────────────────
+    #  TAB 1 — CPR SCANNER
+    # ─────────────────────────────────────────────────────────
     with tab_scan:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
-            "margin-bottom:0.5rem;padding:0.4rem 0.9rem;background:#f0f4e8;"
+            "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>15 Min & 30 Min</b> → Auto-execute Forward Testing &nbsp;|&nbsp; "
+            "⚡ <b>15 Min &amp; 30 Min</b> → Auto-execute Forward Testing &nbsp;|&nbsp; "
             "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required"
-            "</div>", unsafe_allow_html=True)
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         TF_CONFIG = {
             "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
@@ -4820,7 +4870,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                             font-weight:700;color:#1a1f0e;">CPR Scanner</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                             color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
-                    Nifty 100 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+                    Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
                 </div>
             </div>
             <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
@@ -4952,7 +5002,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
                 try:
                     result = scan_cpr_multi_tf(
-                        fetch_nifty100_list(),
+                        fetch_nifty200_list(),
                         interval=cfg["interval"],
                         period=cfg["period"],
                         max_stocks=n_stocks,
@@ -4971,7 +5021,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             st.session_state[scan_time_key] = now
 
             # ── Auto-feed signals into Forward Testing ───────────────────────
-            if not result.empty and tf_tag in ("15m","30m"):  # AUTO FT: 15m + 30m only
+            if not result.empty and tf_tag in ("15m","30m","1h"):
                 for _, row in result.iterrows():
                     sig = {
                         "symbol":    row.get("Symbol",""),
@@ -4987,14 +5037,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         "strength":  row.get("Strength%",0),
                         "candle":    row.get("Candle","—"),
                     }
-                    _entry  = sig.get("entry", 0)
-                    _sl     = sig.get("sl", 0)
-                    _t1     = sig.get("t1", 0)
-                    _sl_pct = abs(_entry - _sl) / _entry * 100 if _entry and _sl else 0
-                    _t1_pct = abs(_t1 - _entry) / _entry * 100 if _entry and _t1 else 0
-                    if (sig["symbol"] and _entry
-                            and _sl_pct >= 0.5    # SL at least 0.5% from entry
-                            and _t1_pct >= 1.0):  # T1 at least 1.0% from entry
+                    if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
                         ft_add_signal(sig, source=f"Auto · {tf_tag.upper()}")
             last_scan = now
 
@@ -5124,10 +5167,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
     5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
                 """)
                 st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
-            return
+            else:
+                pass  # data exists — fall through to render
 
         # ── All bullish & bearish — no strength cutoff ────────────────────────────
-        all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
+        if not scan_df.empty:
+            all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
         all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
 
         # ── Summary metrics ───────────────────────────────────────────────────────
@@ -5157,7 +5202,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            return
+            pass  # no bull/bear setups — show message, stay in tab
 
         # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
         top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
@@ -5444,7 +5489,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
         📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
         📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
-        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 100 only
+        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
         </div>
         """, unsafe_allow_html=True)
 
@@ -5454,270 +5499,19 @@ def page_scanner_signals(nse500: pd.DataFrame):
     # ═══════════════════════════════════════════════════════════════════
 
     @st.cache_data(ttl=60)
-    def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = "90d") -> dict:
-        """
-        Compute all trading signals for a symbol on a given timeframe.
-        Returns a rich signal dict with entry, targets, SL and confidence.
-        """
-        try:
-            df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
-            if df.empty or len(df) < 20:
-                return {}
-            try:
-                if df.index.tz is not None:
-                    df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
-                else:
-                    df.index = df.index.tz_localize(None)
-            except Exception:
-                pass
-
-            close = df["Close"]
-            high  = df["High"]
-            low   = df["Low"]
-            ltp   = float(close.iloc[-1])
-
-            # ── Pivot Points (Traditional) ────────────────────────────────────────
-            ref  = df.iloc[-2]
-            H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
-            P  = (H + L + C) / 3
-            R1 = 2 * P - L
-            R2 = P + (H - L)
-            R3 = H + 2 * (P - L)
-            S1 = 2 * P - H
-            S2 = P - (H - L)
-            S3 = L - 2 * (H - P)
-
-            # ── CPR ───────────────────────────────────────────────────────────────
-            BC = (H + L) / 2
-            TC = (P - BC) + P
-            cpr_width = abs(TC - BC) / P * 100
-
-            # ── ATR-14 ────────────────────────────────────────────────────────────
-            tr  = pd.concat([
-                high - low,
-                (high - close.shift()).abs(),
-                (low  - close.shift()).abs(),
-            ], axis=1).max(axis=1)
-            atr = float(tr.rolling(14).mean().iloc[-1])
-
-            # ── RSI-14 ────────────────────────────────────────────────────────────
-            delta = close.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float(100 - (100 / (1 + gain.iloc[-1] / max(loss.iloc[-1], 1e-9))))
-
-            # ── HMA ───────────────────────────────────────────────────────────────
-            def wma(s, n):
-                w = np.arange(1, n + 1)
-                return s.rolling(n).apply(lambda x: np.dot(x, w) / w.sum(), raw=True)
-            hma    = wma(2 * wma(close, 10) - wma(close, 20), 4)
-            hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
-
-            # ── 3/10 Osc ─────────────────────────────────────────────────────────
-            diff  = close.rolling(3).mean() - close.rolling(10).mean()
-            sig16 = diff.rolling(16).mean()
-            osc_bull = bool(diff.iloc[-1] > sig16.iloc[-1])
-            osc_cross_bull = bool(diff.iloc[-1] > sig16.iloc[-1] and diff.iloc[-2] <= sig16.iloc[-2])
-            osc_cross_bear = bool(diff.iloc[-1] < sig16.iloc[-1] and diff.iloc[-2] >= sig16.iloc[-2])
-
-            # ── Stochastic ────────────────────────────────────────────────────────
-            lo14 = low.rolling(14).min()
-            hi14 = high.rolling(14).max()
-            stk  = float(100 * (close.iloc[-1] - lo14.iloc[-1]) / max(hi14.iloc[-1] - lo14.iloc[-1], 1e-9))
-
-            # ── Signal logic ─────────────────────────────────────────────────────
-            score = 0
-            signals = []
-
-            # CPR position (strongest signal)
-            if ltp > TC:
-                score += 25
-                signals.append(("🟢", "Price above TC (CPR Bullish)", "bull"))
-            elif ltp < BC:
-                score -= 25
-                signals.append(("🔴", "Price below BC (CPR Bearish)", "bear"))
-            else:
-                signals.append(("🟡", "Price inside CPR (Indecision)", "neut"))
-
-            # Narrow CPR
-            if cpr_width < 0.25:
-                signals.append(("🎯", f"Narrow CPR ({cpr_width:.3f}%) — Trending Day Setup", "bull" if ltp > P else "bear"))
-
-            # HMA
-            if hma_up is True:
-                score += 15
-                signals.append(("📈", "HMA-20 Rising (Uptrend)", "bull"))
-            elif hma_up is False:
-                score -= 15
-                signals.append(("📉", "HMA-20 Falling (Downtrend)", "bear"))
-
-            # 3/10 Crossover (strongest momentum signal)
-            if osc_cross_bull:
-                score += 25
-                signals.append(("⚡", "3/10 Bullish Crossover (Fresh Signal!)", "bull"))
-            elif osc_cross_bear:
-                score -= 25
-                signals.append(("⚡", "3/10 Bearish Crossover (Fresh Signal!)", "bear"))
-            elif osc_bull:
-                score += 10
-                signals.append(("📊", "3/10 Oscillator Positive", "bull"))
-            else:
-                score -= 10
-                signals.append(("📊", "3/10 Oscillator Negative", "bear"))
-
-            # RSI
-            if rsi >= 70:
-                score -= 10
-                signals.append(("⚠️", f"RSI {rsi:.0f} — Overbought (caution)", "bear"))
-            elif rsi <= 30:
-                score += 10
-                signals.append(("⚠️", f"RSI {rsi:.0f} — Oversold (watch for bounce)", "bull"))
-            elif rsi >= 55:
-                score += 10
-                signals.append(("✅", f"RSI {rsi:.0f} — Bullish Zone", "bull"))
-            elif rsi <= 45:
-                score -= 10
-                signals.append(("❌", f"RSI {rsi:.0f} — Bearish Zone", "bear"))
-
-            # Stochastic
-            if stk >= 80:
-                signals.append(("📛", f"Stoch %K {stk:.0f} — Overbought", "bear"))
-            elif stk <= 20:
-                signals.append(("💡", f"Stoch %K {stk:.0f} — Oversold Reversal Zone", "bull"))
-
-            # Pivot proximity
-            for label, val in [("R3",R3),("R2",R2),("R1",R1),("P",P),("S1",S1),("S2",S2),("S3",S3)]:
-                if abs(ltp - val) / ltp < 0.004:
-                    signals.append(("📍", f"Price at {label} ({val:,.2f}) — Key Level", "neut"))
-
-            # Overall bias
-            if   score >= 40:  bias, bias_col = "STRONG BUY",  "bull"
-            elif score >= 15:  bias, bias_col = "BUY",          "bull"
-            elif score <= -40: bias, bias_col = "STRONG SELL", "bear"
-            elif score <= -15: bias, bias_col = "SELL",         "bear"
-            else:              bias, bias_col = "NEUTRAL",      "neut"
-
-            confidence = min(abs(score), 75)
-
-            # Trade levels
-            if bias_col == "bull":
-                entry  = round(ltp, 2)
-                tgt1   = round(R1, 2)
-                tgt2   = round(R2, 2)
-                sl     = round(max(S1, ltp - atr * 1.2), 2)
-                rr     = round((tgt1 - entry) / max(entry - sl, 0.01), 2)
-            else:
-                entry  = round(ltp, 2)
-                tgt1   = round(S1, 2)
-                tgt2   = round(S2, 2)
-                sl     = round(min(R1, ltp + atr * 1.2), 2)
-                rr     = round((entry - tgt1) / max(sl - entry, 0.01), 2)
-
-            return {
-                "symbol": symbol, "ltp": ltp, "bias": bias, "bias_col": bias_col,
-                "score": score, "confidence": confidence,
-                "signals": signals,
-                "P": round(P,2), "R1": round(R1,2), "R2": round(R2,2), "R3": round(R3,2),
-                "S1": round(S1,2), "S2": round(S2,2), "S3": round(S3,2),
-                "TC": round(TC,2), "BC": round(BC,2), "cpr_width": round(cpr_width,3),
-                "rsi": round(rsi,1), "atr": round(atr,2), "stoch_k": round(stk,1),
-                "hma_up": hma_up,
-                "entry": entry, "tgt1": tgt1, "tgt2": tgt2, "sl": sl, "rr": rr,
-            }
-        except Exception:
-            return {}
-
-
-    def _signal_card(sig: dict) -> str:
-        """Render a single signal card as HTML."""
-        col_map = {
-            "bull": ("#16a34a", "#edf7ee", "#b8dfc0"),
-            "bear": ("#dc2626", "#fdf0ee", "#f0c0b8"),
-            "neut": ("#d97706", "#fdf9ec", "#fde68a"),
-        }
-        fc, bg, bdr = col_map.get(sig["bias_col"], col_map["neut"])
-        bias_labels = {
-            "STRONG BUY": "🚀 STRONG BUY", "BUY": "✅ BUY",
-            "STRONG SELL": "🔻 STRONG SELL", "SELL": "❌ SELL",
-            "NEUTRAL": "⚪ NEUTRAL"
-        }
-        bias_label = bias_labels.get(sig["bias"], sig["bias"])
-
-        sig_rows = ""
-        for icon, text, kind in sig["signals"][:6]:
-            c = col_map.get(kind, col_map["neut"])[0]
-            sig_rows += (
-                f"<div style='display:flex;align-items:flex-start;gap:6px;padding:3px 0;"
-                f"border-bottom:1px solid #f1f5f9;font-size:0.72rem;'>"
-                f"<span>{icon}</span>"
-                f"<span style='color:#1a1f0e;'>{text}</span></div>"
-            )
-
-        return f"""
-    <div style="background:#ffffff;border:1px solid {bdr};border-top:4px solid {fc};
-                border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem;
-                box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-        <div>
-          <div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a1f0e;">
-            {sig['symbol']}
-          </div>
-          <div style="font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;">
-            ₹{sig['ltp']:,.2f} &nbsp;·&nbsp; ATR ₹{sig['atr']:,.2f}
-          </div>
-        </div>
-        <div style="text-align:right;">
-          <div style="background:{bg};border:1px solid {bdr};border-radius:6px;
-                      padding:0.3rem 0.7rem;font-family:IBM Plex Mono,monospace;
-                      font-size:0.78rem;font-weight:700;color:{fc};">{bias_label}</div>
-          <div style="font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;margin-top:3px;">
-            Confidence: {sig['confidence']}%
-          </div>
-        </div>
-      </div>
-      {sig_rows}
-      <div style="display:flex;gap:1rem;margin-top:0.6rem;padding-top:0.5rem;
-                  border-top:1px solid #f1f5f9;flex-wrap:wrap;">
-        <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-          <span style="color:#5a6a48;">Entry</span>
-          <span style="color:#1a1f0e;font-weight:700;"> ₹{sig['entry']:,.2f}</span>
-        </div>
-        <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-          <span style="color:#5a6a48;">T1</span>
-          <span style="color:{fc};font-weight:700;"> ₹{sig['tgt1']:,.2f}</span>
-        </div>
-        <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-          <span style="color:#5a6a48;">T2</span>
-          <span style="color:{fc};font-weight:700;"> ₹{sig['tgt2']:,.2f}</span>
-        </div>
-        <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-          <span style="color:#5a6a48;">SL</span>
-          <span style="color:#c0392b;font-weight:700;"> ₹{sig['sl']:,.2f}</span>
-        </div>
-        <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-          <span style="color:#5a6a48;">R:R</span>
-          <span style="color:#1a1f0e;font-weight:700;"> {sig['rr']}x</span>
-        </div>
-      </div>
-      <div style="margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:0.68rem;
-                  color:#8a9ab0;display:flex;flex-wrap:wrap;gap:0.5rem;">
-        <span>P:{sig['P']:,.0f}</span>
-        <span style="color:#c0392b;">R1:{sig['R1']:,.0f} R2:{sig['R2']:,.0f}</span>
-        <span style="color:#2d7a3a;">S1:{sig['S1']:,.0f} S2:{sig['S2']:,.0f}</span>
-        <span>RSI:{sig['rsi']}</span>
-        <span>CPR:{sig['cpr_width']}%</span>
-      </div>
-    </div>"""
-
-
+    # ─────────────────────────────────────────────────────────
+    #  TAB 2 — TRADE SIGNALS
+    # ─────────────────────────────────────────────────────────
     with tab_sig:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
-            "margin-bottom:0.75rem;padding:0.4rem 0.9rem;background:#f0f4e8;"
+            "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>AUTO</b> 15m/30m = Forward Test executes automatically &nbsp;|&nbsp; "
-            "🖐 <b>MANUAL</b> 1h+ = Click Fwd Test or Broker button"
-            "</div>", unsafe_allow_html=True)
+            "⚡ <b>AUTO</b> (15m/30m) = Forward Test executes automatically &nbsp;|&nbsp; "
+            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button"
+            "</div>",
+            unsafe_allow_html=True,
+        )
         import json
 
         # ── Header ────────────────────────────────────────────────────────────
@@ -5906,20 +5700,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
             min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
 
         # Apply filters
-        def _sig_quality_ok(s):
-            """SL must be ≥0.5% from entry AND T1 must be ≥1% from entry."""
-            entry = s.get("entry", 0) or s.get("ltp", 0)
-            if not entry or entry <= 0:
-                return False
-            sl_dist = abs(entry - s.get("sl", 0)) / entry * 100 if s.get("sl") else 0
-            t1_dist = abs(s.get("t1", 0) - entry) / entry * 100 if s.get("t1") else 0
-            return sl_dist >= 0.5 and t1_dist >= 1.0
-
-        _executed = st.session_state.get("ft_executed_signals", set())
         filtered = [s for s in all_signals
-                    if _sig_quality_ok(s)
-                    and f"{s['symbol']}_{s['side']}_{s['tf']}" not in _executed
-                    and s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min", "🕐 1 Hour"])
+                    if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
                     and (side_filter == "All"
                          or (side_filter == "BUY only"  and s["side"] == "BUY")
                          or (side_filter == "SELL only" and s["side"] == "SELL"))
@@ -6215,11 +5997,6 @@ def _trade_buttons(s: dict):
         _ft_save({"trades": trades, "balance": round(bal, 2),
                   "starting": st.session_state.get("ft_start", 100000.0)})
         st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
-        if "ft_executed_signals" not in st.session_state:
-            st.session_state["ft_executed_signals"] = set()
-        st.session_state["ft_executed_signals"].add(
-            f"{sym}_{s['side']}_{s['tf']}"
-        )
 
     # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
     c1, c2, c3, c4 = st.columns(4)
@@ -6287,12 +6064,7 @@ def _trade_buttons(s: dict):
                 "source": f"Signal {s.get('tf','—')}",
                 "strategy": s.get("rationale","CPR Signal")[:50],
             }
-            if "ft_executed_signals" not in st.session_state:
-                st.session_state["ft_executed_signals"] = set()
-            st.session_state["ft_executed_signals"].add(
-                f"{sym}_{s['side']}_{s['tf']}"
-            )
-            st.session_state["current_page"] = "Scanner & Signals"
+            st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
     # ── Upstox order confirmation panel ──────────────────────────────────
@@ -7179,18 +6951,6 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     if not in_market_hours:
         return   # Only auto-trade 9:30–15:15 IST on weekdays
 
-    # Only 15m and 30m auto-execute; 1h+ are manual only
-    _sig_tf = s.get("tf", "").lower().replace(" ", "").replace("min", "m")
-    if _sig_tf not in ("15m", "30m"):
-        return  # 1h / 1d / 1wk / 1mo → manual execution only
-
-    # Mark signal card executed → removes it from Trade Signals
-    if "ft_executed_signals" not in st.session_state:
-        st.session_state["ft_executed_signals"] = set()
-    st.session_state["ft_executed_signals"].add(
-        f"{s.get('symbol','')}_{s.get('side','')}_{s.get('tf','')}"
-    )
-
     ft    = _ft_state()
     sym   = s.get("symbol","")
     side  = s.get("side","BUY")
@@ -7212,12 +6972,6 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     ltp = _ft_get_ltp(sym)
     if not ltp or ltp <= 0:
         return  # No live price — skip
-
-    # Quality gate: re-validate SL ≥0.5% and T1 ≥1% vs live entry price
-    _sl_live = abs(ltp - s.get("sl", 0)) / ltp * 100 if s.get("sl") else 0
-    _t1_live = abs(s.get("t1", 0) - ltp) / ltp * 100 if s.get("t1") else 0
-    if _sl_live < 0.5 or _t1_live < 1.0:
-        return  # Signal too tight against live price — skip auto-entry
 
     bal  = ft["balance"]
     qty  = 100                         # Fixed 100 units per trade
@@ -8586,8 +8340,8 @@ def main():
 
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
-    elif page == "CPR Scanner":          page_scanner_signals(nse500)
-    elif page == "Trade Signals":        page_scanner_signals(nse500)
+    elif page == "Scanner & Signals":          page_scanner_signals(nse500)
+    elif page == "Scanner & Signals":        page_scanner_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
