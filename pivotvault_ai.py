@@ -5012,7 +5012,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
         st.session_state[scan_time_key] = now
 
         # ── Auto-feed signals into Forward Testing ───────────────────────
-        if not result.empty and tf_tag in ("15m","30m"):  # AUTO FT: 15m + 30m only
+        if not result.empty and tf_tag in ("15m","30m","1h"):
             for _, row in result.iterrows():
                 sig = {
                     "symbol":    row.get("Symbol",""),
@@ -5028,14 +5028,7 @@ def page_cpr_scanner(nse500: pd.DataFrame):
                     "strength":  row.get("Strength%",0),
                     "candle":    row.get("Candle","—"),
                 }
-                _entry  = sig.get("entry", 0)
-                _sl     = sig.get("sl", 0)
-                _t1     = sig.get("t1", 0)
-                _sl_pct = abs(_entry - _sl) / _entry * 100 if _entry and _sl else 0
-                _t1_pct = abs(_t1 - _entry) / _entry * 100 if _entry and _t1 else 0
-                if (sig["symbol"] and _entry
-                        and _sl_pct >= 0.5    # SL at least 0.5% from entry
-                        and _t1_pct >= 1.0):  # T1 at least 1.0% from entry
+                if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
                     ft_add_signal(sig, source=f"Auto · {tf_tag.upper()}")
         last_scan = now
 
@@ -5945,20 +5938,8 @@ def page_trade_signals(nse500: pd.DataFrame):
         min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
 
     # Apply filters
-    def _sig_quality_ok(s):
-        """SL must be ≥0.5% from entry AND T1 must be ≥1% from entry."""
-        entry = s.get("entry", 0) or s.get("ltp", 0)
-        if not entry or entry <= 0:
-            return False
-        sl_dist = abs(entry - s.get("sl", 0)) / entry * 100 if s.get("sl") else 0
-        t1_dist = abs(s.get("t1", 0) - entry) / entry * 100 if s.get("t1") else 0
-        return sl_dist >= 0.5 and t1_dist >= 1.0
-
-    _executed = st.session_state.get("ft_executed_signals", set())
     filtered = [s for s in all_signals
-                if _sig_quality_ok(s)
-                and f"{s['symbol']}_{s['side']}_{s['tf']}" not in _executed
-                and s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min", "🕐 1 Hour"])
+                if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
                 and (side_filter == "All"
                      or (side_filter == "BUY only"  and s["side"] == "BUY")
                      or (side_filter == "SELL only" and s["side"] == "SELL"))
@@ -6253,12 +6234,6 @@ def _trade_buttons(s: dict):
         _ft_save({"trades": trades, "balance": round(bal, 2),
                   "starting": st.session_state.get("ft_start", 100000.0)})
         st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
-        # Mark signal card executed → removed from Trade Signals
-        if "ft_executed_signals" not in st.session_state:
-            st.session_state["ft_executed_signals"] = set()
-        st.session_state["ft_executed_signals"].add(
-            f"{sym}_{s['side']}_{s['tf']}"
-        )
 
     # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
     c1, c2, c3, c4 = st.columns(4)
@@ -6326,12 +6301,6 @@ def _trade_buttons(s: dict):
                 "source": f"Signal {s.get('tf','—')}",
                 "strategy": s.get("rationale","CPR Signal")[:50],
             }
-            # Mark signal card executed → removed from Trade Signals
-            if "ft_executed_signals" not in st.session_state:
-                st.session_state["ft_executed_signals"] = set()
-            st.session_state["ft_executed_signals"].add(
-                f"{sym}_{s['side']}_{s['tf']}"
-            )
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
@@ -7219,18 +7188,6 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     if not in_market_hours:
         return   # Only auto-trade 9:30–15:15 IST on weekdays
 
-    # Only 15m and 30m auto-execute; 1h+ are manual only
-    _sig_tf = s.get("tf", "").lower().replace(" ", "").replace("min", "m")
-    if _sig_tf not in ("15m", "30m"):
-        return  # 1h / 1d / 1wk / 1mo → manual execution only
-
-    # Mark signal card executed → removes it from Trade Signals
-    if "ft_executed_signals" not in st.session_state:
-        st.session_state["ft_executed_signals"] = set()
-    st.session_state["ft_executed_signals"].add(
-        f"{s.get('symbol','')}_{s.get('side','')}_{s.get('tf','')}"
-    )
-
     ft    = _ft_state()
     sym   = s.get("symbol","")
     side  = s.get("side","BUY")
@@ -7252,12 +7209,6 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     ltp = _ft_get_ltp(sym)
     if not ltp or ltp <= 0:
         return  # No live price — skip
-
-    # Quality gate: re-validate SL ≥0.5% and T1 ≥1% vs live entry price
-    _sl_live = abs(ltp - s.get("sl", 0)) / ltp * 100 if s.get("sl") else 0
-    _t1_live = abs(s.get("t1", 0) - ltp) / ltp * 100 if s.get("t1") else 0
-    if _sl_live < 0.5 or _t1_live < 1.0:
-        return  # Signal too tight against live price — skip auto-entry
 
     bal  = ft["balance"]
     qty  = 100                         # Fixed 100 units per trade
