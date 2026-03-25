@@ -6,6 +6,7 @@ try:
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
+_TV_CHARTS = False   # TradingView charts library not integrated — use Plotly
 import numpy as np
 import secrets
 import re
