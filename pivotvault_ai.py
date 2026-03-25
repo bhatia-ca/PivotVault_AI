@@ -1,5 +1,4 @@
 import streamlit as st
-import json
 import pandas as pd
 import os
 try:
@@ -7,7 +6,82 @@ try:
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
-_TV_CHARTS = False   # TradingView charts library not integrated — use Plotly
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TELEGRAM NOTIFICATION HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+def _tg_creds():
+    cfg = st.session_state.get("telegram_cfg", {})
+    return cfg.get("bot_token", ""), cfg.get("chat_id", "")
+
+def _send_telegram(message: str) -> bool:
+    """Send a Telegram message via Bot API. Silent on failure."""
+    import requests as _req
+    bot_token, chat_id = _tg_creds()
+    if not bot_token or not chat_id:
+        return False
+    try:
+        resp = _req.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
+            timeout=5,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+def _tg_signal_msg(s: dict, source: str = "Scanner") -> str:
+    side  = s.get("side", "BUY")
+    emoji = "🟢" if side == "BUY" else "🔴"
+    tf    = s.get("tf", "")
+    route = "⚡ AUTO → Forward Testing" if tf in ("15m","30m") else "🖐 MANUAL — action required"
+    return (
+        f"{emoji} <b>{side} {s.get('symbol','')}</b>  [{tf.upper()}]\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 Entry    : ₹{s.get('entry',0):,.2f}\n"
+        f"🎯 T1       : ₹{s.get('t1',0):,.2f}\n"
+        f"🎯 T2       : ₹{s.get('t2',0):,.2f}\n"
+        f"🛑 SL       : ₹{s.get('sl',0):,.2f}\n"
+        f"📊 R:R      : {s.get('rr1',0)}x\n"
+        f"💪 Strength : {s.get('strength',0)}%\n"
+        f"📖 Strategy : {s.get('rationale', s.get('strategy','CPR'))}\n"
+        f"🔁 Route    : {route}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>PivotVault AI · {source}</i>"
+    )
+
+def _tg_trade_msg(pos: dict, event_type: str = "ENTRY") -> str:
+    side  = pos.get("side", "BUY")
+    emoji = "🟢" if side == "BUY" else "🔴"
+    pnl   = pos.get("pnl", 0)
+    pe    = "✅" if pnl >= 0 else "❌"
+    if event_type == "ENTRY":
+        return (
+            f"⚡ <b>AUTO TRADE ENTERED</b>\n"
+            f"{emoji} <b>{side} {pos.get('symbol','')}</b>  [{pos.get('tf','')}]\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Entry  : ₹{pos.get('entry',0):,.2f}\n"
+            f"🎯 Target : ₹{pos.get('target',0):,.2f}\n"
+            f"🛑 SL     : ₹{pos.get('sl',0):,.2f}\n"
+            f"📦 Qty    : {pos.get('qty',0)}\n"
+            f"💵 Cost   : ₹{pos.get('cost',0):,.0f}\n"
+            f"📊 R:R    : {pos.get('rr',0)}x\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>PivotVault AI · Forward Testing</i>"
+        )
+    return (
+        f"{pe} <b>TRADE CLOSED — {event_type}</b>\n"
+        f"{emoji} <b>{side} {pos.get('symbol','')}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Entry : ₹{pos.get('entry',0):,.2f}\n"
+        f"🏁 Exit  : ₹{pos.get('exit_px',0):,.2f}\n"
+        f"{pe} P&L   : ₹{pnl:,.2f}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>PivotVault AI · Forward Testing</i>"
+    )
+
+_TV_CHARTS = False  # TradingView charts not integrated — use Plotly
+
 import numpy as np
 import secrets
 import re
@@ -4832,16 +4906,12 @@ buildCards();
 
 def page_scanner_signals(nse500: pd.DataFrame):
     """
-    CPR Scanner + Trade Signals — merged into one page.
-    ⚡ 15m & 30m → Auto-execute via Forward Testing
-    🖐 1h / 1d / 1wk / 1mo → Manual execution only
+    CPR Scanner + Trade Signals — merged.
+    ⚡ 15m/30m → Auto Forward Testing | 🖐 1h+ → Manual
     """
-    import json  # required for notification payloads
+    import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
 
-    # ─────────────────────────────────────────────────────────────────────
-    #  TAB 1 — CPR SCANNER
-    # ─────────────────────────────────────────────────────────────────────
     with tab_scan:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
@@ -4849,9 +4919,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             "border-radius:6px;border-left:3px solid #4e6130;'>"
             "⚡ <b>15 Min &amp; 30 Min</b> → Auto Forward Testing &nbsp;|&nbsp; "
             "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+            "</div>", unsafe_allow_html=True)
 
         TF_CONFIG = {
             "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
@@ -5017,6 +5085,14 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         )
                     else:
                         st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
+                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals", True):
+                            _tg_rows = result.head(3)
+                            _tg_lines = [f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
+                            for _, _r in _tg_rows.iterrows():
+                                _se = "🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
+                                _tg_lines.append(f"{_se} <b>{_r.get('Symbol','')}</b> · Entry ₹{_r.get('Entry',0):,.2f} · T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · Str {_r.get('Strength%',0):.0f}%")
+                            _tg_lines.append("<i>PivotVault AI · CPR Scanner</i>")
+                            _send_telegram("\n".join(_tg_lines))
                 except Exception as e:
                     st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
                     result = pd.DataFrame()
@@ -5170,7 +5246,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
     5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
                 """)
                 st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
-            pass  # empty state — stay in tab, do not exit function
+            pass  # empty state — stay in tab
 
         # ── All bullish & bearish — no strength cutoff ────────────────────────────
         all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
@@ -5203,7 +5279,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            pass  # empty state — stay in tab, do not exit function
+            pass  # empty state — stay in tab
 
         # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
         top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bull.empty else pd.DataFrame()
@@ -5494,19 +5570,14 @@ def page_scanner_signals(nse500: pd.DataFrame):
         </div>
         """, unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────────────────────────────
-    #  TAB 2 — TRADE SIGNALS
-    # ─────────────────────────────────────────────────────────────────────
     with tab_sig:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>AUTO</b> (15m/30m) = Forward Test executes automatically &nbsp;|&nbsp; "
+            "⚡ <b>AUTO</b> (15m/30m) = Forward Test auto-executes &nbsp;|&nbsp; "
             "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+            "</div>", unsafe_allow_html=True)
         import json
 
         # ── Header ────────────────────────────────────────────────────────────
@@ -6646,7 +6717,7 @@ def page_broker_settings():
         unsafe_allow_html=True,
     )
 
-    tab_upstox, tab_zerodha, tab_groww = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww"])
+    tab_upstox, tab_zerodha, tab_groww, tab_telegram = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww", "📨 Telegram"])
 
     # ══════════════════════════════
     #  UPSTOX — Data Feed + Trading
@@ -6850,6 +6921,100 @@ def page_broker_settings():
             st.success("Groww selected. Signal cards will link to Groww stock pages.")
 
     # ── Status summary ────────────────────────────────────────────────────
+
+    # ══════════════════════════════════════════════════════════════
+    #  TELEGRAM NOTIFICATIONS TAB
+    # ══════════════════════════════════════════════════════════════
+    with tab_telegram:
+        st.markdown("### 📨 Telegram Notifications")
+        st.markdown(
+            "<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
+            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
+            "color:#2e3d1a;margin-bottom:1rem;'>"
+            "Get instant alerts on Telegram for: "
+            "⚡ New scanner signals (15m/30m) &nbsp;·&nbsp; "
+            "🟢 Auto-trade entered &nbsp;·&nbsp; "
+            "🎯 T1/T2 hit &nbsp;·&nbsp; "
+            "🛑 SL hit</div>",
+            unsafe_allow_html=True,
+        )
+        _tg_saved = st.session_state.get("telegram_cfg", {})
+
+        with st.expander("📖 Setup Instructions", expanded=not _tg_saved.get("bot_token")):
+            st.markdown("""
+**Step 1 — Create a bot:**
+Open Telegram → search **@BotFather** → send `/newbot` → follow prompts → copy the **Bot Token**
+
+**Step 2 — Get your Chat ID:**
+- Send any message to your new bot
+- Open: `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
+- Find `"chat":{"id": 123456789}` — that number is your **Chat ID**
+
+**Step 3 — Paste below and Save ✅**
+            """)
+
+        st.divider()
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            _bot_token = st.text_input("🤖 Bot Token", value=_tg_saved.get("bot_token",""),
+                type="password", placeholder="123456789:ABCdefGHI...", key="tg_bot_token")
+        with _c2:
+            _chat_id = st.text_input("💬 Chat ID", value=_tg_saved.get("chat_id",""),
+                placeholder="123456789 or -100123456789", key="tg_chat_id")
+
+        st.markdown("#### 🔔 Notification Toggles")
+        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+        with _tc1: _n_sig = st.checkbox("📡 New Signals",      value=_tg_saved.get("notify_signals", True), key="tg_nsig")
+        with _tc2: _n_ent = st.checkbox("⚡ Trade Entry",       value=_tg_saved.get("notify_entry",   True), key="tg_nent")
+        with _tc3: _n_t1  = st.checkbox("🎯 T1 / T2 Hit",      value=_tg_saved.get("notify_t1",      True), key="tg_nt1")
+        with _tc4: _n_sl  = st.checkbox("🛑 SL / Trailing SL", value=_tg_saved.get("notify_sl",      True), key="tg_nsl")
+
+        st.markdown("")
+        _b1, _b2, _b3 = st.columns([2, 2, 1])
+        with _b1:
+            if st.button("💾 Save Telegram Settings", use_container_width=True, key="tg_save"):
+                st.session_state["telegram_cfg"] = {
+                    "bot_token": _bot_token.strip(), "chat_id": _chat_id.strip(),
+                    "notify_signals": _n_sig, "notify_entry": _n_ent,
+                    "notify_t1": _n_t1, "notify_t2": _n_t1, "notify_sl": _n_sl,
+                }
+                st.success("✅ Telegram settings saved!")
+        with _b2:
+            if st.button("🧪 Send Test Message", use_container_width=True, key="tg_test"):
+                _ok = _send_telegram(
+                    "🧪 <b>PivotVault AI — Test Notification</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "🟢 <b>BUY RELIANCE</b>  [15m]\n"
+                    "📌 Entry   : ₹2,850.00\n"
+                    "🎯 T1      : ₹2,920.00\n"
+                    "🛑 SL      : ₹2,800.00\n"
+                    "📊 R:R     : 2.4x\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "<i>Telegram is working! ✅</i>"
+                )
+                if _ok:
+                    st.success("✅ Test sent! Check your Telegram.")
+                else:
+                    st.error("❌ Failed — save Bot Token & Chat ID first, then test.")
+        with _b3:
+            if st.button("🗑 Clear", use_container_width=True, key="tg_clear"):
+                st.session_state["telegram_cfg"] = {}
+                st.rerun()
+
+        st.divider()
+        if _tg_saved.get("bot_token") and _tg_saved.get("chat_id"):
+            st.markdown(
+                "<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
+                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>"
+                "📨 <b>Telegram ACTIVE</b> — notifications enabled.</div>",
+                unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;"
+                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#7a5800;'>"
+                "⚪ <b>Telegram not configured</b> — add Bot Token &amp; Chat ID above.</div>",
+                unsafe_allow_html=True)
+
     st.divider()
     connected = st.session_state.get("broker_connected", False)
     bname     = st.session_state.get("broker","none").replace("upstox","Upstox").replace("zerodha","Zerodha").replace("groww","Groww").replace("none","None")
@@ -7030,6 +7195,8 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "note":     f"First live tick entry @ ₹{ltp}",
     })
     _ft_flush()
+    if st.session_state.get("telegram_cfg", {}).get("notify_entry", True):
+        _send_telegram(_tg_trade_msg(pos, "ENTRY"))
 
 # ── Trigger checker ───────────────────────────────────────────────────────
 
@@ -7291,6 +7458,18 @@ def _ft_run_triggers() -> list:
 
     if fired:
         _ft_flush()
+        _tg = st.session_state.get("telegram_cfg", {})
+        for _ev in fired:
+            _hit = _ev.get("hit",""); _sym = _ev.get("symbol",""); _pnl = _ev.get("pnl",0)
+            _pe = "✅" if _pnl >= 0 else "❌"; _st = _ev.get("strategy",""); _nt = _ev.get("note","")
+            if "T2 HIT" in _hit and _tg.get("notify_t2", True):
+                _send_telegram(f"🎯🎯 <b>T2 HIT — FULL EXIT — {_sym}</b>\nTotal P&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
+            elif "T1 HIT" in _hit and _tg.get("notify_t1", True):
+                _send_telegram(f"🎯 <b>T1 HIT — {_sym}</b>\nP&L: {_pe} ₹{_pnl:,.2f} · SL moved to entry\n<i>{_st}</i>")
+            elif "TRAILING" in _hit and _tg.get("notify_sl", True):
+                _send_telegram(f"🔒 <b>TRAILING SL — {_sym}</b>\nTotal P&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
+            elif "SL HIT" in _hit and _tg.get("notify_sl", True):
+                _send_telegram(f"🛑 <b>SL HIT — {_sym}</b>\nP&L: {_pe} ₹{_pnl:,.2f}\n<i>{_st}</i>\n{_nt}")
     return fired
 
 
@@ -7449,7 +7628,7 @@ def page_forward_test():
 
     if not open_pos:
         st.info("No open positions. Signals from the CPR Scanner auto-appear here. "
-                "Use the Scanner tab to generate signals.")
+                "Or add manually below.")
     else:
         for pos in open_pos:
             bull   = pos["side"] == "BUY"
@@ -7648,7 +7827,7 @@ def page_forward_test():
             pnl_filter = st.selectbox("Show trades", ["All","Wins only","Losses only","Break-even"],
                                        key="ft_pnl_filter", label_visibility="collapsed")
         with fc2:
-            tf_filter_cl = st.multiselect("Timeframe", ["15m","30m","1h","1d"],
+            tf_filter_cl = st.multiselect("Timeframe", ["15m","30m","1h","1d","Manual"],
                                            default=[], key="ft_tf_filter",
                                            placeholder="All TFs",
                                            label_visibility="collapsed")
