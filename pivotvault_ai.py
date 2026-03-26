@@ -2262,28 +2262,105 @@ def sig_badge(label: str, kind: str) -> str:
     return f'<span class="signal-badge {css}">{label}</span>'
 
 
-def is_market_open() -> bool:
-    """Check if NSE market is currently open (Mon-Fri 9:15-15:30 IST)."""
-    from datetime import timezone
-    IST   = timezone(timedelta(hours=5, minutes=30))
-    now   = datetime.now(IST)
-    if now.weekday() >= 5:          # Saturday / Sunday
-        return False
-    market_open  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
-    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    return market_open <= now <= market_close
+# ── Market hours (India + USA) ─────────────────────────────────────────────────
+#  NSE  : Mon–Fri  09:15–15:30 IST  (UTC+5:30)
+#  NYSE/NASDAQ: Mon–Fri  09:30–16:00 EST  (UTC-5) / EDT (UTC-4, Mar–Nov)
+# ───────────────────────────────────────────────────────────────────────────────
 
+def _ist_now():
+    from datetime import timezone as _tz
+    return datetime.now(_tz(timedelta(hours=5, minutes=30)))
 
-def is_auto_trade_open() -> bool:
-    """Auto-trade window: 9:30–15:15 IST (avoids volatile open + pre-close)."""
-    from datetime import timezone
-    IST  = timezone(timedelta(hours=5, minutes=30))
-    now  = datetime.now(IST)
-    if now.weekday() >= 5:
-        return False
-    trade_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
-    trade_close = now.replace(hour=15, minute=15, second=0, microsecond=0)
-    return trade_open <= now <= trade_close
+def _est_now():
+    """Return current time in US Eastern — auto-adjusts for EDT/EST."""
+    import time as _time
+    # DST: 2nd Sun Mar → 1st Sun Nov  → EDT (UTC-4); else EST (UTC-5)
+    from datetime import timezone as _tz
+    now_utc = datetime.now(_tz.utc)
+    # Determine offset: EDT = -4, EST = -5
+    year = now_utc.year
+    # 2nd Sunday of March
+    mar1  = datetime(year, 3, 1)
+    dst_start = mar1 + timedelta(days=(6 - mar1.weekday()) % 7 + 7)
+    # 1st Sunday of November
+    nov1  = datetime(year, 11, 1)
+    dst_end   = nov1  + timedelta(days=(6 - nov1.weekday())  % 7)
+    utc_naive = now_utc.replace(tzinfo=None)
+    in_dst    = dst_start <= utc_naive < dst_end
+    offset    = timedelta(hours=-4 if in_dst else -5)
+    return datetime.now(_tz(offset))
+
+def is_market_open(market: str = "india") -> bool:
+    """
+    Check if market is open.
+    market: 'india'  → NSE   Mon–Fri 09:15–15:30 IST
+            'us'     → NYSE  Mon–Fri 09:30–16:00 EST/EDT
+    """
+    if market == "us":
+        now = _est_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+        c = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+        return o <= now <= c
+    else:  # india (default)
+        now = _ist_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=15, second=0, microsecond=0)
+        c = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        return o <= now <= c
+
+def is_auto_trade_open(market: str = "india") -> bool:
+    """
+    Safe auto-trade window (avoids volatile open + pre-close).
+    India: 09:30–15:15 IST  |  US: 09:45–15:45 EST/EDT
+    """
+    if market == "us":
+        now = _est_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=45, second=0, microsecond=0)
+        c = now.replace(hour=15, minute=45, second=0, microsecond=0)
+        return o <= now <= c
+    else:
+        now = _ist_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+        c = now.replace(hour=15, minute=15, second=0, microsecond=0)
+        return o <= now <= c
+
+def get_market_status(market: str = "india") -> dict:
+    """
+    Returns full status dict for market header display.
+    market: 'india' or 'us'
+    """
+    if market == "us":
+        now      = _est_now()
+        tz_label = "EDT" if abs(now.utcoffset().total_seconds()/3600 + 4) < 0.1 else "EST"
+        is_open  = is_market_open("us")
+        wday     = now.weekday()
+        if is_open:
+            closes = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            mins   = int((closes - now).total_seconds() // 60)
+            note   = f"🟢 NYSE/NASDAQ OPEN · Closes {closes.strftime('%I:%M %p')} {tz_label} · {mins}m left"
+        else:
+            if wday >= 5:   note = f"🔴 US Market CLOSED · Opens Monday 9:30 AM {tz_label}"
+            elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+                             note = f"🔴 Pre-Market · Opens 9:30 AM {tz_label} today"
+            else:            note = f"🔴 US Market CLOSED · Opens tomorrow 9:30 AM {tz_label}"
+        return {"open": is_open, "note": note, "time": now.strftime(f"%d %b %Y  %H:%M {tz_label}"), "tz": tz_label}
+    else:
+        now      = _ist_now()
+        is_open  = is_market_open("india")
+        wday     = now.weekday()
+        if is_open:
+            closes = now.replace(hour=15, minute=30, second=0, microsecond=0)
+            mins   = int((closes - now).total_seconds() // 60)
+            note   = f"🟢 NSE OPEN · Closes 3:30 PM IST · {mins}m left"
+        else:
+            if wday >= 5:   note = "🔴 NSE CLOSED · Opens Monday 9:15 AM IST"
+            elif now.hour < 9 or (now.hour == 9 and now.minute < 15):
+                             note = "🔴 Pre-Market · Opens 9:15 AM IST today"
+            else:            note = "🔴 NSE CLOSED · Opens tomorrow 9:15 AM IST"
+        return {"open": is_open, "note": note, "time": now.strftime("%d %b %Y  %H:%M IST"), "tz": "IST"}
 
 
 
@@ -2345,7 +2422,11 @@ def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    open_  = is_market_open()
+    _scan_mkt = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
+    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
+    open_  = is_market_open(_mkt_key)
+    _mkt_status_india = get_market_status("india")
+    _mkt_status_us    = get_market_status("us")
 
     # ── Token expiry popup (shown if Upstox creds saved but token expired) ──
     _show_token_refresh_popup()
@@ -2368,11 +2449,11 @@ def render_market_header():
         next_info = ""
         if not open_:
             if now_ist.weekday() >= 5:
-                next_info = " · Opens Monday 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
             elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
-                next_info = f" · Opens at 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
             else:
-                next_info = " · Opens tomorrow 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
 
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
@@ -5178,7 +5259,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     if result.empty:
                         st.warning(
                             f"⚠️ No setups found on {tf_tag.upper()}. "
-                            f"{'Market may be closed — data is from last session.' if not is_market_open() else 'All stocks filtered out — try a different timeframe.'}"
+                            f"{'Market may be closed — data is from last session.' if not is_market_open('us' if st.session_state.get('scanner_market','') in ('🇺🇸 Dow 30','🇺🇸 Nasdaq 100') else 'india') else 'All stocks filtered out — try a different timeframe.'}"
                         )
                     else:
                         st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
@@ -6076,10 +6157,10 @@ def _trade_buttons(s: dict):
 
     if mkt_open and _auto_ok:
         status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-                       " · Auto-trade ACTIVE (9:30–15:15)")
+                       " · 🇮🇳 9:30–15:15 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
     elif mkt_open and not _auto_ok:
         status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
-                       " · Auto-trade starts 9:30 AM IST")
+                       " · 🇮🇳 Opens 9:30 AM IST | 🇺🇸 Opens 9:45 AM EST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
@@ -7125,8 +7206,22 @@ def _ft_flush():
 # ── LTP fetch ────────────────────────────────────────────────────────────
 
 def _ft_get_ltp(symbol: str) -> float:
-    """Get LTP for forward testing — tries Upstox then yfinance automatically."""
-    # upstox_get_ltp already has yfinance fallback built in
+    """
+    Get LTP for forward testing.
+    - Indian stocks : Upstox → yfinance (.NS suffix)
+    - US stocks     : yfinance directly (no .NS suffix)
+    """
+    if is_us_symbol(symbol):
+        try:
+            fi = yf.Ticker(symbol).fast_info
+            p  = float(getattr(fi, "last_price", 0) or 0)
+            if p > 0: return round(p, 4)
+            hist = yf.Ticker(symbol).history(period="1d", interval="1m")
+            if not hist.empty:
+                return round(float(hist["Close"].iloc[-1]), 4)
+        except Exception:
+            pass
+        return 0.0
     ltp = upstox_get_ltp(symbol)
     return ltp if ltp > 0 else 0.0
 
@@ -7137,29 +7232,33 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     Auto-add a scanner signal as a Forward Test position.
 
     Rules:
-    - ONLY enters during live market hours (9:15–15:30 IST Mon-Fri)
-    - Entry price = FIRST live tick from Upstox/yfinance at moment of signal
-    - Never re-enters same symbol+side that already traded today
-    - Never re-enters same symbol+side already OPEN
-    - All positions auto-close at 15:30 IST at live price
+    - Supports both India (NSE) and US (NYSE/NASDAQ) markets
+    - India : enters during 9:30–15:15 IST Mon-Fri
+    - US    : enters during 9:45–15:45 EST/EDT Mon-Fri
+    - Entry price = FIRST live tick from data feed at moment of signal
+    - Never re-enters same symbol+side already OPEN or traded today
+    - India EOD auto-close at 15:30 IST | US EOD at 16:00 EST/EDT
     """
     from datetime import timezone as _tz, time as _time
 
-    # ── Only enter during live market hours ──────────────────────────────
-    IST     = _tz(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(IST)
-    # Auto-trade starts 9:30 (not 9:15) — first 15 min is volatile price discovery
-    mkt_open_time  = now_ist.replace(hour=9,  minute=30, second=0, microsecond=0)
-    mkt_close_time = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)  # stop 15 min before close
-    in_market_hours = (now_ist.weekday() < 5 and
-                       mkt_open_time <= now_ist <= mkt_close_time)
-    if not in_market_hours:
-        return   # Only auto-trade 9:30–15:15 IST on weekdays
+    # ── Detect market from signal symbol ─────────────────────────────────
+    sym     = s.get("symbol", "")
+    _us     = is_us_symbol(sym)
+    _mkt    = "us" if _us else "india"
+
+    # ── Only enter during live auto-trade window ──────────────────────────
+    if not is_auto_trade_open(_mkt):
+        return   # Outside market hours — skip
+
+    if _us:
+        now_ref = _est_now()
+    else:
+        from datetime import timezone as _tz2
+        now_ref = datetime.now(_tz2(timedelta(hours=5, minutes=30)))
 
     ft    = _ft_state()
-    sym   = s.get("symbol","")
     side  = s.get("side","BUY")
-    today = now_ist.strftime("%Y-%m-%d")
+    today = now_ref.strftime("%Y-%m-%d")
 
     # ── Skip if already OPEN for this symbol+side ────────────────────────
     for p in ft["positions"]:
@@ -7209,9 +7308,11 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "strategy":   s.get("rationale", s.get("strategy","CPR"))[:60],
         "candle":     s.get("candle","—"),
         "strength":   s.get("strength", 0),
-        "opened_at":  now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+        "opened_at":  now_ref.strftime("%Y-%m-%d %H:%M:%S"),
         "closed_at":  None,
         "date":       today,
+        "market":     _mkt,
+        "currency":   "$" if _us else "₹",
     }
     ft["positions"].append(pos)
     ft["balance"] = round(bal - cost, 2)
@@ -7219,7 +7320,7 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     # Mark this symbol+side as traded today
     if "traded_today" not in ft:
         ft["traded_today"] = {}
-    ft["traded_today"][traded_key] = now_ist.strftime("%H:%M:%S")
+    ft["traded_today"][traded_key] = now_ref.strftime("%H:%M:%S")
 
     # Log ENTRY event
     ft["events"].append({
@@ -7237,7 +7338,7 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "strategy": pos["strategy"],
         "tf":       pos.get("tf","—"),
         "pnl":      0.0,
-        "note":     f"First live tick entry @ ₹{ltp}",
+        "note":     f"First live tick entry @ {'$' if _us else '₹'}{ltp}",
     })
     _ft_flush()
     if st.session_state.get("telegram_cfg",{}).get("notify_entry",True):
@@ -7247,20 +7348,85 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
 
 def _ft_auto_close_eod() -> list:
     """
-    Auto-close ALL open positions at 15:30 IST at live price.
-    Called every trigger cycle — fires only once per day.
+    Auto-close ALL open positions at EOD:
+    - India (NSE) : 15:30 IST
+    - US (NYSE)   : 16:00 EST/EDT
+    Called every trigger cycle — fires only once per day per market.
     Returns list of fired close events.
     """
+    fired_all = []
+
+    # ── India EOD @ 15:30 IST ────────────────────────────────────────────
     from datetime import timezone as _tz
     IST      = _tz(timedelta(hours=5, minutes=30))
     now_ist  = datetime.now(IST)
-    today    = now_ist.strftime("%Y-%m-%d")
+    today_in = now_ist.strftime("%Y-%m-%d")
+    _ist_eod_due = (now_ist.weekday() < 5 and
+                    (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 30)))
 
-    # Only fire after 15:30
-    if now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 30):
+    # ── US EOD @ 16:00 EST/EDT ───────────────────────────────────────────
+    now_est   = _est_now()
+    today_us  = now_est.strftime("%Y-%m-%d")
+    _us_eod_due = (now_est.weekday() < 5 and
+                   (now_est.hour >= 16))
+
+    if not _ist_eod_due and not _us_eod_due:
         return []
-    # Only on weekdays
-    if now_ist.weekday() >= 5:
+
+    ft = _ft_state()
+
+    # ── Helper: close one position ────────────────────────────────────────
+    def _close_pos(pos, close_time, label, today_key):
+        eod_key = f"eod_closed_{today_key}_{pos['id']}"
+        if ft.get(eod_key): return None
+        ltp = _ft_get_ltp(pos["symbol"])
+        if not ltp or ltp <= 0: ltp = pos.get("ltp", pos["entry"])
+        bull      = pos["side"] == "BUY"
+        rem_qty   = pos.get("qty_remaining", pos["qty"])
+        pnl       = round((ltp-pos["entry"])*rem_qty if bull else (pos["entry"]-ltp)*rem_qty, 2)
+        total_pnl = round(pnl + pos.get("t1_pnl",0.0), 2)
+        pnl_pct   = round(total_pnl / max(pos["cost"],1)*100, 2)
+        rem_cost  = round(pos["cost"]*rem_qty / max(pos["qty"],1), 2)
+        cur = pos.get("currency","₹")
+        pos.update({"status":"EOD CLOSE","exit_px":ltp,"pnl":total_pnl,
+                    "pnl_pct":pnl_pct,"upnl":0.0,"closed_at":close_time,
+                    "exit_type":f"EOD {label} Auto-Close","qty_remaining":0})
+        ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
+        ft["events"].append({"time":close_time,"type":"EOD AUTO-CLOSE",
+            "id":pos["id"],"symbol":pos["symbol"],"side":pos["side"],
+            "price":ltp,"entry":pos["entry"],"qty":rem_qty,"pnl":total_pnl,
+            "pnl_pct":pnl_pct,"source":pos["source"],"strategy":pos["strategy"],
+            "tf":pos.get("tf","—"),
+            "note":f"Auto-closed at {label} @ {cur}{ltp}. T1 booked: {cur}{pos.get('t1_pnl',0)}"})
+        ft[eod_key] = True
+        return {"symbol":pos["symbol"],"hit":f"EOD AUTO-CLOSE @ {label}",
+                "pnl":total_pnl,"strategy":pos["strategy"],"note":f"Closed @ {cur}{ltp}"}
+
+    open_pos = [p for p in ft["positions"] if p["status"] in ("OPEN","T1 HIT — TRAILING")]
+
+    if _ist_eod_due:
+        close_time = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+        for pos in open_pos:
+            if not is_us_symbol(pos["symbol"]):
+                r = _close_pos(pos, close_time, "15:30 IST", today_in)
+                if r: fired_all.append(r)
+
+    if _us_eod_due:
+        close_time = now_est.strftime("%Y-%m-%d %H:%M:%S")
+        for pos in open_pos:
+            if is_us_symbol(pos["symbol"]):
+                r = _close_pos(pos, close_time, "16:00 EST", today_us)
+                if r: fired_all.append(r)
+
+    if fired_all:
+        ft["traded_today"] = {}
+        _ft_flush()
+
+    # Legacy support — keep old today variable for callers
+    today    = today_in
+    now_ist  = now_ist  # keep in scope for callers
+
+    if False:  # pragma: no cover — old pattern kept for reference
         return []
 
     ft       = _ft_state()
@@ -7575,7 +7741,7 @@ def page_forward_test():
     _traded  = len(_ft_data.get("traded_today", {}))
 
     if _eod_done:
-        _status_msg = "🔴 15:30 EOD CLOSE executed — all positions closed at live price"
+        _status_msg = "🔴 EOD CLOSE executed — India 15:30 IST / US 16:00 EST · all positions closed"
         _status_bg  = "#fbe8e6"; _status_bdr = "#dc9090"; _status_col = "#9e2018"
     elif mkt_open:
         _status_msg = f"🟢 Market OPEN · {data_src} · Triggers every 15s · {_traded} symbol(s) traded today"
