@@ -2377,7 +2377,7 @@ def is_market_open(market: str = "india") -> bool:
 def is_auto_trade_open(market: str = "india") -> bool:
     """
     Safe auto-trade window (avoids volatile open + pre-close).
-    India: 09:30–15:15 IST  |  US: 09:45–15:45 EST/EDT
+    India: 09:45–14:45 IST  |  US: 09:45–15:45 EST/EDT
     """
     if market == "us":
         now = _est_now()
@@ -2432,7 +2432,11 @@ def get_market_status(market: str = "india") -> dict:
 
 
 def _show_token_refresh_popup():
-    """Show token expiry dialog anywhere in the app."""
+    """Show token expiry dialog — only when user is logged in."""
+    # Never show on logout / login screen
+    if not st.session_state.get("logged_in"):
+        return
+
     api_key    = st.session_state.get("upstox_api_key","")
     api_secret = st.session_state.get("upstox_api_secret","")
 
@@ -2483,6 +2487,64 @@ def _show_token_refresh_popup():
                 st.error("Invalid token. Must start with 'eyJ' and be 500+ characters.")
 
     st.markdown("---")
+
+
+def _check_daily_token_reminder():
+    """
+    Send Telegram reminder at 9:00 AM IST on weekdays to update Upstox token.
+    - Only fires Mon–Fri
+    - Only once per calendar day
+    - Skips if token is already valid
+    - Skips if Telegram not configured
+    """
+    from datetime import timezone as _tz
+    IST   = _tz(timedelta(hours=5, minutes=30))
+    now   = datetime.now(IST)
+
+    # Skip weekends
+    if now.weekday() >= 5:
+        return
+
+    # Only fire between 9:00 AM and 9:30 AM IST
+    if not (now.hour == 9 and now.minute < 30):
+        return
+
+    # Skip if already sent today
+    _today = now.strftime("%Y-%m-%d")
+    if st.session_state.get("_tg_token_reminder_date") == _today:
+        return
+
+    # Skip if Upstox token is already valid
+    if _upstox_connected():
+        st.session_state["_tg_token_reminder_date"] = _today
+        return
+
+    # Skip if Telegram not configured
+    _bt, _ci = _tg_creds()
+    if not _bt or not _ci:
+        return
+
+    # Build and send reminder
+    _day_name = now.strftime("%A")
+    _date_str = now.strftime("%d %b %Y")
+    msg = (
+        "\U0001f511 <b>PivotVault AI - Daily Token Reminder</b>\n"
+        "--------------------\n"
+        f"Good morning! Today is <b>{_day_name}, {_date_str}</b>\n\n"
+        "Please update your <b>Upstox Access Token</b>\n"
+        "before markets open.\n\n"
+        "<b>Steps:</b>\n"
+        "1. Open Upstox Developer Console\n"
+        "2. Generate today's Access Token\n"
+        "3. Open PivotVault AI\n"
+        "4. Go to Settings - Broker Settings\n"
+        "5. Paste token and click Save\n\n"
+        "\U0001f550 Markets open at <b>9:45 AM IST</b>\n"
+        "\u26a1 Auto-trading starts at <b>9:45 AM IST</b>"
+    )
+    ok = _send_telegram(msg)
+    if ok:
+        st.session_state["_tg_token_reminder_date"] = _today
 
 
 def render_market_header():
@@ -6231,7 +6293,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
             "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
             "⚡ <b>AUTO</b> (15m/30m) = Forward Test auto-executes &nbsp;|&nbsp; "
-            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button</div>",
+            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button &nbsp;|&nbsp; "
+            "🕐 Auto window: <b>9:45–14:45 IST</b> · Str≥75% · RR≥2.0</div>",
             unsafe_allow_html=True)
         import json
 
@@ -6636,10 +6699,10 @@ def _trade_buttons(s: dict):
 
     if mkt_open and _auto_ok:
         status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-                       " · 🇮🇳 9:30–15:15 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
+                       " · 🇮🇳 9:45–14:45 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
     elif mkt_open and not _auto_ok:
         status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
-                       " · 🇮🇳 Opens 9:30 AM IST | 🇺🇸 Opens 9:45 AM EST")
+                       " · 🇮🇳 Auto trades from 9:45 AM IST | 🇺🇸 Opens 9:45 AM EST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
@@ -7748,8 +7811,22 @@ def _ft_get_ltp(symbol: str) -> float:
         except Exception:
             pass
         return 0.0
+    # Try Upstox first
     ltp = upstox_get_ltp(symbol)
-    return ltp if ltp > 0 else 0.0
+    if ltp > 0:
+        return ltp
+
+    # yfinance fallback for Indian stocks (.NS suffix)
+    try:
+        fi = yf.Ticker(symbol + ".NS").fast_info
+        p  = float(getattr(fi, "last_price", 0) or 0)
+        if p > 0: return round(p, 2)
+        hist = yf.Ticker(symbol + ".NS").history(period="1d", interval="1m")
+        if not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    return 0.0
 
 # ── Signal auto-entry (called from scanner + signal tab) ─────────────────
 
@@ -7759,7 +7836,7 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
 
     Rules:
     - Supports both India (NSE) and US (NYSE/NASDAQ) markets
-    - India : enters during 9:30–15:15 IST Mon-Fri
+    - India : enters during 9:45–14:45 IST Mon-Fri
     - US    : enters during 9:45–15:45 EST/EDT Mon-Fri
     - Entry price = FIRST live tick from data feed at moment of signal
     - Never re-enters same symbol+side already OPEN or traded today
@@ -9284,6 +9361,9 @@ def main():
     render_market_header()
     st.divider()
     nse500 = fetch_nse500_list()
+
+    # Daily 9 AM Telegram token reminder (weekdays only, once per day)
+    _check_daily_token_reminder()
 
     # Show token refresh popup at top of every page if needed
     _show_token_refresh_popup()
