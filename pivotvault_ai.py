@@ -2388,8 +2388,10 @@ def is_auto_trade_open(market: str = "india") -> bool:
     else:
         now = _ist_now()
         if now.weekday() >= 5: return False
-        o = now.replace(hour=9,  minute=30, second=0, microsecond=0)
-        c = now.replace(hour=15, minute=15, second=0, microsecond=0)
+        # Optimal window: skip first 15 min volatility + last 30 min pre-close
+        # 09:45–14:45 IST — Frank Ochoa's highest probability trading window
+        o = now.replace(hour=9,  minute=45, second=0, microsecond=0)
+        c = now.replace(hour=14, minute=45, second=0, microsecond=0)
         return o <= now <= c
 
 def get_market_status(market: str = "india") -> dict:
@@ -3890,6 +3892,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     # ── Stochastic ────────────────────────────────────────────────────────────
     # Stochastic is embedded in TV chart above; show Plotly fallback only
     df_ind = analysis.get("df_ind")
+    _TV_CHARTS = False  # TradingView charts not used — using built-in Plotly
     if not _TV_CHARTS and df_ind is not None and "STOCH_K" in df_ind.columns:
         st.divider()
         st.plotly_chart(build_stoch_chart(df_ind), use_container_width=True)
@@ -4540,8 +4543,12 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             TC  = (P - BC) + P
             width = abs(TC - BC) / P * 100 if P else 0
 
-            # Wider CPR acceptable for shorter timeframes
-            max_width = 3.0 if interval in ("15m","30m") else (2.5 if interval == "1h" else 2.0)
+            # CPR width limits per timeframe — Ochoa: narrow = trending day
+            # 30M is primary (best quality), 15M tighter, 1H slightly wider
+            if interval == "15m":   max_width = 2.0   # tight for scalp
+            elif interval == "30m": max_width = 1.5   # 30M primary — strictest
+            elif interval == "1h":  max_width = 2.5   # swing — allow wider
+            else:                   max_width = 2.0
             if width > max_width:
                 continue
 
@@ -5632,6 +5639,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     # Volume surge
                     if "✅" in vol: score += 8
 
+                    # Timeframe bonus — 30M is primary (highest quality CPR signals)
+                    _tf = str(row.get("tf",""))
+                    if   "30m" in _tf or "30M" in _tf: score += 15  # primary TF
+                    elif "1h"  in _tf or "1H"  in _tf: score += 8   # swing TF
+                    elif "15m" in _tf or "15M" in _tf: score += 5   # scalp TF
+
                     return round(score, 2)
 
                 # Compute rank score for every directional signal
@@ -5646,6 +5659,14 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     st.session_state[f"ranked_scan_{tf_tag}"] = ranked
 
                     # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
+                    # Max 1 trade per symbol per day — no duplicate entries
+                    _today   = datetime.now().strftime("%Y-%m-%d")
+                    _ft_evts = _ft_state().get("events", [])
+                    _traded_today = set(
+                        e.get("symbol","") for e in _ft_evts
+                        if e.get("type","") == "ENTRY"
+                        and str(e.get("time","")).startswith(_today)
+                    )
                     auto_traded = 0
                     for _ri, row in ranked.iterrows():
                         sig = {
@@ -5678,15 +5699,23 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         # Block sideways + enforce quality gate
                         if _overlap and _day_type == "Sideways":
                             continue
-                        if not (_strength >= 70 and _rr >= 1.5):
+                        # Frank Ochoa optimal params:
+                        # Strength >= 75%, RR >= 2.0, Non-sideways day
+                        if not (_strength >= 75 and _rr >= 2.0):
                             continue
                         if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
                             continue
 
+                        # Skip if this symbol already traded today
+                        if sig["symbol"] in _traded_today:
+                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
+                            continue
+
                         if auto_traded < 3:
-                            # Auto-trade top 3
+                            # Auto-trade top 3 — 30M preferred, then 15M, then 1H
                             ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
                             ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                            _traded_today.add(sig["symbol"])
                             auto_traded += 1
                         # Rest are available for manual trade — marked in ranked table
 
