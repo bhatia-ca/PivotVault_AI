@@ -2749,7 +2749,9 @@ def db_save_signals(user_id, signals): pass
 
 
 def page_login():
-    """Login page with 5 demo credentials."""
+    """Login page — PIN login + Telegram OTP login."""
+
+    import random as _rnd
 
     st.markdown("""
     <div style="text-align:center;padding:2rem 1rem 1.5rem;">
@@ -2767,78 +2769,171 @@ def page_login():
 
     _, col, _ = st.columns([1, 2, 1])
     with col:
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-        # ── Sign In ───────────────────────────────────────────────
-        if True:  # single card — no tabs
-            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        method = st.radio("Login Method",
+                          ["🔢 PIN Login", "📱 Telegram OTP"],
+                          horizontal=True,
+                          label_visibility="collapsed",
+                          key="login_method")
 
-            method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
-                              horizontal=True, label_visibility="collapsed",
-                              key="login_method")
+        # ── DIVIDER ────────────────────────────────────────────────────────────
+        st.markdown("<hr style='margin:0.6rem 0;border-color:#e0e8d0;'>",
+                    unsafe_allow_html=True)
 
-            if "PIN" in method:
-                identifier = st.text_input("Email or Phone",
-                    placeholder="email  or  phone number", key="login_id")
-                pin = st.text_input("4-Digit PIN", type="password",
-                    max_chars=4, placeholder="••••", key="login_pin")
+        # ══════════════════════════════════════════════════════════════════════
+        # METHOD 1 — PIN LOGIN
+        # ══════════════════════════════════════════════════════════════════════
+        if "PIN" in method:
+            identifier = st.text_input("Email",
+                placeholder="umeshbhatia.ca@gmail.com", key="login_id")
+            pin = st.text_input("4-Digit PIN", type="password",
+                max_chars=4, placeholder="••••", key="login_pin")
 
-                if st.button("🔓 Sign In", use_container_width=True, key="btn_login"):
-                    if not identifier or not pin:
-                        st.error("Enter email/phone and PIN.")
-                    else:
-                        ok, user = verify_login(identifier, pin)
-                        if ok:
-                            st.session_state["logged_in"]  = True
-                            _save_session()  # persist so refresh keeps user logged in
-                            st.session_state["username"]   = user["name"]
-                            st.session_state["user_id"]    = user["email"]
-                            st.session_state["user_email"] = user["email"]
-                            st.session_state["user_phone"] = user.get("phone","")
-                            st.rerun()
-                        else:
-                            st.error("❌ Wrong email/phone or PIN. Please try again.")
-
-            else:
-                # OTP flow
-                if not st.session_state.get("otp_code"):
-                    otp_id = st.text_input("Email or Phone",
-                        placeholder="email  or  phone number", key="otp_input")
-                    if st.button("📨 Send OTP", use_container_width=True, key="btn_otp"):
-                        idf = otp_id.strip().lower()
-                        if idf in _PHONE_MAP:
-                            idf = _PHONE_MAP[idf]
-                        if idf in USERS:
-                            otp = generate_otp()
-                            st.session_state["otp_code"]   = otp
-                            st.session_state["otp_target"] = otp_id.strip()
-                            st.session_state["otp_email"]  = idf
-                            st.success(f"OTP generated: **{otp}**  (demo — shown here)")
-                            st.rerun()
-                        else:
-                            st.error("❌ Email/phone not found. Please check and try again.")
+            if st.button("🔓 Sign In", use_container_width=True, key="btn_login",
+                         type="primary"):
+                if not identifier or not pin:
+                    st.error("Enter email and PIN.")
                 else:
-                    st.info(f"OTP sent to: {st.session_state.get('otp_target','')}")
-                    entered = st.text_input("Enter 6-digit OTP",
-                        max_chars=6, placeholder="______", key="otp_entered")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ Verify", use_container_width=True, key="btn_verify"):
-                            if entered.strip() == st.session_state.get("otp_code",""):
-                                em   = st.session_state["otp_email"]
-                                user = get_user_by_email(em)
-                                st.session_state.update({
-                                    "logged_in": True, "username": user["name"],
-                                    "user_id": em, "user_email": em,
-                                    "user_phone": user.get("phone",""),
-                                    "otp_code": "",
-                                })
-                                st.rerun()
-                            else:
-                                st.error("Wrong OTP.")
-                    with c2:
-                        if st.button("🔄 Resend", use_container_width=True, key="btn_resend"):
-                            st.session_state["otp_code"] = ""
+                    ok, user = verify_login(identifier, pin)
+                    if ok:
+                        st.session_state["logged_in"]  = True
+                        st.session_state["username"]   = user["name"]
+                        st.session_state["user_id"]    = user["email"]
+                        st.session_state["user_email"] = user["email"]
+                        st.session_state["user_phone"] = user.get("phone","")
+                        _save_session()
+                        st.rerun()
+                    else:
+                        st.error("❌ Wrong email or PIN.")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # METHOD 2 — TELEGRAM OTP LOGIN
+        # ══════════════════════════════════════════════════════════════════════
+        else:
+            # ── Step 1: Request OTP ───────────────────────────────────────────
+            if not st.session_state.get("tg_otp_code"):
+
+                st.markdown("""
+                <div style='background:#f0f9f0;border:1.5px solid #b8dfc0;border-radius:10px;
+                            padding:1rem;margin-bottom:1rem;font-family:DM Sans,sans-serif;
+                            font-size:0.85rem;color:#1e3a1e;'>
+                    <b>📱 How it works:</b><br>
+                    1. Click <b>Send OTP to Telegram</b><br>
+                    2. A 6-digit code appears in your <b>Telegram bot chat</b><br>
+                    3. Enter the code here to login ✅
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Check if Telegram is configured
+                _tg_cfg = _tg_creds()
+                _tg_ready = bool(_tg_cfg.get("bot_token") and _tg_cfg.get("chat_id"))
+
+                if not _tg_ready:
+                    st.warning("⚠️ Telegram not configured. "
+                               "Please login with PIN first, then set up Telegram in Settings.")
+                else:
+                    st.markdown(
+                        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#4a5e32;margin-bottom:0.75rem;text-align:center;'>"
+                        f"OTP will be sent to your Telegram bot</div>",
+                        unsafe_allow_html=True)
+
+                    if st.button("📲 Send OTP to Telegram",
+                                 use_container_width=True,
+                                 key="btn_tg_otp",
+                                 type="primary"):
+                        # Generate 6-digit OTP
+                        otp = str(_rnd.randint(100000, 999999))
+                        st.session_state["tg_otp_code"]    = otp
+                        st.session_state["tg_otp_expires"] = (
+                            datetime.now() + timedelta(minutes=5)).strftime("%H:%M:%S")
+
+                        # Send via Telegram bot
+                        msg = (
+                            "\U0001f510 <b>PivotVault AI - Login OTP</b>\n"
+                            "--------------------\n"
+                            "Your one-time login code:\n\n"
+                            f"<code>  {otp}  </code>\n\n"
+                            f"Valid for 5 minutes\n"
+                            f"Expires at: {st.session_state.get('tg_otp_expires','')}\n\n"
+                            "If you did not request this, ignore it."
+                        )
+                        ok = _send_telegram(msg)
+                        if ok:
+                            st.success("✅ OTP sent to Telegram! Check your bot chat.")
                             st.rerun()
+                        else:
+                            st.session_state["tg_otp_code"] = ""
+                            st.error("❌ Failed to send OTP. Check Telegram settings.")
+
+            # ── Step 2: Enter + Verify OTP ────────────────────────────────────
+            else:
+                _expires = st.session_state.get("tg_otp_expires", "")
+                st.markdown(
+                    f"<div style='background:#fff8e1;border:1.5px solid #ffe082;"
+                    f"border-radius:10px;padding:0.75rem;margin-bottom:0.75rem;"
+                    f"font-family:DM Mono,monospace;font-size:0.78rem;color:#5a4000;"
+                    f"text-align:center;'>"
+                    f"⏱ OTP sent to Telegram · Expires <b>{_expires}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+                entered = st.text_input("Enter 6-digit OTP from Telegram",
+                    max_chars=6,
+                    placeholder="_ _ _ _ _ _",
+                    key="tg_otp_entered")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ Verify & Login",
+                                 use_container_width=True,
+                                 key="btn_tg_verify",
+                                 type="primary"):
+                        # Check expiry
+                        try:
+                            exp_t = datetime.strptime(_expires, "%H:%M:%S").replace(
+                                year=datetime.now().year,
+                                month=datetime.now().month,
+                                day=datetime.now().day)
+                            expired = datetime.now() > exp_t
+                        except Exception:
+                            expired = False
+
+                        if expired:
+                            st.session_state["tg_otp_code"] = ""
+                            st.error("⌛ OTP expired. Please request a new one.")
+                            st.rerun()
+                        elif entered.strip() == st.session_state.get("tg_otp_code",""):
+                            # ✅ Valid OTP — log in as admin
+                            _admin = list(USERS.keys())[0]
+                            _udata = USERS[_admin]
+                            st.session_state.update({
+                                "logged_in":  True,
+                                "username":   _udata["name"],
+                                "user_id":    _admin,
+                                "user_email": _admin,
+                                "user_phone": _udata.get("phone",""),
+                                "tg_otp_code": "",
+                            })
+                            _save_session()
+                            # Send confirmation to Telegram
+                            _send_telegram(
+                                "Login Successful - PivotVault AI\n"
+                                "--------------------\n"
+                                f"User: {_udata['name']} logged in via Telegram OTP\n"
+                                f"Time: {datetime.now().strftime('%d %b %Y %I:%M %p')}"
+                            )
+                            st.rerun()
+                        else:
+                            st.error("❌ Wrong OTP. Please check and try again.")
+
+                with c2:
+                    if st.button("🔄 New OTP",
+                                 use_container_width=True,
+                                 key="btn_tg_resend"):
+                        st.session_state["tg_otp_code"] = ""
+                        st.rerun()
 
 
 
@@ -4701,20 +4796,76 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             top3 = reasons[:3] if len(reasons) >= 3 else reasons
             rationale = " · ".join(top3)
             if virgin_cpr:
-                rationale = "⭐ " + rationale  # highlight virgin CPR
+                rationale = "⭐ Virgin CPR · " + rationale
+            # Append Day Type and CPR overlap to rationale
+            rationale += f" | {day_type} Day"
+            if cpr_above_prev or cpr_below_prev:
+                rationale += " | Non-Overlap CPR"
+            if extreme_bull or extreme_bear:
+                rationale += " | Extreme Reversal"
+            if outside_bull or outside_bear:
+                rationale += " | Outside Reversal"
 
+            # ── Frank Ochoa Strategy Classifier ─────────────────────────
+            # Match signal to the BEST fitting named strategy based on
+            # conditions actually triggered — in priority order
+            def _classify_strategy():
+                # P1: Two-Day CPR Non-Overlap (highest conviction trending day)
+                if (cpr_above_prev or cpr_below_prev) and width < 0.5:
+                    return "Two-Day CPR Non-Overlap"
+                # P2: Extreme Reversal (Rubber Band)
+                if extreme_bull or extreme_bear:
+                    return "Extreme Reversal (Rubber Band)"
+                # P3: Outside Reversal (False Breakout Fade)
+                if outside_bull or outside_bear:
+                    return "Outside Reversal (False Breakout Fade)"
+                # P4: Wick Reversal at CPR
+                if candle_name in ("Hammer","Bull Pin Bar","Bullish Engulfing",
+                                   "Shooting Star","Bear Pin Bar","Bearish Engulfing",
+                                   "Morning Star","Evening Star"):
+                    _near_bc = abs(ltp - BC) <= atr * 0.5
+                    _near_tc = abs(ltp - TC) <= atr * 0.5
+                    if _near_bc or _near_tc:
+                        return "Wick Reversal at CPR"
+                # P5: Virgin CPR Weekly Magnet
+                if virgin_cpr and width < 0.5:
+                    return "Virgin CPR Breakout"
+                # P6: CPR Narrow Breakout (width < 0.5%, trending day)
+                if width < 0.5 and day_type in ("Trending","Moderate"):
+                    return "CPR Narrow Breakout"
+                # P7: 3/10 Oscillator Cross
+                if osc_cross_bull or osc_cross_bear:
+                    return "3/10 Oscillator Cross"
+                # P8: RSI + CPR Confluence
+                if (pattern_main == "Bullish" and rsi >= 50) or                    (pattern_main == "Bearish" and rsi <= 50):
+                    return "RSI + CPR Confluence"
+                # P9: Candlestick + CPR
+                if candle_name not in ("None","—",""):
+                    return "Candlestick + CPR"
+                # P10: HMA Trend Follower
+                if hma_up is not None:
+                    return "HMA Trend Follower"
+                # Default
+                return "CPR Signal"
+
+            strat_name = _classify_strategy()
             strat_name = _build_strategy_name({
+                "side":       pattern_main,
+                "tf":         interval,
+                "candle":     candle_name,
+                "rsi":        round(rsi,1),
+                "hma":        "▲" if hma_up else "▼",
+                "vol":        "✅" if vol_surge else "—",
+                "cpr_w":      round(width,3),
+                "strength":   min(strength,100),
+                "rr1":        rr1,
+                "ltp":        ltp,
+                "entry":      entry,
+                "day_type":   day_type,
                 "tf_label":   interval,
-                "CPR Type":   cpr_type,
-                "Candle":     candle_name,
-                "Pattern":    pattern_main,
-                "RSI":        round(rsi,1),
-                "HMA":        "▲" if hma_up else "▼",
-                "Vol Surge":  "✅" if vol_surge else "—",
-                "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
-                "CPR Width%": round(width,3),
-                "Strength%":  min(strength,100),
             })
+            # Prepend strategy classification to name
+            strat_name = f"{_classify_strategy()} — {strat_name}"
 
             rows.append({
                 "Symbol":     sym,
