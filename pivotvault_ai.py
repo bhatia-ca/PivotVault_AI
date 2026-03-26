@@ -2826,8 +2826,9 @@ def page_login():
                 """, unsafe_allow_html=True)
 
                 # Check if Telegram is configured
-                _tg_cfg = _tg_creds()
-                _tg_ready = bool(_tg_cfg.get("bot_token") and _tg_cfg.get("chat_id"))
+                # _tg_creds() returns (bot_token, chat_id) tuple
+                _tg_bt, _tg_ci = _tg_creds()
+                _tg_ready = bool(_tg_bt and _tg_ci)
 
                 if not _tg_ready:
                     st.warning("⚠️ Telegram not configured. "
