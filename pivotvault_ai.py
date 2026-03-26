@@ -1020,6 +1020,9 @@ def _load_credentials():
                       "broker","broker_connected"]:
                 if k in data and not st.session_state.get(k):
                     st.session_state[k] = data[k]
+            # Restore Telegram config
+            if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
+                st.session_state["telegram_cfg"] = data["telegram_cfg"]
     except Exception:
         pass
 
@@ -1054,6 +1057,9 @@ def _save_credentials():
                 ["upstox_api_key","upstox_api_secret","upstox_access_token",
                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                  "broker","broker_connected"]}
+        # Persist Telegram config
+        if st.session_state.get("telegram_cfg"):
+            data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(_CREDS_FILE, "w") as f:
             json.dump(data, f)
@@ -6986,14 +6992,15 @@ def page_broker_settings():
             if st.button("💾 Save Settings",use_container_width=True,key="tg_save"):
                 st.session_state["telegram_cfg"]={"bot_token":_bt.strip(),"chat_id":_ci.strip(),
                     "notify_signals":_ns,"notify_entry":_ne,"notify_t1":_nt,"notify_t2":_nt,"notify_sl":_nl}
-                st.success("✅ Telegram settings saved!")
+                _save_credentials()  # persist to disk — survives refresh
+                st.success("✅ Telegram settings saved & persisted! ✅")
         with _b2:
             if st.button("🧪 Send Test Message",use_container_width=True,key="tg_test"):
                 _ok=_send_telegram("🧪 <b>PivotVault AI — Test</b>\n━━━━━━━━━━━━━━━━━━━━\n🟢 <b>BUY RELIANCE</b> [15m]\n📌 Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800\n✅ Telegram is working!")
                 st.success("✅ Sent! Check Telegram.") if _ok else st.error("❌ Failed — save credentials first.")
         with _b3:
             if st.button("🗑 Clear",use_container_width=True,key="tg_clr"):
-                st.session_state["telegram_cfg"]={};st.rerun()
+                st.session_state["telegram_cfg"]={};_save_credentials();st.rerun()
         st.divider()
         if _tgs.get("bot_token") and _tgs.get("chat_id"):
             st.markdown("<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>📨 <b>Telegram ACTIVE</b></div>",unsafe_allow_html=True)
