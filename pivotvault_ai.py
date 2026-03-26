@@ -1236,6 +1236,58 @@ def fetch_nifty200_list() -> list:
             "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
         ]
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  US MARKET STOCK LISTS — Dow 30 + Nasdaq 100
+# ══════════════════════════════════════════════════════════════════════════════
+
+_DOW30_SYMBOLS = [
+    "AAPL","AMGN","AXP","BA","CAT","CRM","CSCO","CVX","DIS","DOW",
+    "GS","HD","HON","IBM","INTC","JNJ","JPM","KO","MCD","MMM",
+    "MRK","MSFT","NKE","PG","TRV","UNH","V","VZ","WBA","WMT",
+]
+
+_NASDAQ100_SYMBOLS = [
+    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
+    "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","INTC","INTU","AMGN",
+    "AMAT","HON","BKNG","VRTX","SBUX","GILD","ADI","PANW","LRCX","MDLZ",
+    "REGN","KLAC","SNPS","CDNS","MELI","ASML","CRWD","ABNB","MNST","KDP",
+    "ORLY","FTNT","CTAS","CHTR","MRVL","CPRT","ROP","WDAY","DXCM","PCAR",
+    "ODFL","PAYX","ROST","AEP","FAST","CEG","IDXX","VRSK","BIIB","ANSS",
+    "FANG","EXC","CTSH","DLTR","XEL","EA","BKR","CSGP","GFS","GEHC",
+    "ON","ZS","TEAM","DDOG","ALGN","SIRI","WBD","ILMN","TTD","ZM",
+    "DOCU","OKTA","PINS","SNAP","UBER","COIN","RBLX","HOOD","SOFI","PLTR",
+    "AFRM","DASH","MDB","SNOW","BILL","RIVN","LCID","U","TWLO","OKTA",
+]
+
+_NIFTY50_SYMBOLS = [
+    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
+    "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
+    "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
+    "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
+    "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
+    "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
+    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
+]
+
+_US_SET = set(_DOW30_SYMBOLS + _NASDAQ100_SYMBOLS)
+
+def is_us_symbol(sym: str) -> bool:
+    """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
+    return sym.upper() in _US_SET
+
+def get_market_list(market: str) -> list:
+    """Return symbol list for selected market toggle."""
+    if market == "🇮🇳 Nifty 50":
+        return _NIFTY50_SYMBOLS
+    elif market == "🇺🇸 Dow 30":
+        return _DOW30_SYMBOLS
+    elif market == "🇺🇸 Nasdaq 100":
+        return _NASDAQ100_SYMBOLS
+    else:  # default — Nifty 200
+        return fetch_nifty200_list()
+
+
 @st.cache_data(ttl=3600)
 def fetch_nifty200_by_marketcap() -> list:
     """
@@ -4165,7 +4217,9 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "1d":"1d","1wk":"1wk","1mo":"1mo"
             }
             yf_iv = yf_interval_map.get(interval, interval)
-            ticker = yf.Ticker(sym + ".NS")
+            # US stocks use ticker as-is; Indian stocks need .NS suffix
+            ticker_sym = sym if is_us_symbol(sym) else sym + ".NS"
+            ticker = yf.Ticker(ticker_sym)
             df = ticker.history(
                 period=period,
                 interval=yf_iv,
@@ -4178,7 +4232,9 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     def _fetch_upstox(sym: str) -> pd.DataFrame:
-        """Fetch from Upstox historical API — tries whenever any token exists."""
+        """Fetch from Upstox historical API — NSE stocks only; skip US symbols."""
+        if is_us_symbol(sym):  # Upstox is NSE-only — US stocks use yfinance
+            return pd.DataFrame()
         # Use Upstox if token present (connected) OR if creds saved (try anyway)
         if not _upstox_connected() and not _upstox_has_credentials():
             return pd.DataFrame()
@@ -4923,6 +4979,38 @@ def page_scanner_signals(nse500: pd.DataFrame):
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
+        # ── Market Toggle ──────────────────────────────────────────────────
+        _market = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
+        _tm1, _tm2, _tm3, _tm4 = st.columns(4)
+        with _tm1:
+            if st.button("🇮🇳 Nifty 200", use_container_width=True,
+                         type="primary" if _market == "🇮🇳 Nifty 200" else "secondary",
+                         key="mkt_nifty200"):
+                st.session_state["scanner_market"] = "🇮🇳 Nifty 200"; st.rerun()
+        with _tm2:
+            if st.button("🇮🇳 Nifty 50", use_container_width=True,
+                         type="primary" if _market == "🇮🇳 Nifty 50" else "secondary",
+                         key="mkt_nifty50"):
+                st.session_state["scanner_market"] = "🇮🇳 Nifty 50"; st.rerun()
+        with _tm3:
+            if st.button("🇺🇸 Dow 30", use_container_width=True,
+                         type="primary" if _market == "🇺🇸 Dow 30" else "secondary",
+                         key="mkt_dow30"):
+                st.session_state["scanner_market"] = "🇺🇸 Dow 30"; st.rerun()
+        with _tm4:
+            if st.button("🇺🇸 Nasdaq 100", use_container_width=True,
+                         type="primary" if _market == "🇺🇸 Nasdaq 100" else "secondary",
+                         key="mkt_nasdaq"):
+                st.session_state["scanner_market"] = "🇺🇸 Nasdaq 100"; st.rerun()
+        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        st.markdown(
+            f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
+            f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
+            f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
+            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; "
+            f"{'<b>$USD</b> · yfinance (US)' if _is_us else '<b>₹INR</b> · Upstox / yfinance'}"
+            f"</div>", unsafe_allow_html=True)
+        st.divider()
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
@@ -5082,7 +5170,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
                 try:
                     result = scan_cpr_multi_tf(
-                        fetch_nifty200_list(),
+                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200")),
                         interval=cfg["interval"],
                         period=cfg["period"],
                         max_stocks=n_stocks,
