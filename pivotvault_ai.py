@@ -2573,10 +2573,8 @@ def page_login():
     _, col, _ = st.columns([1, 2, 1])
     with col:
 
-        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Accounts"])
-
         # ── Sign In ───────────────────────────────────────────────
-        with tab_login:
+        if True:  # single card — no tabs
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
             method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
@@ -2603,7 +2601,7 @@ def page_login():
                             st.session_state["user_phone"] = user.get("phone","")
                             st.rerun()
                         else:
-                            st.error("❌ Wrong email/phone or PIN. See Accounts tab.")
+                            st.error("❌ Wrong email/phone or PIN. Please try again.")
 
             else:
                 # OTP flow
@@ -2622,7 +2620,7 @@ def page_login():
                             st.success(f"OTP generated: **{otp}**  (demo — shown here)")
                             st.rerun()
                         else:
-                            st.error("Email/phone not found. See Accounts tab.")
+                            st.error("❌ Email/phone not found. Please check and try again.")
                 else:
                     st.info(f"OTP sent to: {st.session_state.get('otp_target','')}")
                     entered = st.text_input("Enter 6-digit OTP",
@@ -2647,39 +2645,6 @@ def page_login():
                             st.session_state["otp_code"] = ""
                             st.rerun()
 
-        # ── Accounts tab ──────────────────────────────────────────
-        with tab_accounts:
-            st.markdown(
-                "<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
-                "color:#5a6a48;margin:0.5rem 0 1rem;'>"
-                "Use any of these accounts to sign in:</div>",
-                unsafe_allow_html=True,
-            )
-            for email, u in USERS.items():
-                if st.button(
-                    f"👤 {u['name']}",
-                    key=f"quick_{email}",
-                    use_container_width=True,
-                ):
-                    st.session_state.update({
-                        "logged_in": True,
-                        "username":  u["name"],
-                        "user_id":   email,
-                        "user_email": email,
-                        "user_phone": u["phone"],
-                    })
-                    st.rerun()
-                st.markdown(
-                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                    f"color:#5a6a48;margin:-0.4rem 0 0.5rem;padding:0.5rem 0.75rem;"
-                    f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:6px;'>"
-                    f"📧 {email}  &nbsp;&nbsp;"
-                    f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
-                    f"padding:1px 7px;font-weight:700;'>PIN: {u['pin']}</span>"
-                    f"&nbsp;&nbsp; 📱 {u['phone']}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
 
 
 def page_market_snapshot(nse500: pd.DataFrame):
