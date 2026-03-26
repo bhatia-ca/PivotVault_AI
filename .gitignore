@@ -1,0 +1,5 @@
+# PivotVault AI — private data files
+data/pivotvault_creds.json
+data/pivotvault_session.json
+data/pivotvault_ft.json
+data/*.json
