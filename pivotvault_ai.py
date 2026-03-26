@@ -1005,26 +1005,86 @@ st.markdown("""
 #  Cleared only when user explicitly logs out.
 # ─────────────────────────────────────────────
 
-_SESSION_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_session.json")
+# ── Persistent storage paths — multi-location fallback ───────────────────────
+# Primary: app/data/ folder (survives Streamlit Cloud hot reloads)
+# Fallback: home dir, /tmp
+_APP_DIR   = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR  = os.path.join(_APP_DIR, "data")
+try:
+    os.makedirs(_DATA_DIR, exist_ok=True)
+except Exception:
+    _DATA_DIR = os.path.expanduser("~")   # fallback to home if data/ not writable
 
-_CREDS_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json")
+_SESSION_FILE = os.path.join(_DATA_DIR, "pivotvault_session.json")
+_CREDS_FILE   = os.path.join(_DATA_DIR, "pivotvault_creds.json")
+
+def _all_creds_paths():
+    return [
+        _CREDS_FILE,
+        os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json"),
+        "/tmp/pivotvault_creds.json",
+    ]
+
+def _all_session_paths():
+    return [
+        _SESSION_FILE,
+        os.path.join(os.path.expanduser("~"), ".pivotvault_session.json"),
+        "/tmp/pivotvault_session.json",
+    ]
 
 def _load_credentials():
-    """Load persisted broker credentials on startup."""
+    """Load credentials — checks all 3 file locations + st.secrets fallback."""
+    # ── 1. Try all file locations ─────────────────────────────────────────────
+    data = {}
+    for path in _all_creds_paths():
+        try:
+            if os.path.exists(path):
+                with open(path) as f:
+                    data = json.load(f)
+                if data:
+                    break   # found a valid file — stop looking
+        except Exception:
+            continue
+
+    if data:
+        for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
+                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
+                  "broker","broker_connected"]:
+            if k in data and not st.session_state.get(k):
+                st.session_state[k] = data[k]
+        if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
+            st.session_state["telegram_cfg"] = data["telegram_cfg"]
+
+    # ── 2. st.secrets fallback — always wins for Telegram + Upstox keys ──────
+    # This survives ALL restarts since secrets are stored on Streamlit Cloud
     try:
-        if os.path.exists(_CREDS_FILE):
-            with open(_CREDS_FILE) as f:
-                data = json.load(f)
-            for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
-                      "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
-                      "broker","broker_connected"]:
-                if k in data and not st.session_state.get(k):
-                    st.session_state[k] = data[k]
-            # Restore Telegram config
-            if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
-                st.session_state["telegram_cfg"] = data["telegram_cfg"]
+        _sec = st.secrets
+        # Telegram from secrets
+        if not st.session_state.get("telegram_cfg") or            not st.session_state["telegram_cfg"].get("bot_token"):
+            _tg = _sec.get("telegram", {})
+            if _tg and _tg.get("bot_token"):
+                st.session_state["telegram_cfg"] = {
+                    "bot_token":      str(_tg.get("bot_token","")),
+                    "chat_id":        str(_tg.get("chat_id","")),
+                    "notify_entry":   bool(_tg.get("notify_entry", True)),
+                    "notify_t1":      bool(_tg.get("notify_t1",    True)),
+                    "notify_t2":      bool(_tg.get("notify_t2",    True)),
+                    "notify_sl":      bool(_tg.get("notify_sl",    True)),
+                    "notify_signals": bool(_tg.get("notify_signals",True)),
+                }
+        # Upstox API key/secret from secrets (NOT access token — that's daily)
+        _up = _sec.get("upstox", {})
+        if _up:
+            if _up.get("api_key") and not st.session_state.get("upstox_api_key"):
+                st.session_state["upstox_api_key"]    = str(_up["api_key"])
+            if _up.get("api_secret") and not st.session_state.get("upstox_api_secret"):
+                st.session_state["upstox_api_secret"] = str(_up["api_secret"])
+        # App defaults from secrets
+        _app = _sec.get("app", {})
+        if _app.get("default_balance") and not st.session_state.get("_ft_balance_set"):
+            st.session_state["_ft_default_balance"] = float(_app["default_balance"])
     except Exception:
-        pass
+        pass   # st.secrets not available (local dev) — silent fail
 
 
 def _load_session():
@@ -1051,18 +1111,23 @@ def _load_session():
 
 
 def _save_credentials():
-    """Persist broker credentials permanently (API key/secret stay forever)."""
+    """Persist broker credentials to ALL storage locations (triple-backup)."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["upstox_api_key","upstox_api_secret","upstox_access_token",
                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                  "broker","broker_connected"]}
-        # Persist Telegram config
         if st.session_state.get("telegram_cfg"):
             data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(_CREDS_FILE, "w") as f:
-            json.dump(data, f)
+        # Write to ALL 3 locations — whichever is writable will succeed
+        for path in _all_creds_paths():
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(data, f)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -4441,6 +4506,56 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             inside_cpr = ((close.iloc[-12:-2] >= BC) & (close.iloc[-12:-2] <= TC)).any()
             virgin_cpr = not inside_cpr
 
+            # ── Two-Day CPR Relationship (Frank Ochoa) ───────────────────────
+            # Compare today's CPR with yesterday's CPR
+            # Overlapping CPR → choppy/sideways day — avoid breakout trades
+            # Non-overlapping CPR → trending day — high probability breakout
+            if len(df) >= 4:
+                ref_prev  = df.iloc[-3]
+                H2p, L2p, C2p = float(ref_prev["High"]), float(ref_prev["Low"]), float(ref_prev["Close"])
+                P2p  = (H2p + L2p + C2p) / 3
+                BC2p = (H2p + L2p) / 2
+                TC2p = (P2p - BC2p) + P2p
+                # Overlap check: today's CPR overlaps yesterday's
+                cpr_overlap   = not (TC < BC2p or BC > TC2p)
+                cpr_above_prev = BC > TC2p   # today's CPR entirely above yesterday → strong bull
+                cpr_below_prev = TC < BC2p   # today's CPR entirely below yesterday → strong bear
+            else:
+                cpr_overlap = False
+                cpr_above_prev = cpr_below_prev = False
+
+            # ── CPR Day-Type Classifier ───────────────────────────────────────
+            if width < 0.25:
+                day_type = "Trending"     # Narrow CPR → expect strong trend
+            elif width < 0.5:
+                day_type = "Moderate"
+            elif cpr_overlap:
+                day_type = "Sideways"     # Wide + overlapping → avoid
+            else:
+                day_type = "Volatile"
+
+            # ── ATR Bar-Size for Extreme/Outside Reversal ────────────────────
+            bar_sizes  = (high - low_s).rolling(10).mean()
+            avg_bar    = float(bar_sizes.iloc[-1]) if not np.isnan(bar_sizes.iloc[-1]) else atr
+            cur_bar    = float(high.iloc[-1] - low_s.iloc[-1])
+            bar_mult   = cur_bar / avg_bar if avg_bar > 0 else 0
+
+            # ── Extreme Reversal (Rubber Band) — Ochoa SPB Setup ─────────────
+            # Price over-extended (bar_mult >= 2×) snapping back toward CPR
+            extreme_bull = (bar_mult >= 2.0 and bear0 and ltp < BC and
+                            float(low_s.iloc[-1]) < float(low_s.iloc[-5:-2].min()))
+            extreme_bear = (bar_mult >= 2.0 and bull0 and ltp > TC and
+                            float(high.iloc[-1]) > float(high.iloc[-5:-2].max()))
+
+            # ── Outside Reversal (False Breakout Fade) — Ochoa SPB Setup ─────
+            # Bar sweeps beyond prev H/L then reverses back inside
+            outside_bull = (bar_mult >= 1.25 and
+                            float(low_s.iloc[-1])  < float(low_s.iloc[-2]) and
+                            float(close.iloc[-1])  > float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+            outside_bear = (bar_mult >= 1.25 and
+                            float(high.iloc[-1])   > float(high.iloc[-2]) and
+                            float(close.iloc[-1])  < float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+
             # ── Frank Ochoa Scoring ──────────────────────────────────────────
             bull_pts = bear_pts = 0
             bull_reasons = []; bear_reasons = []
@@ -4504,6 +4619,15 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             elif candle_dir == "bear":
                 bear_pts += 2; bear_reasons.append(f"{candle_name} pattern")
 
+            # 8b. Wick Reversal at CPR (Ochoa SPB Setup — +3 pts)
+            # Hammer/Pin Bar forming within 0.5×ATR of BC (bull) or TC (bear)
+            _near_bc = abs(ltp - BC) <= atr * 0.5
+            _near_tc = abs(ltp - TC) <= atr * 0.5
+            if candle_name in ("Hammer", "Bull Pin Bar", "Morning Star", "Bullish Engulfing") and _near_bc:
+                bull_pts += 3; bull_reasons.append(f"Wick Reversal at CPR BC ({candle_name})")
+            elif candle_name in ("Shooting Star", "Bear Pin Bar", "Evening Star", "Bearish Engulfing") and _near_tc:
+                bear_pts += 3; bear_reasons.append(f"Wick Reversal at CPR TC ({candle_name})")
+
             # 9. Pivot position bonus (1 pt)
             if ltp > P:
                 bull_pts += 1; bull_reasons.append("Above Pivot P")
@@ -4514,6 +4638,28 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             if width < 0.25:
                 if bull_pts >= bear_pts: bull_pts += 1; bull_reasons.append("Narrow CPR (<0.25%)")
                 else: bear_pts += 1; bear_reasons.append("Narrow CPR (<0.25%)")
+
+            # 11. Two-Day CPR Relationship (Ochoa — 3 pts, highest conviction)
+            if cpr_above_prev:
+                bull_pts += 3; bull_reasons.append("CPR above prior (trending bull day)")
+            elif cpr_below_prev:
+                bear_pts += 3; bear_reasons.append("CPR below prior (trending bear day)")
+            elif cpr_overlap:
+                # Overlapping CPR — PENALISE breakout signals (choppy day risk)
+                bull_pts = max(0, bull_pts - 2)
+                bear_pts = max(0, bear_pts - 2)
+                bull_reasons.append("⚠️ Overlapping CPR (sideways risk)")
+                bear_reasons.append("⚠️ Overlapping CPR (sideways risk)")
+
+            # 12. Extreme Reversal / Outside Reversal bonus (2 pts each)
+            if extreme_bull:
+                bull_pts += 2; bull_reasons.append("Extreme reversal — rubber band bull")
+            elif extreme_bear:
+                bear_pts += 2; bear_reasons.append("Extreme reversal — rubber band bear")
+            if outside_bull:
+                bull_pts += 2; bull_reasons.append("Outside reversal — false breakdown fade")
+            elif outside_bear:
+                bear_pts += 2; bear_reasons.append("Outside reversal — false breakout fade")
 
             total = bull_pts + bear_pts
             if   bull_pts > bear_pts: pattern_main = "Bullish"; reasons = bull_reasons
@@ -4587,6 +4733,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "Pattern":    pattern_main,
                 "Candle":     candle_name,
                 "Strength%":  min(strength,100),
+                "Day Type":   day_type,
+                "CPR Overlap":cpr_overlap,
                 "RSI":        round(rsi,1),
                 "HMA":        "▲" if hma_up else "▼",
                 "ATR":        round(atr,2),
@@ -5276,25 +5424,126 @@ def page_scanner_signals(nse500: pd.DataFrame):
             st.session_state[scan_key]      = result
             st.session_state[scan_time_key] = now
 
-            # ── Auto-feed signals into Forward Testing ───────────────────────
+            # ── Rank signals & Auto-trade BEST 3 only ────────────────────
             if not result.empty and tf_tag in ("15m","30m","1h"):
-                for _, row in result.iterrows():
-                    sig = {
-                        "symbol":    row.get("Symbol",""),
-                        "side":      "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
-                        "entry":     row.get("Entry",   row.get("LTP",0)),
-                        "sl":        row.get("SL",      0),
-                        "t1":        row.get("T1",      0),
-                        "t2":        row.get("T2",      0),
-                        "rr1":       row.get("RR1",     2.0),
-                        "tf":        tf_tag,
-                        "rationale": row.get("Rationale", row.get("Strategy","CPR")),
-                        "strategy":  row.get("Strategy","CPR"),
-                        "strength":  row.get("Strength%",0),
-                        "candle":    row.get("Candle","—"),
+
+                def _signal_rank_score(row):
+                    """
+                    Composite rank score — Frank Ochoa weighted.
+                    Higher score = better quality signal.
+                    """
+                    s   = float(row.get("Strength%",   0))
+                    rr  = float(row.get("RR1",         1.0))
+                    cw  = float(row.get("CPR Width%",  1.0))
+                    dt  = str(row.get("Day Type",      ""))
+                    ov  = bool(row.get("CPR Overlap",  False))
+                    cn  = str(row.get("Candle",        ""))
+                    rsi = float(row.get("RSI",         50))
+                    hma = str(row.get("HMA",           ""))
+                    vol = str(row.get("Vol Surge",     ""))
+                    side= str(row.get("Pattern",       ""))
+
+                    score = (s * 0.35) + (rr * 15)
+
+                    # CPR Width — narrower = better (trending day)
+                    if cw < 0.25:   score += 20
+                    elif cw < 0.5:  score += 10
+                    elif cw > 1.0:  score -= 10
+
+                    # Day Type bonus/penalty (Ochoa Two-Day CPR)
+                    if dt == "Trending":    score += 25
+                    elif dt == "Moderate":  score += 10
+                    elif dt == "Sideways":  score -= 40
+                    elif dt == "Volatile":  score -= 5
+
+                    # Overlap heavy penalty
+                    if ov: score -= 30
+
+                    # Candle quality bonus
+                    _premium = {
+                        "Morning Star": 20, "Evening Star": 20,
+                        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+                        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+                        "Hammer": 12, "Shooting Star": 12,
+                        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+                        "Inside Bar": 5, "Doji at CPR": 3,
                     }
-                    if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
-                        ft_add_signal(sig, source=f"Auto · {tf_tag.upper()}")
+                    score += _premium.get(cn, 0)
+
+                    # RSI alignment
+                    if side == "Bullish" and rsi >= 55:    score += 8
+                    elif side == "Bearish" and rsi <= 45:  score += 8
+                    elif side == "Bullish" and rsi <= 40:  score -= 5
+                    elif side == "Bearish" and rsi >= 60:  score -= 5
+
+                    # HMA alignment
+                    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+                        score += 10
+
+                    # Volume surge
+                    if "✅" in vol: score += 8
+
+                    return round(score, 2)
+
+                # Compute rank score for every directional signal
+                ranked = result[result["Pattern"] != "Neutral"].copy()
+                if not ranked.empty:
+                    ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
+                    ranked["🤖 Auto"]        = ""   # will be filled below
+                    ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
+                    ranked.index = ranked.index + 1  # rank 1 = best
+
+                    # Store ranked result for scanner UI display
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+                    # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
+                    auto_traded = 0
+                    for _ri, row in ranked.iterrows():
+                        sig = {
+                            "symbol":     row.get("Symbol",""),
+                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                            "entry":      row.get("Entry",   row.get("LTP",0)),
+                            "sl":         row.get("SL",      0),
+                            "t1":         row.get("T1",      0),
+                            "t2":         row.get("T2",      0),
+                            "rr1":        row.get("RR1",     2.0),
+                            "tf":         tf_tag,
+                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
+                            "strategy":   row.get("Strategy","CPR"),
+                            "strength":   row.get("Strength%",0),
+                            "candle":     row.get("Candle","—"),
+                            "day_type":   row.get("Day Type",""),
+                            "cpr_overlap":row.get("CPR Overlap", False),
+                            "rsi":        row.get("RSI", 50),
+                            "hma":        row.get("HMA","—"),
+                            "vol":        row.get("Vol Surge","—"),
+                            "cprw":       row.get("CPR Width%", 1.0),
+                            "ltp":        row.get("LTP", 0),
+                            "rank_score": row.get("🏆 Rank Score", 0),
+                        }
+                        _strength = float(sig.get("strength", 0))
+                        _rr       = float(sig.get("rr1", 0))
+                        _overlap  = sig.get("cpr_overlap", False)
+                        _day_type = sig.get("day_type", "")
+
+                        # Block sideways + enforce quality gate
+                        if _overlap and _day_type == "Sideways":
+                            continue
+                        if not (_strength >= 70 and _rr >= 1.5):
+                            continue
+                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                            continue
+
+                        if auto_traded < 3:
+                            # Auto-trade top 3
+                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
+                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                            auto_traded += 1
+                        # Rest are available for manual trade — marked in ranked table
+
+                    # Update stored ranked result with Auto markers
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
             last_scan = now
 
             # ── Always sync canonical keys read by Trade Signals tab ──────────────
@@ -5545,6 +5794,58 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # Full results table
         if n_qual > 0:
             with st.expander(f"📋 All {n_qual} stocks ({n_bull} Bullish + {n_bear} Bearish)", expanded=False):
+                # ── Ranked Signal Table — Best 3 Auto + Rest Manual ─────
+                _ranked_key = f"ranked_scan_{tf_tag}"
+                if st.session_state.get(_ranked_key) is not None and not st.session_state[_ranked_key].empty:
+                    ranked_df = st.session_state[_ranked_key].copy()
+                    st.markdown("#### 🏆 Signal Rankings — Sorted by Frank Ochoa Quality Score")
+                    # Colour-coded badge for auto vs manual
+                    def _auto_badge(v):
+                        return "🤖 AUTO" if v == "🤖 Auto" else "👤 Manual"
+                    if "🤖 Auto" in ranked_df.columns:
+                        ranked_df["Trade"] = ranked_df["🤖 Auto"].apply(_auto_badge)
+                    # Show key columns
+                    _rcols = [c for c in ["Trade","🏆 Rank Score","Symbol","Pattern","Strength%",
+                                          "Candle","Day Type","RR1","Entry","T1","SL","RSI","HMA",
+                                          "Vol Surge","CPR Width%"] if c in ranked_df.columns]
+                    st.dataframe(
+                        ranked_df[_rcols].rename(columns={"Pattern":"Side","CPR Width%":"CPR W%"}),
+                        use_container_width=True,
+                        hide_index=False,
+                        height=min(500, 60 + len(ranked_df) * 38),
+                    )
+                    # Manual trade buttons for non-auto signals
+                    _manual_sigs = ranked_df[ranked_df.get("🤖 Auto","") != "🤖 Auto"] if "🤖 Auto" in ranked_df.columns else ranked_df
+                    if not _manual_sigs.empty:
+                        st.markdown("##### 👤 Manual Trade — Click to enter any signal into Forward Testing")
+                        _mcols = st.columns(min(4, len(_manual_sigs)))
+                        for _mi, (_ri, _mr) in enumerate(_manual_sigs.iterrows()):
+                            _side_icon = "🟢" if _mr.get("Pattern","") == "Bullish" else "🔴"
+                            with _mcols[_mi % len(_mcols)]:
+                                if st.button(
+                                    f"{_side_icon} #{_ri} {_mr.get('Symbol','')}\n"
+                                    f"Str:{int(_mr.get('Strength%',0))}% RR:{_mr.get('RR1',0):.1f}x",
+                                    key=f"manual_ft_{tf_tag}_{_ri}_{_mr.get('Symbol','')}",
+                                    use_container_width=True,
+                                ):
+                                    _msig = {
+                                        "symbol":  _mr.get("Symbol",""),
+                                        "side":    "BUY" if _mr.get("Pattern","") == "Bullish" else "SELL",
+                                        "entry":   _mr.get("Entry", _mr.get("LTP",0)),
+                                        "sl":      _mr.get("SL", 0),
+                                        "t1":      _mr.get("T1", 0),
+                                        "t2":      _mr.get("T2", 0),
+                                        "rr1":     _mr.get("RR1", 2.0),
+                                        "tf":      tf_tag,
+                                        "strategy":_mr.get("Strategy","CPR"),
+                                        "strength":_mr.get("Strength%",0),
+                                        "candle":  _mr.get("Candle","—"),
+                                        "rank_score": _mr.get("🏆 Rank Score", 0),
+                                    }
+                                    ft_add_signal(_msig, source=f"👤 Manual · Rank#{_ri} · {tf_tag.upper()}")
+                                    st.success(f"✅ {_mr.get('Symbol','')} added to Forward Testing!")
+                    st.divider()
+
                 disp = scan_df[scan_df["Pattern"] != "Neutral"].sort_values(["Strength%","CPR Width%"], ascending=[False,True]).copy()
                 for c in ["LTP","Entry","T1","T2","T3","SL","TC","BC"]:
                     if c in disp.columns:
@@ -7130,8 +7431,25 @@ def page_broker_settings():
                 st.success("✅ Telegram settings saved & persisted! ✅")
         with _b2:
             if st.button("🧪 Send Test Message",use_container_width=True,key="tg_test"):
-                _ok=_send_telegram("🧪 <b>PivotVault AI — Test</b>\n━━━━━━━━━━━━━━━━━━━━\n🟢 <b>BUY RELIANCE</b> [15m]\n📌 Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800\n✅ Telegram is working!")
-                st.success("✅ Sent! Check Telegram.") if _ok else st.error("❌ Failed — save credentials first.")
+                # Use LIVE widget values (_bt/_ci) so test works without saving first
+                import requests as _treq
+                _test_ok = False
+                if _bt.strip() and _ci.strip():
+                    try:
+                        _tr = _treq.post(
+                            f"https://api.telegram.org/bot{_bt.strip()}/sendMessage",
+                            json={"chat_id": _ci.strip(),
+                                  "text": "🧪 <b>PivotVault AI — Test</b>\n━━━━━━━━━━━━━━━━━━━━\n🟢 <b>BUY RELIANCE</b> [15m]\n📌 Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800\n✅ Telegram is working!",
+                                  "parse_mode": "HTML"}, timeout=5)
+                        _test_ok = _tr.status_code == 200
+                    except Exception:
+                        _test_ok = False
+                if _test_ok:
+                    st.success("✅ Sent! Check Telegram.")
+                elif _bt.strip() and _ci.strip():
+                    st.error("❌ Failed — check your Bot Token and Chat ID.")
+                else:
+                    st.error("❌ Enter Bot Token and Chat ID above first.")
         with _b3:
             if st.button("🗑 Clear",use_container_width=True,key="tg_clr"):
                 st.session_state["telegram_cfg"]={};_save_credentials();st.rerun()
@@ -7166,36 +7484,59 @@ def page_broker_settings():
 
 import json as _json, os as _os
 
-_FT_FILE = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
+# FT persistent storage — triple backup locations
+_FT_FILE = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "data", "pivotvault_ft.json"
+)
+_FT_FILE_HOME = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
+_FT_FILE_TMP  = "/tmp/pivotvault_ft.json"
+
+def _all_ft_paths():
+    return [_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP]
 
 # ── Persistence helpers ───────────────────────────────────────────────────
 
 def _ft_load():
-    try:
-        if _os.path.exists(_FT_FILE):
-            with open(_FT_FILE) as f:
-                d = json.load(f)
-                if "positions" not in d: d["positions"] = []
-                if "events"    not in d: d["events"]    = []
-                if "balance"   not in d: d["balance"]   = 10000000.0
-                if "starting"  not in d: d["starting"]  = 10000000.0
-                return d
-    except Exception:
-        pass
-    return {"positions": [], "events": [], "balance": 10000000.0, "starting": 10000000.0}
+    """Load FT state — tries all 3 storage locations, returns freshest data."""
+    best = None
+    best_time = None
+    for path in _all_ft_paths():
+        try:
+            if _os.path.exists(path):
+                mtime = _os.path.getmtime(path)
+                with open(path) as f:
+                    d = json.load(f)
+                if d and isinstance(d, dict):
+                    if best_time is None or mtime > best_time:
+                        best = d
+                        best_time = mtime
+        except Exception:
+            continue
+    if best:
+        if "positions" not in best: best["positions"] = []
+        if "events"    not in best: best["events"]    = []
+        if "balance"   not in best: best["balance"]   = 10000000.0
+        if "starting"  not in best: best["starting"]  = 10000000.0
+        return best
+    _def_bal = st.session_state.get("_ft_default_balance", 10000000.0)
+    return {"positions": [], "events": [], "balance": _def_bal, "starting": _def_bal}
 
 def _ft_save(state: dict):
-    try:
-        with open(_FT_FILE, "w") as f:
-            json.dump(state, f, indent=2, default=str)
-    except Exception:
-        pass
+    """Save FT state to ALL 3 storage locations simultaneously."""
+    payload = json.dumps(state, indent=2, default=str)
+    for path in _all_ft_paths():
+        try:
+            _os.makedirs(_os.path.dirname(_os.path.abspath(path)), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(payload)
+        except Exception:
+            pass
 
 def _ft_state():
-    """Get FT state from session, loading from disk on first call."""
-    if not st.session_state.get("_ft_loaded"):
+    """Get FT state — reloads from disk if session was lost (e.g. server restart)."""
+    if not st.session_state.get("_ft_loaded") or        not st.session_state.get("_ft") or        not isinstance(st.session_state.get("_ft"), dict):
         d = _ft_load()
-        st.session_state["_ft"] = d
+        st.session_state["_ft"]        = d
         st.session_state["_ft_loaded"] = True
     return st.session_state["_ft"]
 
@@ -8278,6 +8619,121 @@ STRATEGY_DEFINITIONS = [
         "strength_min": 60,
         "rr_min":   1.5,
         "best_for": ["BAJFINANCE","KOTAKBANK","TITAN","MARUTI","LT"],
+    },
+    {
+        "name":     "Two-Day CPR Non-Overlap",
+        "icon":     "📅",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "tf":       "15 Min / 30 Min / 1 Hour",
+        "type":     "Trending Day Breakout",
+        "color":    "#1a6b2e",
+        "bg":       "#edf7ee",
+        "border":   "#b8dfc0",
+        "filters":  [
+            "Today's CPR entirely above OR below yesterday's CPR (Non-overlapping)",
+            "CPR Width < 0.5% (Narrow — confirms trending day)",
+            "Price on correct side of CPR at open",
+            "Strength ≥ 70%",
+        ],
+        "entry":    "TC breakout (Bull) or BC breakdown (Bear) with volume",
+        "sl":       "Below BC (Bull) or above TC (Bear) + 0.1×ATR buffer",
+        "t1":       "R1 (Bull) or S1 (Bear)",
+        "t2":       "R2 (Bull) or S2 (Bear)",
+        "strength_min": 70,
+        "rr_min":   2.0,
+        "best_for": ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK"],
+    },
+    {
+        "name":     "Wick Reversal at CPR",
+        "icon":     "🕯️",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "15 Min / 30 Min / 1 Hour",
+        "type":     "Reversal",
+        "color":    "#7c3aed",
+        "bg":       "#f5f0ff",
+        "border":   "#c4b5fd",
+        "filters":  [
+            "Hammer / Pin Bar / Engulfing forming within 0.5×ATR of BC (Bull) or TC (Bear)",
+            "Lower wick ≥ 2× body (Hammer) or upper wick ≥ 2× body (Shooting Star)",
+            "RSI oversold (<40) for Bull or overbought (>60) for Bear",
+            "Volume surge on reversal candle",
+        ],
+        "entry":    "Close of reversal candle + 0.05×ATR",
+        "sl":       "Low of wick candle − 0.1×ATR",
+        "t1":       "TC (Bull) or BC (Bear) — CPR midpoint",
+        "t2":       "R1/S1 pivot extension",
+        "strength_min": 65,
+        "rr_min":   1.5,
+        "best_for": ["INFY", "WIPRO", "AXISBANK", "MARUTI", "TITAN"],
+    },
+    {
+        "name":     "Extreme Reversal (Rubber Band)",
+        "icon":     "🔁",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "15 Min / 30 Min",
+        "type":     "Mean Reversion",
+        "color":    "#dc2626",
+        "bg":       "#fff0f0",
+        "border":   "#fca5a5",
+        "filters":  [
+            "Current bar range ≥ 2× average bar size (over-extended move)",
+            "Price at extreme — 3+ consecutive bars in one direction",
+            "Reversal candle forming at S2/R2 or CPR extreme",
+            "3/10 Oscillator showing exhaustion (histogram flattening)",
+        ],
+        "entry":    "Close of reversal bar after extreme move",
+        "sl":       "Extreme of the over-extended bar",
+        "t1":       "50% retracement back toward CPR value",
+        "t2":       "CPR Pivot (P) — full mean reversion",
+        "strength_min": 65,
+        "rr_min":   2.0,
+        "best_for": ["BAJFINANCE", "KOTAKBANK", "ADANIENT", "TATAMOTORS"],
+    },
+    {
+        "name":     "Outside Reversal (False Breakout Fade)",
+        "icon":     "🔄",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "30 Min / 1 Hour",
+        "type":     "False Breakout Fade",
+        "color":    "#ea580c",
+        "bg":       "#fff7ed",
+        "border":   "#fdba74",
+        "filters":  [
+            "Bar sweeps beyond prior High/Low then closes back inside range",
+            "Bar range ≥ 1.25× average bar size",
+            "Previous bar was near key pivot level (R1/S1/TC/BC)",
+            "RSI shows divergence at the sweep extreme",
+        ],
+        "entry":    "Close of outside reversal bar",
+        "sl":       "Beyond the sweep extreme + 0.1×ATR",
+        "t1":       "Prior consolidation midpoint / CPR value",
+        "t2":       "Opposite pivot level (S1 for bull fade, R1 for bear fade)",
+        "strength_min": 60,
+        "rr_min":   1.5,
+        "best_for": ["SBIN", "ICICIBANK", "LT", "HINDUNILVR", "NTPC"],
+    },
+    {
+        "name":     "Virgin CPR Weekly Magnet",
+        "icon":     "🧲",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "tf":       "1 Hour / 1 Day",
+        "type":     "Swing / Magnet Trade",
+        "color":    "#0369a1",
+        "bg":       "#f0f9ff",
+        "border":   "#7dd3fc",
+        "filters":  [
+            "Weekly CPR untouched for 5+ sessions (Virgin Weekly CPR)",
+            "Price approaching weekly CPR from below (Bull) or above (Bear)",
+            "Daily CPR aligned with weekly CPR direction",
+            "HMA trending toward CPR magnet",
+        ],
+        "entry":    "Price enters weekly CPR zone (BC to TC)",
+        "sl":       "Weekly BC − ATR (Bull) or weekly TC + ATR (Bear)",
+        "t1":       "Weekly CPR midpoint / Pivot P",
+        "t2":       "Opposite weekly CPR boundary",
+        "strength_min": 60,
+        "rr_min":   2.0,
+        "best_for": ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK"],
     },
     {
         "name":     "3/10 Oscillator Cross",
