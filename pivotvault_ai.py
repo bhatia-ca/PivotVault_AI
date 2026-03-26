@@ -2708,15 +2708,12 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
 #  PAGES
 # ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
-#  USER CREDENTIALS — 5 demo accounts
+#  USER CREDENTIALS — Admin Login
 # ══════════════════════════════════════════════════════════════
 
 USERS = {
-    "admin@pivotvault.ai":   {"pin": "1234", "name": "Admin User",    "phone": "9876543210"},
-    "trader@pivotvault.ai":  {"pin": "2345", "name": "Rahul Sharma",  "phone": "9123456780"},
-    "analyst@pivotvault.ai": {"pin": "3456", "name": "Priya Patel",   "phone": "9234567891"},
-    "demo@pivotvault.ai":    {"pin": "4567", "name": "Demo Account",  "phone": "9345678902"},
-    "test@pivotvault.ai":    {"pin": "5678", "name": "Test User",     "phone": "9456789013"},
+    # ── Primary Admin ─────────────────────────────────────────────
+    "umeshbhatia.ca@gmail.com": {"pin": "0919", "name": "Umesh Bhatia", "phone": "9999999999", "role": "admin"},
 }
 _PHONE_MAP = {v["phone"]: k for k, v in USERS.items()}
 
@@ -2740,7 +2737,7 @@ def get_user_by_email(email: str) -> dict:
 
 # Stub functions — keep API compatible so rest of code doesn't break
 def create_user(name, email, phone, pin, google_id=None):
-    return False, "Sign-up disabled in demo mode. Use one of the 5 accounts below."
+    return False, "Contact admin to get access."
 
 def reset_pin(email, new_pin):
     return False, "PIN reset disabled in demo mode."
@@ -7505,7 +7502,7 @@ def _ft_load():
             if _os.path.exists(path):
                 mtime = _os.path.getmtime(path)
                 with open(path) as f:
-                    d = json.load(f)
+                    d = _json.load(f)
                 if d and isinstance(d, dict):
                     if best_time is None or mtime > best_time:
                         best = d
@@ -7523,7 +7520,7 @@ def _ft_load():
 
 def _ft_save(state: dict):
     """Save FT state to ALL 3 storage locations simultaneously."""
-    payload = json.dumps(state, indent=2, default=str)
+    payload = _json.dumps(state, indent=2, default=str)
     for path in _all_ft_paths():
         try:
             _os.makedirs(_os.path.dirname(_os.path.abspath(path)), exist_ok=True)
@@ -7534,15 +7531,22 @@ def _ft_save(state: dict):
 
 def _ft_state():
     """Get FT state — reloads from disk if session was lost (e.g. server restart)."""
-    if not st.session_state.get("_ft_loaded") or        not st.session_state.get("_ft") or        not isinstance(st.session_state.get("_ft"), dict):
+    if (not st.session_state.get("_ft_loaded") or
+            not st.session_state.get("_ft") or
+            not isinstance(st.session_state.get("_ft"), dict)):
         d = _ft_load()
         st.session_state["_ft"]        = d
         st.session_state["_ft_loaded"] = True
     return st.session_state["_ft"]
 
 def _ft_flush():
-    """Persist current FT state to disk."""
-    _ft_save(st.session_state["_ft"])
+    """Persist current FT state to disk — safe even if session key missing."""
+    try:
+        state = st.session_state.get("_ft")
+        if state and isinstance(state, dict):
+            _ft_save(state)
+    except Exception:
+        pass
 
 # ── LTP fetch ────────────────────────────────────────────────────────────
 
