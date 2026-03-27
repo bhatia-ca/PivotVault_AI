@@ -6,6 +6,37 @@ try:
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
+
+def _tg_creds():
+    cfg = st.session_state.get("telegram_cfg", {})
+    return cfg.get("bot_token", ""), cfg.get("chat_id", "")
+
+def _send_telegram(message: str) -> bool:
+    import requests as _req
+    bot_token, chat_id = _tg_creds()
+    if not bot_token or not chat_id:
+        return False
+    try:
+        resp = _req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+def _tg_trade_msg(pos: dict, event_type: str = "ENTRY") -> str:
+    side = pos.get("side","BUY"); emoji = "🟢" if side=="BUY" else "🔴"
+    pnl  = pos.get("pnl",0);     pe    = "✅" if pnl>=0 else "❌"
+    if event_type == "ENTRY":
+        return (f"⚡ <b>AUTO TRADE ENTERED</b>\n{emoji} <b>{side} {pos.get('symbol','')}</b>  [{pos.get('tf','')}]\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n💰 Entry  : ₹{pos.get('entry',0):,.2f}\n"
+                f"🎯 Target : ₹{pos.get('target',0):,.2f}\n🛑 SL     : ₹{pos.get('sl',0):,.2f}\n"
+                f"📦 Qty    : {pos.get('qty',0)}\n💵 Cost   : ₹{pos.get('cost',0):,.0f}\n"
+                f"📊 R:R    : {pos.get('rr',0)}x\n━━━━━━━━━━━━━━━━━━━━\n<i>PivotVault AI · Forward Testing</i>")
+    return (f"{pe} <b>TRADE CLOSED — {event_type}</b>\n{emoji} <b>{side} {pos.get('symbol','')}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n💰 Entry : ₹{pos.get('entry',0):,.2f}\n"
+            f"🏁 Exit  : ₹{pos.get('exit_px',0):,.2f}\n{pe} P&L   : ₹{pnl:,.2f}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n<i>PivotVault AI · Forward Testing</i>")
+
 import numpy as np
 import secrets
 import re
@@ -39,24 +70,24 @@ from email.mime.text import MIMEText
 import streamlit.components.v1 as _stc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════
 #  STRATEGY NAMING ENGINE
 #  Generates a unique, readable strategy name from signal params
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════
 
 def _build_strategy_name(s: dict) -> str:
     """
     Build a unique strategy name from signal parameters.
     Format: [SIDE]-[CPR_ZONE]-[CANDLE]-[RSI_ZONE]-[HMA]-[VOL]-[TF]
-    Example: BUY Â· CPR Breakout Â· Hammer Â· RSI Momentum Â· HMA Rising Â· Vol Surge Â· 15M
+    Example: BUY · CPR Breakout · Hammer · RSI Momentum · HMA Rising · Vol Surge · 15M
     """
     parts = []
 
     side    = s.get("side", "BUY")
-    candle  = s.get("candle", "â€”")
+    candle  = s.get("candle", "—")
     rsi     = float(s.get("rsi", 50) or 50)
-    hma     = str(s.get("hma", "â€”"))
-    vol     = str(s.get("vol", "â€”"))
+    hma     = str(s.get("hma", "—"))
+    vol     = str(s.get("vol", "—"))
     cpr_w   = float(s.get("cpr_w", 1.0) or 1.0)
     strength= int(s.get("strength", 60) or 60)
     rr      = float(s.get("rr1", 2.0) or 2.0)
@@ -64,7 +95,7 @@ def _build_strategy_name(s: dict) -> str:
     entry   = float(s.get("entry", 0) or 0)
     tf      = s.get("tf", "")
 
-    # â”€â”€ CPR Zone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── CPR Zone ─────────────────────────────────────────────────────────
     if cpr_w < 0.3:
         cpr_zone = "Narrow CPR"
     elif cpr_w < 0.8:
@@ -74,7 +105,7 @@ def _build_strategy_name(s: dict) -> str:
     else:
         cpr_zone = "Wide CPR"
 
-    # â”€â”€ RSI Zone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── RSI Zone ─────────────────────────────────────────────────────────
     if side == "BUY":
         if rsi >= 60:    rsi_zone = "RSI Momentum"
         elif rsi >= 50:  rsi_zone = "RSI Bullish"
@@ -86,21 +117,21 @@ def _build_strategy_name(s: dict) -> str:
         elif rsi <= 60:  rsi_zone = "RSI Rejection"
         else:            rsi_zone = "RSI Overbought"
 
-    # â”€â”€ HMA signal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── HMA signal ───────────────────────────────────────────────────────
     hma_tag = ""
-    if "Rising" in hma or "â†‘" in hma or "above" in hma.lower():
-        hma_tag = "HMAâ†‘"
-    elif "Falling" in hma or "â†“" in hma or "below" in hma.lower():
-        hma_tag = "HMAâ†“"
+    if "Rising" in hma or "↑" in hma or "above" in hma.lower():
+        hma_tag = "HMA↑"
+    elif "Falling" in hma or "↓" in hma or "below" in hma.lower():
+        hma_tag = "HMA↓"
 
-    # â”€â”€ Volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Volume ───────────────────────────────────────────────────────────
     vol_tag = ""
     if "Surge" in vol or "High" in vol or "surge" in vol.lower():
         vol_tag = "VolSurge"
     elif "Above" in vol or "above" in vol.lower():
         vol_tag = "VolUp"
 
-    # â”€â”€ Candle tag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Candle tag ────────────────────────────────────────────────────────
     candle_short = {
         "Hammer":           "Hammer",
         "Inverted Hammer":  "Inv.Hammer",
@@ -115,28 +146,28 @@ def _build_strategy_name(s: dict) -> str:
         "Dark Cloud Cover": "DarkCloud",
         "Bullish Harami":   "Bull.Harami",
         "Bearish Harami":   "Bear.Harami",
-    }.get(candle, candle[:10] if candle != "â€”" else "")
+    }.get(candle, candle[:10] if candle != "—" else "")
 
-    # â”€â”€ Timeframe short â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    tf_short = {"âš¡ 15 Min": "15M", "ðŸ• 1 Hour": "1H"}.get(tf, tf[:3])
+    # ── Timeframe short ───────────────────────────────────────────────────
+    tf_short = {"⚡ 15 Min": "15M", "🕐 1 Hour": "1H"}.get(tf, tf[:3])
 
-    # â”€â”€ R:R tier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── R:R tier ─────────────────────────────────────────────────────────
     if   rr >= 3.0: rr_tag = "RR3+"
     elif rr >= 2.0: rr_tag = "RR2+"
     else:           rr_tag = "RR1+"
 
-    # â”€â”€ Strength tier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Strength tier ────────────────────────────────────────────────────
     if   strength >= 85: grade = "A+"
     elif strength >= 75: grade = "A"
     elif strength >= 65: grade = "B+"
     elif strength >= 55: grade = "B"
     else:                grade = "C"
 
-    # â”€â”€ Assemble strategy ID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    core = f"{side} Â· {cpr_zone} Â· {rsi_zone}"
-    if candle_short: core += f" Â· {candle_short}"
+    # ── Assemble strategy ID ─────────────────────────────────────────────
+    core = f"{side} · {cpr_zone} · {rsi_zone}"
+    if candle_short: core += f" · {candle_short}"
     extras = [x for x in [hma_tag, vol_tag] if x]
-    if extras:       core += " Â· " + " + ".join(extras)
+    if extras:       core += " · " + " + ".join(extras)
     core += f" [{tf_short}] [{rr_tag}] [Grade:{grade}]"
 
     return core
@@ -166,21 +197,21 @@ def _strategy_short_id(s: dict) -> str:
     return f"{side[:1]}-{'-'.join(parts)}"
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════
 #  UPSTOX FREE DATA FEED
 #  Free tier: Historical OHLCV + Market quotes (no WebSocket)
 #  Docs: https://upstox.com/developer/api-documentation/
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════
 
 UPSTOX_BASE = "https://api.upstox.com/v2"
 UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # High-speed order endpoint
 UPSTOX_GTT_BASE = "https://api.upstox.com/v3"        # GTT orders endpoint
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════════════
 #  UPSTOX ORDER EXECUTION ENGINE
-#  Compliant with SEBI Feb 2025 circular â€” human-confirmed orders only.
-#  Flow: Signal â†’ Preview card â†’ User clicks â†’ Market order + GTT SL/Target
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+#  Compliant with SEBI Feb 2025 circular — human-confirmed orders only.
+#  Flow: Signal → Preview card → User clicks → Market order + GTT SL/Target
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _upstox_headers() -> dict:
     token = st.session_state.get("upstox_access_token", "")
@@ -239,8 +270,8 @@ def upstox_place_gtt(symbol: str, side: str, qty: int,
     """
     Place GTT orders for SL and Target after entry is confirmed.
     Creates two GTT rules:
-      - SL:  trigger when price goes BELOW sl_price â†’ SELL
-      - T1:  trigger when price goes ABOVE t1_price â†’ SELL (for BUY trades)
+      - SL:  trigger when price goes BELOW sl_price → SELL
+      - T1:  trigger when price goes ABOVE t1_price → SELL (for BUY trades)
     Returns {"success": bool, "gtt_ids": [...], "message": str}
     """
     instrument_key = _upstox_instrument_key(symbol)
@@ -281,7 +312,7 @@ def upstox_place_gtt(symbol: str, side: str, qty: int,
             if r.status_code == 200 and data.get("status") == "success":
                 gid = data.get("data", {}).get("id", "")
                 gtt_ids.append(gid)
-                messages.append(f"{label} GTT set @ â‚¹{trigger_price} (id:{gid})")
+                messages.append(f"{label} GTT set @ ₹{trigger_price} (id:{gid})")
             else:
                 err = data.get("errors", [{}])
                 msg = err[0].get("message", str(data)) if err else str(data)
@@ -373,7 +404,7 @@ def upstox_get_funds() -> dict:
 
 
 
-# â”€â”€ Upstox auto-renewal via TOTP (Time-based) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Upstox auto-renewal via TOTP (Time-based) ─────────────────────────────
 # Upstox supports TOTP-based login for programmatic daily token renewal.
 # This uses your Upstox login credentials + TOTP secret to get a new token
 # automatically every day without manual intervention.
@@ -383,7 +414,7 @@ def upstox_get_live_ltp_batch(symbols: list) -> dict:
     """
     Fetch live LTP for multiple symbols in one Upstox API call.
     Returns {symbol: ltp} dict. Uses market-quote/ltp endpoint for speed.
-    No @st.cache_data â€” uses session_state for token (can't cache).
+    No @st.cache_data — uses session_state for token (can't cache).
     """
     if not _upstox_connected() or not symbols:
         return {}
@@ -434,7 +465,7 @@ def _upstox_redirect_uri() -> str:
         pass
     return "http://localhost:8501"
 
-# â”€â”€ Upstox ISIN map â€” correct instrument keys for NSE stocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Upstox ISIN map — correct instrument keys for NSE stocks ─────────────
 UPSTOX_ISIN_MAP = {
     "RELIANCE":    "INE002A01018", "TCS":         "INE467B01029",
     "HDFCBANK":    "INE040A01034", "INFY":        "INE009A01021",
@@ -465,7 +496,7 @@ UPSTOX_INDEX_KEYS = {
     "^NSEBANK": "NSE_INDEX|Nifty Bank",
 }
 
-# NSE Symbol â†’ Upstox instrument key (NSE_EQ|ISIN)
+# NSE Symbol → Upstox instrument key (NSE_EQ|ISIN)
 # Upstox accepts both ISIN format AND trading symbol format: NSE_EQ|SYMBOL
 # The correct format for v2 API is: NSE_EQ|ISIN
 # For simplicity and broad coverage we use the symbol-based key which works for most stocks
@@ -606,7 +637,7 @@ def upstox_get_index_quote(yf_ticker: str) -> dict:
     return upstox_get_quote(inst_key)
 
 def upstox_get_ltp(symbol: str) -> float:
-    """Get LTP â€” Upstox primary, yfinance automatic fallback."""
+    """Get LTP — Upstox primary, yfinance automatic fallback."""
     # Try Upstox if connected
     if _upstox_connected():
         try:
@@ -636,13 +667,13 @@ def upstox_get_ltp(symbol: str) -> float:
     return 0.0
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  CONFIGURATION
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="PivotVault AI",
     layout="wide",
-    page_icon="ðŸ¦",
+    page_icon="🏦",
     initial_sidebar_state="expanded",
 )
 
@@ -650,14 +681,14 @@ st.set_page_config(
 if _MOBILE_PATCH:
     inject_mobile()
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  CUSTOM CSS
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-/* â”€â”€ GLOBAL â”€â”€ */
+/* ── GLOBAL ── */
 html,body{font-family:'DM Sans',sans-serif !important;background:#f0f4e8 !important;color:#0e1308 !important;}
 .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:#f0f4e8 !important;}
 [data-testid="stVerticalBlock"]{background:transparent !important;}
@@ -668,12 +699,12 @@ section[data-testid="stSidebar"]{display:none !important;}
 [data-testid="collapsedControl"]{display:none !important;}
 button[data-testid="baseButton-header"]{display:none !important;}
 
-/* â”€â”€ TYPOGRAPHY â”€â”€ */
+/* ── TYPOGRAPHY ── */
 h1,h2,h3,h4{font-family:'DM Sans',sans-serif !important;color:#0e1308 !important;font-weight:700 !important;}
 p,span,label,li,td,th,div{font-family:'DM Sans',sans-serif !important;}
 code,pre,[class*="mono"]{font-family:'DM Mono',monospace !important;}
 
-/* â”€â”€ BUTTONS â€” light olive, NOT dark â”€â”€ */
+/* ── BUTTONS — light olive, NOT dark ── */
 .stButton > div > button {
     background    : #ffffff !important;
     border        : 1.5px solid #b8c89a !important;
@@ -695,7 +726,7 @@ code,pre,[class*="mono"]{font-family:'DM Mono',monospace !important;}
 }
 .stButton > div > button:active {background:#c8d8a8 !important;}
 
-/* â”€â”€ INPUTS â”€â”€ */
+/* ── INPUTS ── */
 input[type="text"],input[type="password"],input[type="number"],
 .stTextInput input,.stNumberInput input {
     background:#fff !important;border:1.5px solid #b8c89a !important;
@@ -704,7 +735,7 @@ input[type="text"],input[type="password"],input[type="number"],
 }
 input:focus{border-color:#3d5a1c !important;box-shadow:0 0 0 2px rgba(61,90,28,0.15) !important;outline:none !important;}
 
-/* â”€â”€ SELECTBOX â”€â”€ */
+/* ── SELECTBOX ── */
 div[data-baseweb="select"] > div {
     background:#fff !important;border:1.5px solid #b8c89a !important;
     border-radius:7px !important;color:#0e1308 !important;min-height:40px !important;
@@ -715,7 +746,7 @@ li[role="option"]{background:transparent !important;color:#0e1308 !important;fon
 li[role="option"]:hover{background:#f0f4e8 !important;}
 li[aria-selected="true"]{background:#e4f0d0 !important;font-weight:700 !important;}
 
-/* â”€â”€ METRICS â”€â”€ */
+/* ── METRICS ── */
 div[data-testid="metric-container"]{
     background:#fff !important;border:1.5px solid #b8c89a !important;
     border-radius:10px !important;padding:0.85rem 1rem !important;
@@ -724,45 +755,45 @@ div[data-testid="metric-container"]{
 div[data-testid="metric-container"] label{font-family:'DM Mono',monospace !important;font-size:0.72rem !important;color:#4a5e32 !important;text-transform:uppercase !important;letter-spacing:0.06em !important;}
 div[data-testid="metric-container"] [data-testid="stMetricValue"]{font-family:'DM Mono',monospace !important;font-size:1.4rem !important;font-weight:700 !important;color:#0e1308 !important;}
 
-/* â”€â”€ TABS â”€â”€ */
+/* ── TABS ── */
 .stTabs [data-baseweb="tab-list"]{background:#e8f0d8 !important;border-bottom:2px solid #b8c89a !important;border-radius:9px 9px 0 0 !important;}
 .stTabs [data-baseweb="tab"]{background:transparent !important;border:none !important;color:#4a5e32 !important;font-size:0.85rem !important;font-weight:600 !important;padding:0.6rem 1rem !important;border-bottom:3px solid transparent !important;min-height:42px !important;}
 .stTabs [data-baseweb="tab"]:hover{color:#1e2c0d !important;background:rgba(61,90,28,0.05) !important;}
 .stTabs [aria-selected="true"]{color:#1e2c0d !important;border-bottom-color:#3d5a1c !important;font-weight:700 !important;}
 .stTabs [data-baseweb="tab-panel"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-top:none !important;border-radius:0 0 9px 9px !important;padding:1rem !important;}
 
-/* â”€â”€ DATAFRAME â”€â”€ */
+/* ── DATAFRAME ── */
 [data-testid="stDataFrameContainer"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-radius:9px !important;}
 
-/* â”€â”€ EXPANDER â”€â”€ */
+/* ── EXPANDER ── */
 [data-testid="stExpander"]{background:#fff !important;border:1.5px solid #b8c89a !important;border-radius:9px !important;}
 [data-testid="stExpander"] summary{color:#0e1308 !important;font-weight:600 !important;font-size:0.88rem !important;min-height:42px !important;}
 
-/* â”€â”€ ALERTS â”€â”€ */
+/* ── ALERTS ── */
 [data-testid="stInfo"]{background:#e4f0d0 !important;border-left:4px solid #3d5a1c !important;border-radius:7px !important;}
 [data-testid="stSuccess"]{background:#e4f5e8 !important;border-left:4px solid #1a6b2e !important;border-radius:7px !important;}
 [data-testid="stWarning"]{background:#fdf3d4 !important;border-left:4px solid #7a5800 !important;border-radius:7px !important;}
 [data-testid="stError"]{background:#fbe8e6 !important;border-left:4px solid #9e2018 !important;border-radius:7px !important;}
 
-/* â”€â”€ MULTISELECT â”€â”€ */
+/* ── MULTISELECT ── */
 [data-baseweb="tag"]{background:#e4f0d0 !important;border-radius:5px !important;color:#1e2c0d !important;}
 
-/* â”€â”€ DIVIDERS â”€â”€ */
+/* ── DIVIDERS ── */
 hr{border-color:#b8c89a !important;margin:0.75rem 0 !important;}
 
-/* â”€â”€ ANIMATIONS â”€â”€ */
+/* ── ANIMATIONS ── */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .live-dot{display:inline-block;width:8px;height:8px;background:#1a6b2e;border-radius:50%;margin-right:6px;animation:pulse 1.8s infinite;}
 .title-bar{display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;animation:slideIn 0.25s ease;}
 .title-bar h1{margin:0 !important;font-size:1.35rem !important;color:#0e1308 !important;font-weight:800 !important;}
 
-/* â”€â”€ SCROLLBARS â”€â”€ */
+/* ── SCROLLBARS ── */
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-track{background:#e8f0d8;}
 ::-webkit-scrollbar-thumb{background:#8da86e;border-radius:4px;}
 
-/* â”€â”€ MOBILE â”€â”€ */
+/* ── MOBILE ── */
 @media(max-width:768px){
     .block-container{padding:0.3rem 0.5rem 1rem !important;}
     .stButton > div > button{min-height:44px !important;font-size:0.9rem !important;}
@@ -771,7 +802,95 @@ hr{border-color:#b8c89a !important;margin:0.75rem 0 !important;}
 </style>
 """, unsafe_allow_html=True)
 
-# â”€â”€ Global notification bootstrap (injected once per page load) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── PWA: manifest + service worker + install prompt ─────────────────────
+st.markdown("""
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiUGl2b3RWYXVsdCBBSSIsInNob3J0X25hbWUiOiJQaXZvdFZhdWx0IiwiZGVzY3JpcHRpb24iOiJDUFIgUGl2b3QgQm9zcyBUcmFkaW5nIEFwcCIsInN0YXJ0X3VybCI6Ii4iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3IiOiIjZjBmNGU4IiwidGhlbWVfY29sb3IiOiIjM2Q1YTFjIiwib3JpZW50YXRpb24iOiJhbnkiLCJpY29ucyI6W3sic3JjIjoiLi9hcHAvc3RhdGljL2ljb24tMTkyLnBuZyIsInNpemVzIjoiMTkyeDE5MiIsInR5cGUiOiJpbWFnZS9wbmcifSx7InNyYyI6Ii4vYXBwL3N0YXRpYy9pY29uLTUxMi5wbmciLCJzaXplcyI6IjUxMng1MTIiLCJ0eXBlIjoiaW1hZ2UvcG5nIn1dfQ==">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PivotVault AI">
+<meta name="theme-color" content="#3d5a1c">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="apple-touch-icon" href="./app/static/icon-192.png">
+<script>
+(function registerSW() {
+    if (!('serviceWorker' in navigator)) return;
+    var SW_SRC = `
+self.addEventListener('install',e=>{self.skipWaiting();});
+self.addEventListener('activate',e=>{e.waitUntil(clients.claim());});
+self.addEventListener('fetch',e=>{
+    if(e.request.method!=='GET')return;
+    e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
+});
+self.addEventListener('push',e=>{
+    var d=e.data?e.data.json():{};
+    e.waitUntil(self.registration.showNotification(d.title||'PivotVault AI',{
+        body:d.body||'',icon:d.icon||'/app/static/icon-192.png',tag:d.tag||'pv',requireInteraction:false
+    }));
+});
+`;
+    var blob = new Blob([SW_SRC],{type:'application/javascript'});
+    var swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl,{scope:'/'}).then(function(reg){
+        window.pvSWReg = reg;
+        // Store reg globally for push notification use
+        window.pvNotify = function(title, body, tag) {
+            if(reg.active) {
+                reg.active.postMessage({type:'NOTIFY',title:title,body:body,tag:tag});
+            } else if(Notification.permission==='granted') {
+                new Notification(title,{body:body,icon:'/app/static/icon-192.png',tag:tag});
+            }
+        };
+    }).catch(function(){});
+})();
+
+// ── Install prompt banner ────────────────────────────────────────────────────
+(function installPrompt() {
+    var deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        var bar = document.getElementById('pv-install-bar');
+        if (bar) bar.style.display = 'flex';
+    });
+    window.pvInstallApp = function() {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(function(r) {
+            deferredPrompt = null;
+            var bar = document.getElementById('pv-install-bar');
+            if (bar) bar.style.display = 'none';
+        });
+    };
+    // Hide bar if already installed (standalone mode)
+    if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+        setTimeout(function() {
+            var bar = document.getElementById('pv-install-bar');
+            if (bar) bar.style.display = 'none';
+        }, 500);
+    }
+})();
+</script>
+
+<!-- Install prompt bar -->
+<div id="pv-install-bar" style="display:none;align-items:center;gap:12px;
+    background:linear-gradient(90deg,#1a2e0a,#3d6b1a);
+    color:#f0f8e8;padding:10px 16px;border-radius:10px;margin-bottom:8px;
+    font-family:DM Sans,sans-serif;font-size:0.82rem;font-weight:600;
+    box-shadow:0 3px 12px rgba(30,60,10,0.25);">
+    <span style="font-size:1.3rem;">📲</span>
+    <span style="flex:1;">Install <b>PivotVault AI</b> on your phone for instant access!</span>
+    <button onclick="pvInstallApp()" style="background:#5a9a28;color:#fff;border:none;
+        border-radius:6px;padding:6px 14px;font-size:0.8rem;font-weight:700;cursor:pointer;">
+        ➕ Install App
+    </button>
+    <button onclick="document.getElementById('pv-install-bar').style.display='none'"
+        style="background:transparent;color:#b8d89a;border:none;font-size:1.1rem;cursor:pointer;">✕</button>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Global notification bootstrap (injected once per page load) ───────────
 # Must use window.parent to escape Streamlit's iframe sandbox
 st.markdown("""
 <script>
@@ -820,7 +939,7 @@ st.markdown("""
             win.Notification.requestPermission().then(function(p) {
                 win._pvNotifEnabled = (p === "granted");
                 if (p === "granted") {
-                    new win.Notification("ðŸ¦ PivotVault AI", {
+                    new win.Notification("🏦 PivotVault AI", {
                         body: "Trade signal notifications enabled!",
                         icon: "/static/icon-192.png",
                         tag:  "pv-welcome",
@@ -833,8 +952,8 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-# â”€â”€ Global notification permission manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# Injected on every page load â€” uses window.parent to escape Streamlit iframe
+# ── Global notification permission manager ────────────────────────────────
+# Injected on every page load — uses window.parent to escape Streamlit iframe
 st.markdown("""
 <script>
 (function initPVNotif() {
@@ -851,7 +970,7 @@ st.markdown("""
             return;
         }
         if (w.Notification.permission === "default") {
-            // Auto-request after 1s â€” browser requires user gesture
+            // Auto-request after 1s — browser requires user gesture
             // so we store a flag and show a button instead
             w._pvNeedPermission = true;
         }
@@ -880,57 +999,143 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  SESSION STATE  +  PERSISTENT LOGIN
 #  Session survives page refresh via local JSON.
 #  Cleared only when user explicitly logs out.
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 
-_SESSION_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_session.json")
+# ── Persistent storage paths — multi-location fallback ───────────────────────
+# Primary: app/data/ folder (survives Streamlit Cloud hot reloads)
+# Fallback: home dir, /tmp
+_APP_DIR   = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR  = os.path.join(_APP_DIR, "data")
+try:
+    os.makedirs(_DATA_DIR, exist_ok=True)
+except Exception:
+    _DATA_DIR = os.path.expanduser("~")   # fallback to home if data/ not writable
 
-_CREDS_FILE = os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json")
+_SESSION_FILE = os.path.join(_DATA_DIR, "pivotvault_session.json")
+_CREDS_FILE   = os.path.join(_DATA_DIR, "pivotvault_creds.json")
+
+def _all_creds_paths():
+    return [
+        _CREDS_FILE,
+        os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json"),
+        "/tmp/pivotvault_creds.json",
+    ]
+
+def _all_session_paths():
+    return [
+        _SESSION_FILE,
+        os.path.join(os.path.expanduser("~"), ".pivotvault_session.json"),
+        "/tmp/pivotvault_session.json",
+    ]
 
 def _load_credentials():
-    """Load persisted broker credentials on startup."""
+    """Load credentials — checks all 3 file locations + st.secrets fallback."""
+    # ── 1. Try all file locations ─────────────────────────────────────────────
+    data = {}
+    for path in _all_creds_paths():
+        try:
+            if os.path.exists(path):
+                with open(path) as f:
+                    data = json.load(f)
+                if data:
+                    break   # found a valid file — stop looking
+        except Exception:
+            continue
+
+    if data:
+        for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
+                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
+                  "broker","broker_connected"]:
+            if k in data and not st.session_state.get(k):
+                st.session_state[k] = data[k]
+        if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
+            st.session_state["telegram_cfg"] = data["telegram_cfg"]
+
+    # ── 2. st.secrets fallback — always wins for Telegram + Upstox keys ──────
+    # This survives ALL restarts since secrets are stored on Streamlit Cloud
     try:
-        if os.path.exists(_CREDS_FILE):
-            with open(_CREDS_FILE) as f:
-                data = json.load(f)
-            for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
-                      "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
-                      "broker","broker_connected"]:
-                if k in data and not st.session_state.get(k):
-                    st.session_state[k] = data[k]
+        _sec = st.secrets
+        # Telegram from secrets
+        if not st.session_state.get("telegram_cfg") or            not st.session_state["telegram_cfg"].get("bot_token"):
+            _tg = _sec.get("telegram", {})
+            if _tg and _tg.get("bot_token"):
+                st.session_state["telegram_cfg"] = {
+                    "bot_token":      str(_tg.get("bot_token","")),
+                    "chat_id":        str(_tg.get("chat_id","")),
+                    "notify_entry":   bool(_tg.get("notify_entry", True)),
+                    "notify_t1":      bool(_tg.get("notify_t1",    True)),
+                    "notify_t2":      bool(_tg.get("notify_t2",    True)),
+                    "notify_sl":      bool(_tg.get("notify_sl",    True)),
+                    "notify_signals": bool(_tg.get("notify_signals",True)),
+                }
+        # Upstox API key/secret from secrets (NOT access token — that's daily)
+        _up = _sec.get("upstox", {})
+        if _up:
+            if _up.get("api_key") and not st.session_state.get("upstox_api_key"):
+                st.session_state["upstox_api_key"]    = str(_up["api_key"])
+            if _up.get("api_secret") and not st.session_state.get("upstox_api_secret"):
+                st.session_state["upstox_api_secret"] = str(_up["api_secret"])
+        # App defaults from secrets
+        _app = _sec.get("app", {})
+        if _app.get("default_balance") and not st.session_state.get("_ft_balance_set"):
+            st.session_state["_ft_default_balance"] = float(_app["default_balance"])
     except Exception:
-        pass
+        pass   # st.secrets not available (local dev) — silent fail
 
 
 def _load_session():
-    """Load persisted session + credentials from disk on every app startup."""
-    try:
-        if os.path.exists(_SESSION_FILE):
-            with open(_SESSION_FILE) as f:
-                data = json.load(f)
-            for k in ["logged_in","username","user_email","user_phone",
-                      "user_id","current_page"]:
-                if k in data and k not in st.session_state:
-                    st.session_state[k] = data[k]
-    except Exception:
-        pass
-    # Load broker credentials (API key/secret persist permanently)
+    """
+    Load persisted session from disk on every app startup/refresh.
+    Force-restores auth state so browser refresh never logs the user out.
+    Reads from all 3 storage locations and picks the freshest valid session.
+    """
+    data = {}
+    # Try all session file locations — pick freshest valid one
+    for path in _all_session_paths():
+        try:
+            if os.path.exists(path):
+                mtime = os.path.getmtime(path)
+                with open(path) as f:
+                    d = json.load(f)
+                if d and d.get("logged_in"):  # only restore if it was a logged-in session
+                    data = d
+                    break
+        except Exception:
+            continue
+
+    if data:
+        # Force-overwrite auth keys — even if defaults already set logged_in=False
+        for k in ["logged_in", "username", "user_email", "user_phone",
+                  "user_id", "current_page"]:
+            if k in data:
+                st.session_state[k] = data[k]
+
+    # Always load broker credentials (persisted permanently)
     _load_credentials()
 
 
 def _save_credentials():
-    """Persist broker credentials permanently (API key/secret stay forever)."""
+    """Persist broker credentials to ALL storage locations (triple-backup)."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["upstox_api_key","upstox_api_secret","upstox_access_token",
                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                  "broker","broker_connected"]}
+        if st.session_state.get("telegram_cfg"):
+            data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(_CREDS_FILE, "w") as f:
-            json.dump(data, f)
+        # Write to ALL 3 locations — whichever is writable will succeed
+        for path in _all_creds_paths():
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(data, f)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -942,7 +1147,7 @@ def _upstox_token_expired() -> bool:
     """
     token = st.session_state.get("upstox_access_token","")
     if not token or not token.startswith("eyJ"):
-        return False  # No token â€” not expired, just not set
+        return False  # No token — not expired, just not set
     try:
         import base64 as _b64
         # Decode JWT payload (middle part) to check expiry
@@ -960,25 +1165,31 @@ def _upstox_token_expired() -> bool:
     return False
 
 def _save_session():
-    """Persist auth state to disk so refresh keeps user logged in."""
+    """Persist auth state to all 3 storage locations — survives refresh/restart."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["logged_in","username","user_email","user_phone",
                  "user_id","current_page"]}
-        with open(_SESSION_FILE, "w") as f:
-            json.dump(data, f)
-        # Also save credentials separately
+        payload = json.dumps(data)
+        for path in _all_session_paths():
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(payload)
+            except Exception:
+                pass
         _save_credentials()
     except Exception:
         pass
 
 def _clear_session():
-    """Delete persisted session on logout."""
-    try:
-        if os.path.exists(_SESSION_FILE):
-            os.remove(_SESSION_FILE)
-    except Exception:
-        pass
+    """Delete persisted session from ALL 3 storage locations on logout."""
+    for path in _all_session_paths():
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
 defaults = {
     # Auth
@@ -1014,7 +1225,7 @@ defaults = {
     'alert_notifications': [],
     # Paper trading (legacy)
     'paper_trades':        [],
-    'paper_balance':       10000000.0,   # â‚¹1 Crore
+    'paper_balance':       10000000.0,   # ₹1 Crore
     'paper_positions':     {},
     # Forward Testing
     '_ft_loaded':          False,
@@ -1038,174 +1249,9 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  DATA HELPERS
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# US Market Symbol Lists  (Testing Mode â€” Dow Jones & Nasdaq via yfinance)
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-DOW30_SYMBOLS = [
-    "AAPL","AMGN","AXP","BA","CAT","CRM","CSCO","CVX","DIS","DOW",
-    "GS","HD","HON","IBM","INTC","JNJ","JPM","KO","MCD","MMM",
-    "MRK","MSFT","NKE","PG","TRV","UNH","V","VZ","WBA","WMT",
-]
-
-NASDAQ100_SYMBOLS = [
-    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
-    "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","INTC","INTU","AMGN",
-    "AMAT","HON","BKNG","VRTX","SBUX","GILD","ADI","PANW","LRCX","MDLZ",
-    "REGN","KLAC","SNPS","CDNS","MELI","ASML","CRWD","ABNB","MNST","KDP",
-    "ORLY","FTNT","CTAS","CHTR","MRVL","CPRT","ROP","WDAY","DXCM","PCAR",
-]
-
-NIFTY50_SYMBOLS = [
-    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
-    "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
-    "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
-    "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
-    "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
-    "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
-    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
-]
-
-# Combined set for O(1) US symbol lookup
-_US_SET = set(DOW30_SYMBOLS + NASDAQ100_SYMBOLS)
-
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# NIFTY TOP 100 â€” Hardcoded, sorted by market cap (no HTTP call needed)
-# Used as default NSE list everywhere: Scanner, Pivot Boss, Watchlist
-# Faster than fetching Nifty 200 from NSE API on every page load
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-NIFTY100_SYMBOLS = [
-    # Mega-cap
-    "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFY","SBIN","LICI",
-    "HINDUNILVR","ITC","LT","BAJFINANCE","HCLTECH","KOTAKBANK","MARUTI",
-    "SUNPHARMA","AXISBANK","TITAN","ADANIENT","ADANIPORTS","ASIANPAINT",
-    "WIPRO","ULTRACEMCO","NTPC","POWERGRID","NESTLEIND","TATAMOTORS",
-    "BAJAJFINSV","JSWSTEEL","TATASTEEL","COALINDIA","ONGC","BPCL","TECHM",
-    "HINDALCO","GRASIM","M&M","INDUSINDBK","CIPLA","DRREDDY","DIVISLAB",
-    "EICHERMOT","HEROMOTOCO","BRITANNIA","APOLLOHOSP","TATACONSUM",
-    "PIDILITIND","SIEMENS","HAVELLS","BERGEPAINT",
-    # Large-cap
-    "ICICIPRULI","SBILIFE","HDFCLIFE","SHREECEM","AMBUJACEM","VEDL",
-    "SAIL","NMDC","TATAPOWER","ADANIGREEN","NAUKRI","ZOMATO","DMART",
-    "IRCTC","CHOLAFIN","RECLTD","PFC","BANKBARODA","CANBK","PNB",
-    "FEDERALBNK","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM","BOSCHLTD",
-    "COLPAL","MARICO","INDHOTEL","JUBLFOOD","VOLTAS","MOTHERSON",
-    "BALKRISIND","CONCOR","MANAPPURAM","BANDHANBNK","ZYDUSLIFE","ALKEM",
-    "AUROPHARMA","LALPATHLAB","FORTIS","ABB","BHEL","BEL","HAL","BEML",
-    "LICHSGFIN","HDFCAMC","NIPPONLIFE","UTIAMC","ICICIGI",
-    # Quality mid-large
-    "TATACOMM","LTTS","MPHASIS","COFORGE","PERSISTENT","TATAELXSI","OFSS",
-    "KPITTECH","RAMCOCEM","SRF","DEEPAKNI","AARTIIND","CUMMINSIND",
-    "THERMAX","CROMPTON","POLYCAB","KEI","DLF","PRESTIGE","OBEROIRLTY",
-    "GODREJPROP","PHOENIXLTD","IDFCFIRSTB","RBLBANK","AUBANK","SRTRANSFIN",
-    "SUNDARMFIN","NHPC","IRFC","HUDCO","NBCC",
-]
-
-def get_nse_list() -> list:
-    """Return Nifty Top 100 â€” hardcoded, instant, no HTTP call.
-    Used as default NSE universe for Scanner, Pivot Boss, Watchlist.
-    100 stocks = 2x faster scan vs 200, covers 85% of NSE market cap.
-    """
-    return NIFTY100_SYMBOLS
-
-
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# NSE Top-100 Sector Map â€” hardcoded, instant, no HTTP
-# Used for Sector Heatmap, Market Snapshot, Pivot Boss
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-_NSE100_SECTOR_MAP = {
-    # Energy & Oil & Gas
-    "RELIANCE":"Energy","ONGC":"Energy","BPCL":"Energy","IOCL":"Energy",
-    "TATAPOWER":"Energy","ADANIGREEN":"Energy","NTPC":"Energy","POWERGRID":"Energy",
-    "NHPC":"Energy","IRFC":"Energy","HUDCO":"Energy","NBCC":"Energy",
-    # IT & Technology
-    "TCS":"IT","INFY":"IT","HCLTECH":"IT","WIPRO":"IT","TECHM":"IT",
-    "LTTS":"IT","MPHASIS":"IT","COFORGE":"IT","PERSISTENT":"IT",
-    "TATAELXSI":"IT","OFSS":"IT","KPITTECH":"IT","TATACOMM":"IT",
-    # Financial Services â€” Banks
-    "HDFCBANK":"Banks","ICICIBANK":"Banks","SBIN":"Banks","KOTAKBANK":"Banks",
-    "AXISBANK":"Banks","INDUSINDBK":"Banks","BANKBARODA":"Banks","CANBK":"Banks",
-    "PNB":"Banks","FEDERALBNK":"Banks","IDFCFIRSTB":"Banks","RBLBANK":"Banks",
-    "AUBANK":"Banks","BANDHANBNK":"Banks",
-    # Financial Services â€” NBFC/Insurance
-    "BAJFINANCE":"Financial Services","BAJAJFINSV":"Financial Services",
-    "CHOLAFIN":"Financial Services","RECLTD":"Financial Services",
-    "PFC":"Financial Services","MUTHOOTFIN":"Financial Services",
-    "MANAPPURAM":"Financial Services","SRTRANSFIN":"Financial Services",
-    "SUNDARMFIN":"Financial Services","LICHSGFIN":"Financial Services",
-    "HDFCAMC":"Financial Services","NIPPONLIFE":"Financial Services",
-    "UTIAMC":"Financial Services","ICICIGI":"Financial Services",
-    "ICICIPRULI":"Financial Services","SBILIFE":"Financial Services",
-    "HDFCLIFE":"Financial Services",
-    # Auto & Auto Components
-    "MARUTI":"Auto","TATAMOTORS":"Auto","M&M":"Auto","BAJAJFINSV":"Auto",
-    "EICHERMOT":"Auto","HEROMOTOCO":"Auto","MOTHERSON":"Auto",
-    "BALKRISIND":"Auto","BOSCHLTD":"Auto",
-    # FMCG & Consumer
-    "HINDUNILVR":"FMCG","ITC":"FMCG","NESTLEIND":"FMCG","BRITANNIA":"FMCG",
-    "DABUR":"FMCG","COLPAL":"FMCG","MARICO":"FMCG","EMAMILTD":"FMCG",
-    "GODREJCP":"FMCG","TATACONSUM":"FMCG","PGHH":"FMCG","RADICO":"FMCG",
-    # Pharma & Healthcare
-    "SUNPHARMA":"Pharma","CIPLA":"Pharma","DRREDDY":"Pharma","DIVISLAB":"Pharma",
-    "LUPIN":"Pharma","BIOCON":"Pharma","TORNTPHARM":"Pharma","ZYDUSLIFE":"Pharma",
-    "ALKEM":"Pharma","AUROPHARMA":"Pharma","LALPATHLAB":"Pharma","FORTIS":"Pharma",
-    # Metals & Materials
-    "JSWSTEEL":"Metals","TATASTEEL":"Metals","HINDALCO":"Metals","VEDL":"Metals",
-    "SAIL":"Metals","NMDC":"Metals","COALINDIA":"Metals","GRASIM":"Metals",
-    "SHREECEM":"Metals","AMBUJACEM":"Metals","SRF":"Metals","DEEPAKNI":"Metals",
-    # Capital Goods & Industrial
-    "LT":"Capital Goods","SIEMENS":"Capital Goods","ABB":"Capital Goods",
-    "BHEL":"Capital Goods","HAL":"Capital Goods","BEL":"Capital Goods",
-    "BEML":"Capital Goods","THERMAX":"Capital Goods","CUMMINSIND":"Capital Goods",
-    "HAVELLS":"Capital Goods","POLYCAB":"Capital Goods","KEI":"Capital Goods",
-    "CROMPTON":"Capital Goods","AARTIIND":"Capital Goods",
-    # Consumer Discretionary
-    "ASIANPAINT":"Consumer","TITAN":"Consumer","PIDILITIND":"Consumer",
-    "BERGEPAINT":"Consumer","VOLTAS":"Consumer","JUBLFOOD":"Consumer",
-    "INDHOTEL":"Consumer","CONCOR":"Consumer",
-    # Telecom
-    "BHARTIARTL":"Telecom",
-    # Infrastructure & Real Estate
-    "ADANIPORTS":"Infrastructure","ADANIENT":"Infrastructure",
-    "ADANIGREEN":"Infrastructure","DLF":"Real Estate","PRESTIGE":"Real Estate",
-    "OBEROIRLTY":"Real Estate","GODREJPROP":"Real Estate","PHOENIXLTD":"Real Estate",
-    # Internet & New-Age
-    "NAUKRI":"Internet","ZOMATO":"Internet","DMART":"Retail","IRCTC":"Infrastructure",
-}
-
-def get_nse100_df() -> "pd.DataFrame":
-    """Return NSE Top-100 as a DataFrame with Symbol, Industry, Company Name.
-    Hardcoded â€” instant, no HTTP call. Replaces fetch_nse500_list() everywhere.
-    """
-    rows = []
-    for sym in NIFTY100_SYMBOLS:
-        industry = _NSE100_SECTOR_MAP.get(sym, "Diversified")
-        rows.append({"Symbol": sym, "Industry": industry, "Company Name": sym})
-    return pd.DataFrame(rows)
-
-
-
-def is_us_symbol(sym: str) -> bool:
-    """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
-    return sym.upper() in _US_SET
-
-def get_market_list(market: str) -> list:
-    """Return symbol list based on market toggle selection.
-    NSE Top 100 = default live trading (Nifty 200 universe).
-    Dow 30 / Nasdaq 100 = testing only via yfinance (no .NS suffix).
-    """
-    if market == "Nifty 50":
-        return NIFTY50_SYMBOLS
-    elif market == "Dow 30":
-        return DOW30_SYMBOLS
-    elif market == "Nasdaq 100":
-        return NASDAQ100_SYMBOLS
-    else:  # NSE List / default â†’ Nifty Top 100, hardcoded, instant
-        return get_nse_list()
-
+# ─────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def fetch_nse500_list() -> pd.DataFrame:
     url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
@@ -1269,6 +1315,58 @@ def fetch_nifty200_list() -> list:
             "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
         ]
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  US MARKET STOCK LISTS — Dow 30 + Nasdaq 100
+# ══════════════════════════════════════════════════════════════════════════════
+
+_DOW30_SYMBOLS = [
+    "AAPL","AMGN","AXP","BA","CAT","CRM","CSCO","CVX","DIS","DOW",
+    "GS","HD","HON","IBM","INTC","JNJ","JPM","KO","MCD","MMM",
+    "MRK","MSFT","NKE","PG","TRV","UNH","V","VZ","WBA","WMT",
+]
+
+_NASDAQ100_SYMBOLS = [
+    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
+    "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","INTC","INTU","AMGN",
+    "AMAT","HON","BKNG","VRTX","SBUX","GILD","ADI","PANW","LRCX","MDLZ",
+    "REGN","KLAC","SNPS","CDNS","MELI","ASML","CRWD","ABNB","MNST","KDP",
+    "ORLY","FTNT","CTAS","CHTR","MRVL","CPRT","ROP","WDAY","DXCM","PCAR",
+    "ODFL","PAYX","ROST","AEP","FAST","CEG","IDXX","VRSK","BIIB","ANSS",
+    "FANG","EXC","CTSH","DLTR","XEL","EA","BKR","CSGP","GFS","GEHC",
+    "ON","ZS","TEAM","DDOG","ALGN","SIRI","WBD","ILMN","TTD","ZM",
+    "DOCU","OKTA","PINS","SNAP","UBER","COIN","RBLX","HOOD","SOFI","PLTR",
+    "AFRM","DASH","MDB","SNOW","BILL","RIVN","LCID","U","TWLO","OKTA",
+]
+
+_NIFTY50_SYMBOLS = [
+    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
+    "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
+    "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
+    "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
+    "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
+    "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
+    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
+]
+
+_US_SET = set(_DOW30_SYMBOLS + _NASDAQ100_SYMBOLS)
+
+def is_us_symbol(sym: str) -> bool:
+    """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
+    return sym.upper() in _US_SET
+
+def get_market_list(market: str) -> list:
+    """Return symbol list for selected market toggle."""
+    if market == "🇮🇳 Nifty 50":
+        return _NIFTY50_SYMBOLS
+    elif market == "🇺🇸 Dow 30":
+        return _DOW30_SYMBOLS
+    elif market == "🇺🇸 Nasdaq 100":
+        return _NASDAQ100_SYMBOLS
+    else:  # default — Nifty 200
+        return fetch_nifty200_list()
+
+
 @st.cache_data(ttl=3600)
 def fetch_nifty200_by_marketcap() -> list:
     """
@@ -1308,9 +1406,9 @@ def fetch_nifty200_by_marketcap() -> list:
 
     # Use pre-ranked list (avoids slow yfinance calls on every load)
     try:
-        n100_set = set(get_nse_list())
-        ranked = [s for s in RANKED if s in n100_set]
-        extras = [s for s in get_nse_list() if s not in set(RANKED)]
+        n200_set = set(fetch_nifty200_list())
+        ranked = [s for s in RANKED if s in n200_set]
+        extras = [s for s in fetch_nifty200_list() if s not in set(RANKED)]
         return ranked + sorted(extras)
     except Exception:
         return RANKED
@@ -1360,10 +1458,10 @@ def get_market_movers():
 @st.cache_data(ttl=15)
 def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
     """
-    Fetch live index price â€” dual feed, upstox_token as param (no session_state in cache).
-    Priority: Upstox â†’ NSE API â†’ yfinance
+    Fetch live index price — dual feed, upstox_token as param (no session_state in cache).
+    Priority: Upstox → NSE API → yfinance
     """
-    # â”€â”€ Method 0: Upstox if token provided â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Method 0: Upstox if token provided ────────────────────────────────
     if upstox_token:
         try:
             q = upstox_get_index_quote(ticker)
@@ -1386,7 +1484,7 @@ def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
         "^NSEBANK": "NIFTY BANK",
     }
 
-    # â”€â”€ Method 1: NSE India API (real-time) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Method 1: NSE India API (real-time) ──────────────────────────────
     try:
         nse_name = NSE_MAP.get(ticker)
         if nse_name:
@@ -1417,7 +1515,7 @@ def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
     except Exception:
         pass
 
-    # â”€â”€ Method 2: yfinance fast_info (near real-time) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Method 2: yfinance fast_info (near real-time) ─────────────────────
     try:
         fi  = yf.Ticker(ticker).fast_info
         ltp = round(float(fi.last_price), 2)
@@ -1427,7 +1525,7 @@ def fetch_index_data(ticker: str, upstox_token: str = "") -> dict:
     except Exception:
         pass
 
-    # â”€â”€ Method 3: yfinance history (delayed ~15 min, last resort) â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Method 3: yfinance history (delayed ~15 min, last resort) ────────
     try:
         hist = yf.Ticker(ticker).history(period="5d", interval="1m")
         if len(hist) >= 2:
@@ -1458,9 +1556,9 @@ def refresh_watchlist_prices(symbols: list) -> dict:
     return result
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-#  PIVOT BOSS â€” FRANK OCHOA METHODOLOGY
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
+#  PIVOT BOSS — FRANK OCHOA METHODOLOGY
+# ─────────────────────────────────────────────
 
 def compute_pivot_points(df: pd.DataFrame, pivot_type: str = "Traditional") -> dict:
     """
@@ -1543,7 +1641,7 @@ def compute_pivot_points(df: pd.DataFrame, pivot_type: str = "Traditional") -> d
 
 def compute_cpr(df: pd.DataFrame) -> dict:
     """
-    Central Pivot Range (CPR) â€” Frank Ochoa's core tool.
+    Central Pivot Range (CPR) — Frank Ochoa's core tool.
     Narrow CPR = trending; Wide CPR = range-bound.
     """
     if df.empty or len(df) < 2:
@@ -1556,13 +1654,13 @@ def compute_cpr(df: pd.DataFrame) -> dict:
     width_pct = abs(TC - BC) / P * 100
 
     if width_pct < 0.25:
-        bias  = "Narrow â€” Strong Trending Day Expected"
+        bias  = "Narrow — Strong Trending Day Expected"
         color = "bull"
     elif width_pct < 0.5:
-        bias  = "Moderate â€” Mild Trend Possible"
+        bias  = "Moderate — Mild Trend Possible"
         color = "neut"
     else:
-        bias  = "Wide â€” Range-Bound Day Expected"
+        bias  = "Wide — Range-Bound Day Expected"
         color = "bear"
 
     return {
@@ -1654,14 +1752,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     close, high, low = df["Close"], df["High"], df["Low"]
 
-    # 3/10 Oscillator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # 3/10 Oscillator ──────────────────────────────────────────────────────────
     df["MA3"]   = close.rolling(3).mean()
     df["MA10"]  = close.rolling(10).mean()
     df["DIFF"]  = df["MA3"] - df["MA10"]
     df["SIG16"] = df["DIFF"].rolling(16).mean()
     df["HIST"]  = df["DIFF"] - df["SIG16"]
 
-    # Hull Moving Average â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Hull Moving Average ──────────────────────────────────────────────────────
     def wma(s, n):
         w = np.arange(1, n + 1)
         return s.rolling(n).apply(lambda x: np.dot(x, w) / w.sum(), raw=True)
@@ -1672,7 +1770,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["HMA20"]  = hma(close, 20)
     df["HMA_UP"] = df["HMA20"] > df["HMA20"].shift(1)
 
-    # ATR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ATR ─────────────────────────────────────────────────────────────────────
     df["TR"] = pd.concat([
         high - low,
         (high - close.shift()).abs(),
@@ -1680,13 +1778,13 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ], axis=1).max(axis=1)
     df["ATR14"] = df["TR"].rolling(14).mean()
 
-    # RSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # RSI ─────────────────────────────────────────────────────────────────────
     delta = close.diff()
     gain  = delta.clip(lower=0).rolling(14).mean()
     loss  = (-delta.clip(upper=0)).rolling(14).mean()
     df["RSI14"] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
 
-    # Stochastic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Stochastic ──────────────────────────────────────────────────────────────
     lo14 = low.rolling(14).min()
     hi14 = high.rolling(14).max()
     df["STOCH_K"] = 100 * (close - lo14) / (hi14 - lo14).replace(0, np.nan)
@@ -1726,15 +1824,15 @@ def full_pivot_boss_analysis(df: pd.DataFrame, pivot_type: str) -> dict:
     # 3/10 Oscillator signal
     d_now, d_prev = float(last["DIFF"]),  float(prev["DIFF"])
     s_now, s_prev = float(last["SIG16"]), float(prev["SIG16"])
-    if   d_now > s_now and d_prev <= s_prev: osc_sig, osc_col = "Bullish Crossover â–²", "bull"
-    elif d_now < s_now and d_prev >= s_prev: osc_sig, osc_col = "Bearish Crossover â–¼", "bear"
+    if   d_now > s_now and d_prev <= s_prev: osc_sig, osc_col = "Bullish Crossover ▲", "bull"
+    elif d_now < s_now and d_prev >= s_prev: osc_sig, osc_col = "Bearish Crossover ▼", "bear"
     elif d_now > 0:                          osc_sig, osc_col = "Positive Momentum",   "bull"
     elif d_now < 0:                          osc_sig, osc_col = "Negative Momentum",   "bear"
     else:                                    osc_sig, osc_col = "Neutral",              "neut"
 
     # HMA
     hma_up = bool(last["HMA_UP"])
-    hma_sig, hma_col = ("Uptrend â–²", "bull") if hma_up else ("Downtrend â–¼", "bear")
+    hma_sig, hma_col = ("Uptrend ▲", "bull") if hma_up else ("Downtrend ▼", "bear")
 
     # RSI
     rsi = round(float(last["RSI14"]), 1) if not np.isnan(last["RSI14"]) else None
@@ -1775,9 +1873,9 @@ def full_pivot_boss_analysis(df: pd.DataFrame, pivot_type: str) -> dict:
     )
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  CHART BUILDERS
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
                             analysis: dict, pivot_type: str) -> go.Figure:
     """
@@ -1886,7 +1984,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         marker_color=vol_colors, opacity=0.55, showlegend=False,
     ), row=4, col=1)
 
-    # Layout â€” clean, professional light theme
+    # Layout — clean, professional light theme
     fig.update_layout(
         height=820,
         paper_bgcolor="#ffffff",
@@ -1901,7 +1999,7 @@ def build_pivot_boss_chart(df: pd.DataFrame, symbol: str,
         margin=dict(l=10, r=100, t=40, b=10),
         xaxis_rangeslider_visible=False,
         title=dict(
-            text=f"<b>{symbol}</b>  Â·  {pivot_type} Pivots",
+            text=f"<b>{symbol}</b>  ·  {pivot_type} Pivots",
             font=dict(family="IBM Plex Mono", size=13, color="#1a2332"),
             x=0.01,
         ),
@@ -1947,14 +2045,14 @@ def build_stoch_chart(df_ind: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  UI HELPERS
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 
 def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
                     pivot_type: str, height: int = 660):
     """
-    TradingView Lightweight Charts v4.1.1 (free, open-source â€” unpkg CDN).
+    TradingView Lightweight Charts v4.1.1 (free, open-source — unpkg CDN).
     Renders a professional candlestick chart with:
     - Live OHLCV data from yfinance
     - CPR band (TC/P/BC) as horizontal lines
@@ -1965,7 +2063,7 @@ def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
     """
     import json
 
-    # â”€â”€ Get price data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Get price data ────────────────────────────────────────────────────
     TF_MAP = {
         "5 Min":   ("5d",  "5m"),
         "15 Min":  ("10d", "15m"),
@@ -1988,7 +2086,7 @@ def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
         st.error(f"Data error: {e}")
         return
 
-    # â”€â”€ Build candlestick data (LW Charts format) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Build candlestick data (LW Charts format) ─────────────────────────
     candles = []
     volumes = []
     for ts, row in df_raw.iterrows():
@@ -2006,7 +2104,7 @@ def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
             "color": "#16a34a44" if float(row["Close"]) >= float(row["Open"]) else "#dc262644",
         })
 
-    # â”€â”€ Pivot & CPR levels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pivot & CPR levels ────────────────────────────────────────────────
     cpr     = analysis.get("cpr", {})
     pivots  = analysis.get("pivots", {})
     mp      = analysis.get("market_profile", {})
@@ -2043,7 +2141,7 @@ def render_lw_chart(symbol: str, tf_label: str, analysis: dict,
         price_lines.append({"price": mp.get("VAH",0), "color":"#94a3b8","lineWidth":1,"lineStyle":2,"axisLabelVisible":True,"title":"VAH"})
         price_lines.append({"price": mp.get("VAL",0), "color":"#94a3b8","lineWidth":1,"lineStyle":2,"axisLabelVisible":True,"title":"VAL"})
 
-    # â”€â”€ Serialize to JSON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Serialize to JSON ─────────────────────────────────────────────────
     candles_json     = json.dumps(candles)
     volumes_json     = json.dumps(volumes)
     price_lines_json = json.dumps(price_lines)
@@ -2093,8 +2191,8 @@ body {{ background:#f7f9f2; font-family:'IBM Plex Mono',monospace; }}
 <div class="hdr">
   <div class="hdr-left">
     <span class="sym">{symbol}</span>
-    <span class="tf">{tf_label} Â· {pivot_type}</span>
-    <span class="ltp">â‚¹{ltp:,.2f}</span>
+    <span class="tf">{tf_label} · {pivot_type}</span>
+    <span class="ltp">₹{ltp:,.2f}</span>
   </div>
   <span class="bias">{overall}</span>
 </div>
@@ -2144,7 +2242,7 @@ const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
     }},
 }});
 
-// â”€â”€ Candlestick series â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Candlestick series ─────────────────────────────────────────────
 const candleSeries = chart.addCandlestickSeries({{
     upColor:           '#16a34a',
     downColor:         '#dc2626',
@@ -2155,7 +2253,7 @@ const candleSeries = chart.addCandlestickSeries({{
 }});
 candleSeries.setData({candles_json});
 
-// â”€â”€ Add pivot + CPR price lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Add pivot + CPR price lines ────────────────────────────────────
 const priceLines = {price_lines_json};
 priceLines.forEach(function(pl) {{
     if (pl.price && pl.price > 0) {{
@@ -2163,7 +2261,7 @@ priceLines.forEach(function(pl) {{
     }}
 }});
 
-// â”€â”€ CPR band shading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── CPR band shading ───────────────────────────────────────────────
 // Draw as a band between TC and BC using two area series
 const tcVal = {tc_val};
 const bcVal = {bc_val};
@@ -2187,7 +2285,7 @@ if (tcVal > 0 && bcVal > 0) {{
     cprBandLower.setData(allTimes.map(t => ({{ time: t, value: bcVal }})));
 }}
 
-// â”€â”€ Volume series (bottom pane) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Volume series (bottom pane) ────────────────────────────────────
 const volSeries = chart.addHistogramSeries({{
     priceFormat:      {{ type: 'volume' }},
     priceScaleId:     'volume',
@@ -2198,7 +2296,7 @@ volSeries.priceScale().applyOptions({{
 }});
 volSeries.setData({volumes_json});
 
-// â”€â”€ Responsive resize â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Responsive resize ──────────────────────────────────────────────
 new ResizeObserver(entries => {{
     for (const entry of entries) {{
         const {{ width, height }} = entry.contentRect;
@@ -2209,7 +2307,7 @@ new ResizeObserver(entries => {{
 // Fit content on load
 chart.timeScale().fitContent();
 
-// â”€â”€ Crosshair tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Crosshair tooltip ─────────────────────────────────────────────
 const tooltip = document.createElement('div');
 tooltip.style.cssText = 'position:absolute;top:50px;left:14px;z-index:99;background:#1e293b;color:#e2e8f0;padding:6px 10px;border-radius:6px;font-size:0.7rem;pointer-events:none;line-height:1.6;display:none;';
 document.body.appendChild(tooltip);
@@ -2225,10 +2323,10 @@ chart.subscribeCrosshairMove(param => {{
     const col  = chg >= 0 ? '#16a34a' : '#dc2626';
     tooltip.style.display = 'block';
     tooltip.innerHTML =
-        '<span style="color:#8a9a78;">O</span> â‚¹' + d.open.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
-        '<span style="color:#8a9a78;">H</span> â‚¹' + d.high.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
-        '<span style="color:#8a9a78;">L</span> â‚¹' + d.low.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
-        '<span style="color:#8a9a78;">C</span> <b style="color:' + col + ';">â‚¹' + d.close.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + '</b>' +
+        '<span style="color:#8a9a78;">O</span> ₹' + d.open.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">H</span> ₹' + d.high.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">L</span> ₹' + d.low.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + ' &nbsp;' +
+        '<span style="color:#8a9a78;">C</span> <b style="color:' + col + ';">₹' + d.close.toLocaleString('en-IN', {{minimumFractionDigits:2}}) + '</b>' +
         ' <span style="color:' + col + ';">(' + (chg >= 0 ? '+' : '') + pct + '%)</span>';
 }});
 </script>
@@ -2243,33 +2341,116 @@ def sig_badge(label: str, kind: str) -> str:
     return f'<span class="signal-badge {css}">{label}</span>'
 
 
-def is_market_open() -> bool:
-    """Check if NSE market is currently open (Mon-Fri 9:15-15:30 IST)."""
-    from datetime import timezone
-    IST   = timezone(timedelta(hours=5, minutes=30))
-    now   = datetime.now(IST)
-    if now.weekday() >= 5:          # Saturday / Sunday
-        return False
-    market_open  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
-    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    return market_open <= now <= market_close
+# ── Market hours (India + USA) ─────────────────────────────────────────────────
+#  NSE  : Mon–Fri  09:15–15:30 IST  (UTC+5:30)
+#  NYSE/NASDAQ: Mon–Fri  09:30–16:00 EST  (UTC-5) / EDT (UTC-4, Mar–Nov)
+# ───────────────────────────────────────────────────────────────────────────────
 
+def _ist_now():
+    from datetime import timezone as _tz
+    return datetime.now(_tz(timedelta(hours=5, minutes=30)))
 
-def is_auto_trade_open() -> bool:
-    """Auto-trade window: 9:30â€“15:15 IST (avoids volatile open + pre-close)."""
-    from datetime import timezone
-    IST  = timezone(timedelta(hours=5, minutes=30))
-    now  = datetime.now(IST)
-    if now.weekday() >= 5:
-        return False
-    trade_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
-    trade_close = now.replace(hour=15, minute=15, second=0, microsecond=0)
-    return trade_open <= now <= trade_close
+def _est_now():
+    """Return current time in US Eastern — auto-adjusts for EDT/EST."""
+    import time as _time
+    # DST: 2nd Sun Mar → 1st Sun Nov  → EDT (UTC-4); else EST (UTC-5)
+    from datetime import timezone as _tz
+    now_utc = datetime.now(_tz.utc)
+    # Determine offset: EDT = -4, EST = -5
+    year = now_utc.year
+    # 2nd Sunday of March
+    mar1  = datetime(year, 3, 1)
+    dst_start = mar1 + timedelta(days=(6 - mar1.weekday()) % 7 + 7)
+    # 1st Sunday of November
+    nov1  = datetime(year, 11, 1)
+    dst_end   = nov1  + timedelta(days=(6 - nov1.weekday())  % 7)
+    utc_naive = now_utc.replace(tzinfo=None)
+    in_dst    = dst_start <= utc_naive < dst_end
+    offset    = timedelta(hours=-4 if in_dst else -5)
+    return datetime.now(_tz(offset))
+
+def is_market_open(market: str = "india") -> bool:
+    """
+    Check if market is open.
+    market: 'india'  → NSE   Mon–Fri 09:15–15:30 IST
+            'us'     → NYSE  Mon–Fri 09:30–16:00 EST/EDT
+    """
+    if market == "us":
+        now = _est_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+        c = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+        return o <= now <= c
+    else:  # india (default)
+        now = _ist_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=15, second=0, microsecond=0)
+        c = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        return o <= now <= c
+
+def is_auto_trade_open(market: str = "india") -> bool:
+    """
+    Safe auto-trade window (avoids volatile open + pre-close).
+    India: 09:45–14:45 IST  |  US: 09:45–15:45 EST/EDT
+    """
+    if market == "us":
+        now = _est_now()
+        if now.weekday() >= 5: return False
+        o = now.replace(hour=9,  minute=45, second=0, microsecond=0)
+        c = now.replace(hour=15, minute=45, second=0, microsecond=0)
+        return o <= now <= c
+    else:
+        now = _ist_now()
+        if now.weekday() >= 5: return False
+        # Optimal window: skip first 15 min volatility + last 30 min pre-close
+        # 09:45–14:45 IST — Frank Ochoa's highest probability trading window
+        o = now.replace(hour=9,  minute=45, second=0, microsecond=0)
+        c = now.replace(hour=14, minute=45, second=0, microsecond=0)
+        return o <= now <= c
+
+def get_market_status(market: str = "india") -> dict:
+    """
+    Returns full status dict for market header display.
+    market: 'india' or 'us'
+    """
+    if market == "us":
+        now      = _est_now()
+        tz_label = "EDT" if abs(now.utcoffset().total_seconds()/3600 + 4) < 0.1 else "EST"
+        is_open  = is_market_open("us")
+        wday     = now.weekday()
+        if is_open:
+            closes = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            mins   = int((closes - now).total_seconds() // 60)
+            note   = f"🟢 NYSE/NASDAQ OPEN · Closes {closes.strftime('%I:%M %p')} {tz_label} · {mins}m left"
+        else:
+            if wday >= 5:   note = f"🔴 US Market CLOSED · Opens Monday 9:30 AM {tz_label}"
+            elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+                             note = f"🔴 Pre-Market · Opens 9:30 AM {tz_label} today"
+            else:            note = f"🔴 US Market CLOSED · Opens tomorrow 9:30 AM {tz_label}"
+        return {"open": is_open, "note": note, "time": now.strftime(f"%d %b %Y  %H:%M {tz_label}"), "tz": tz_label}
+    else:
+        now      = _ist_now()
+        is_open  = is_market_open("india")
+        wday     = now.weekday()
+        if is_open:
+            closes = now.replace(hour=15, minute=30, second=0, microsecond=0)
+            mins   = int((closes - now).total_seconds() // 60)
+            note   = f"🟢 NSE OPEN · Closes 3:30 PM IST · {mins}m left"
+        else:
+            if wday >= 5:   note = "🔴 NSE CLOSED · Opens Monday 9:15 AM IST"
+            elif now.hour < 9 or (now.hour == 9 and now.minute < 15):
+                             note = "🔴 Pre-Market · Opens 9:15 AM IST today"
+            else:            note = "🔴 NSE CLOSED · Opens tomorrow 9:15 AM IST"
+        return {"open": is_open, "note": note, "time": now.strftime("%d %b %Y  %H:%M IST"), "tz": "IST"}
 
 
 
 def _show_token_refresh_popup():
-    """Show token expiry dialog anywhere in the app."""
+    """Show token expiry dialog — only when user is logged in."""
+    # Never show on logout / login screen
+    if not st.session_state.get("logged_in"):
+        return
+
     api_key    = st.session_state.get("upstox_api_key","")
     api_secret = st.session_state.get("upstox_api_secret","")
 
@@ -2287,7 +2468,7 @@ def _show_token_refresh_popup():
                 padding:1rem 1.25rem;margin-bottom:0.75rem;'>
       <div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#c8a0f0;
                   letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem;'>
-        âš¡ Upstox Token Refresh Required
+        ⚡ Upstox Token Refresh Required
       </div>
       <div style='font-family:DM Mono,monospace;font-size:0.8rem;color:#f8faf0;'>
         Your Upstox access token has expired or is invalid.
@@ -2306,7 +2487,7 @@ def _show_token_refresh_popup():
             label_visibility="collapsed",
         )
     with col2:
-        if st.button("âœ… Activate", key="token_refresh_btn", use_container_width=True):
+        if st.button("✅ Activate", key="token_refresh_btn", use_container_width=True):
             t = (new_token or "").strip()
             if t and t.startswith("eyJ") and len(t) > 100:
                 st.session_state["upstox_access_token"] = t
@@ -2314,7 +2495,7 @@ def _show_token_refresh_popup():
                 st.session_state["upstox_token_expired"]= False
                 _save_credentials()
                 st.cache_data.clear()
-                st.success("âœ… Token updated! Live data feed restored.")
+                st.success("✅ Token updated! Live data feed restored.")
                 st.rerun()
             else:
                 st.error("Invalid token. Must start with 'eyJ' and be 500+ characters.")
@@ -2322,38 +2503,100 @@ def _show_token_refresh_popup():
     st.markdown("---")
 
 
+def _check_daily_token_reminder():
+    """
+    Send Telegram reminder at 9:00 AM IST on weekdays to update Upstox token.
+    - Only fires Mon–Fri
+    - Only once per calendar day
+    - Skips if token is already valid
+    - Skips if Telegram not configured
+    """
+    from datetime import timezone as _tz
+    IST   = _tz(timedelta(hours=5, minutes=30))
+    now   = datetime.now(IST)
+
+    # Skip weekends
+    if now.weekday() >= 5:
+        return
+
+    # Only fire between 9:00 AM and 9:30 AM IST
+    if not (now.hour == 9 and now.minute < 30):
+        return
+
+    # Skip if already sent today
+    _today = now.strftime("%Y-%m-%d")
+    if st.session_state.get("_tg_token_reminder_date") == _today:
+        return
+
+    # Skip if Upstox token is already valid
+    if _upstox_connected():
+        st.session_state["_tg_token_reminder_date"] = _today
+        return
+
+    # Skip if Telegram not configured
+    _bt, _ci = _tg_creds()
+    if not _bt or not _ci:
+        return
+
+    # Build and send reminder
+    _day_name = now.strftime("%A")
+    _date_str = now.strftime("%d %b %Y")
+    msg = (
+        "\U0001f511 <b>PivotVault AI - Daily Token Reminder</b>\n"
+        "--------------------\n"
+        f"Good morning! Today is <b>{_day_name}, {_date_str}</b>\n\n"
+        "Please update your <b>Upstox Access Token</b>\n"
+        "before markets open.\n\n"
+        "<b>Steps:</b>\n"
+        "1. Open Upstox Developer Console\n"
+        "2. Generate today's Access Token\n"
+        "3. Open PivotVault AI\n"
+        "4. Go to Settings - Broker Settings\n"
+        "5. Paste token and click Save\n\n"
+        "\U0001f550 Markets open at <b>9:45 AM IST</b>\n"
+        "\u26a1 Auto-trading starts at <b>9:45 AM IST</b>"
+    )
+    ok = _send_telegram(msg)
+    if ok:
+        st.session_state["_tg_token_reminder_date"] = _today
+
+
 def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    open_  = is_market_open()
+    _scan_mkt = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
+    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
+    open_  = is_market_open(_mkt_key)
+    _mkt_status_india = get_market_status("india")
+    _mkt_status_us    = get_market_status("us")
 
-    # â”€â”€ Token expiry popup (shown if Upstox creds saved but token expired) â”€â”€
+    # ── Token expiry popup (shown if Upstox creds saved but token expired) ──
     _show_token_refresh_popup()
 
     # Show Upstox renewal error if any (non-blocking)
     renewal_err = st.session_state.pop("upstox_renewal_error", None)
     if renewal_err:
-        st.warning(f"â™»ï¸ Upstox auto-renewal failed: {renewal_err[:80]} â€” Go to âš™ï¸ Broker to fix.", icon="âš ï¸")
+        st.warning(f"♻️ Upstox auto-renewal failed: {renewal_err[:80]} — Go to ⚙️ Broker to fix.", icon="⚠️")
 
     # Show price alert notifications
     alert_notifs = st.session_state.pop("alert_notifications", [])
     for sym, msg in alert_notifs:
-        st.toast(f"ðŸ”” {msg}", icon="ðŸŽ¯")
+        st.toast(f"🔔 {msg}", icon="🎯")
 
     # Market status pill + refresh button
     status_col, refresh_col = st.columns([6, 1])
     with status_col:
         dot_color = "#16a34a" if open_ else "#dc2626"
-        status    = "LIVE Â· NSE Open" if open_ else "Market Closed"
+        status    = "LIVE · NSE Open" if open_ else "Market Closed"
         next_info = ""
         if not open_:
             if now_ist.weekday() >= 5:
-                next_info = " Â· Opens Monday 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
             elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
-                next_info = f" Â· Opens at 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
             else:
-                next_info = " Â· Opens tomorrow 9:15 AM IST"
+                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
 
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
@@ -2368,7 +2611,7 @@ def render_market_header():
             unsafe_allow_html=True,
         )
     with refresh_col:
-        if st.button("ðŸ”„ Refresh", use_container_width=True, key="global_refresh"):
+        if st.button("🔄 Refresh", use_container_width=True, key="global_refresh"):
             # Clear all data caches so everything reloads fresh
             st.cache_data.clear()
             st.rerun()
@@ -2378,7 +2621,7 @@ def render_market_header():
         # 30s during market hours
         st_autorefresh(interval=30_000, limit=None, key="mkt_autorefresh")
     elif open_ and not _HAS_AUTOREFRESH:
-        st.caption("ðŸ’¡ Install streamlit-autorefresh for live auto-refresh")
+        st.caption("💡 Install streamlit-autorefresh for live auto-refresh")
 
     # Index metrics
     indices = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "NIFTY BANK": "^NSEBANK"}
@@ -2393,12 +2636,12 @@ def render_market_header():
             col.metric(
                 name,
                 f"{ltp:,.2f}",
-                f"{'+' if chg and chg >= 0 else ''}{chg}%" if chg is not None else "â€”",
+                f"{'+' if chg and chg >= 0 else ''}{chg}%" if chg is not None else "—",
             )
             if sub:
                 col.caption(sub)
         else:
-            col.metric(name, "â€”", "â€”")
+            col.metric(name, "—", "—")
 
 
 def render_movers_table(df: pd.DataFrame, title: str, color: str):
@@ -2408,7 +2651,7 @@ def render_movers_table(df: pd.DataFrame, title: str, color: str):
         f"margin-bottom:0.5rem;'>{title}</div>", unsafe_allow_html=True,
     )
     if df.empty:
-        st.caption("Data unavailable â€” NSE API may require VPN / direct browser session.")
+        st.caption("Data unavailable — NSE API may require VPN / direct browser session.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -2479,7 +2722,7 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     # Display text on tile: sector name + change (shown inside tile)
     def _tile_text(row):
         chg   = row["Avg_Change"]
-        arrow = "â–²" if chg > 0 else ("â–¼" if chg < 0 else "â”€")
+        arrow = "▲" if chg > 0 else ("▼" if chg < 0 else "─")
         return f"{row['Industry']}<br>{arrow}{abs(chg):.2f}%"
 
     sector_df["TileText"] = sector_df.apply(_tile_text, axis=1)
@@ -2492,7 +2735,7 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     ]
 
     fig = go.Figure(go.Treemap(
-        # ids = plain sector name â†’ this is what on_select returns as point_index label
+        # ids = plain sector name → this is what on_select returns as point_index label
         ids=sector_df["Industry"].tolist(),
         labels=sector_df["TileText"].tolist(),
         parents=[""] * len(sector_df),
@@ -2521,7 +2764,7 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
         hovertemplate=(
             "<b>%{id}</b><br>"
             "Avg Change: %{customdata[1]:+.2f}%<br>"
-            "â–² Gainers: %{customdata[2]}  â–¼ Losers: %{customdata[3]}<br>"
+            "▲ Gainers: %{customdata[2]}  ▼ Losers: %{customdata[3]}<br>"
             "Total Stocks: %{customdata[4]}<br>"
             "<i>Click to see top gainers & losers</i>"
             "<extra></extra>"
@@ -2539,19 +2782,16 @@ def build_sector_treemap(nse500: pd.DataFrame, perf_df: pd.DataFrame) -> go.Figu
     return fig
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  PAGES
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#  USER CREDENTIALS â€” 5 demo accounts
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  USER CREDENTIALS — Admin Login
+# ══════════════════════════════════════════════════════════════
 
 USERS = {
-    "admin@pivotvault.ai":   {"pin": "1234", "name": "Admin User",    "phone": "9876543210"},
-    "trader@pivotvault.ai":  {"pin": "2345", "name": "Rahul Sharma",  "phone": "9123456780"},
-    "analyst@pivotvault.ai": {"pin": "3456", "name": "Priya Patel",   "phone": "9234567891"},
-    "demo@pivotvault.ai":    {"pin": "4567", "name": "Demo Account",  "phone": "9345678902"},
-    "test@pivotvault.ai":    {"pin": "5678", "name": "Test User",     "phone": "9456789013"},
+    # ── Primary Admin ─────────────────────────────────────────────
+    "umeshbhatia.ca@gmail.com": {"pin": "0919", "name": "Umesh Bhatia", "phone": "9999999999", "role": "admin"},
 }
 _PHONE_MAP = {v["phone"]: k for k, v in USERS.items()}
 
@@ -2573,9 +2813,9 @@ def get_user_by_email(email: str) -> dict:
         return {"id": email, "name": u["name"], "email": email, "phone": u["phone"]}
     return {}
 
-# Stub functions â€” keep API compatible so rest of code doesn't break
+# Stub functions — keep API compatible so rest of code doesn't break
 def create_user(name, email, phone, pin, google_id=None):
-    return False, "Sign-up disabled in demo mode. Use one of the 5 accounts below."
+    return False, "Contact admin to get access."
 
 def reset_pin(email, new_pin):
     return False, "PIN reset disabled in demo mode."
@@ -2587,18 +2827,20 @@ def db_save_signals(user_id, signals): pass
 
 
 def page_login():
-    """Login page â€” PIN login + Telegram OTP login."""
-    import random as rnd
+    """Login page — PIN login + Telegram OTP login."""
+
+    import random as _rnd
+
     st.markdown("""
     <div style="text-align:center;padding:2rem 1rem 1.5rem;">
-        <div style="font-size:2.8rem;margin-bottom:0.4rem;">ðŸ¦</div>
+        <div style="font-size:2.8rem;margin-bottom:0.4rem;">🏦</div>
         <div style="font-family:'DM Sans',sans-serif;font-size:2rem;font-weight:800;
                     color:#1a1f0e;letter-spacing:-0.03em;">
             PivotVault <span style="color:#4e6130;">AI</span>
         </div>
         <div style="font-family:'DM Mono',monospace;font-size:0.7rem;color:#8a9a78;
                     letter-spacing:0.12em;text-transform:uppercase;margin-top:4px;">
-            Indian Equity Intelligence Â· Pivot Boss Methodology
+            Indian Equity Intelligence · Pivot Boss Methodology
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -2607,21 +2849,27 @@ def page_login():
     with col:
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-        method = st.radio("Login Method", ["PIN Login", "Telegram OTP"],
-                          horizontal=True, label_visibility="collapsed",
+        method = st.radio("Login Method",
+                          ["🔢 PIN Login", "📱 Telegram OTP"],
+                          horizontal=True,
+                          label_visibility="collapsed",
                           key="login_method")
 
-        st.markdown("<hr style='margin:0.6rem 0;border-color:#e0e8d0'>",
+        # ── DIVIDER ────────────────────────────────────────────────────────────
+        st.markdown("<hr style='margin:0.6rem 0;border-color:#e0e8d0;'>",
                     unsafe_allow_html=True)
 
+        # ══════════════════════════════════════════════════════════════════════
+        # METHOD 1 — PIN LOGIN
+        # ══════════════════════════════════════════════════════════════════════
         if "PIN" in method:
             identifier = st.text_input("Email",
                 placeholder="umeshbhatia.ca@gmail.com", key="login_id")
             pin = st.text_input("4-Digit PIN", type="password",
-                max_chars=4, placeholder="â€¢â€¢â€¢â€¢", key="login_pin")
+                max_chars=4, placeholder="••••", key="login_pin")
 
-            if st.button("Sign In", use_container_width=True,
-                         key="btn_login", type="primary"):
+            if st.button("🔓 Sign In", use_container_width=True, key="btn_login",
+                         type="primary"):
                 if not identifier or not pin:
                     st.error("Enter email and PIN.")
                 else:
@@ -2631,106 +2879,142 @@ def page_login():
                         st.session_state["username"]   = user["name"]
                         st.session_state["user_id"]    = user["email"]
                         st.session_state["user_email"] = user["email"]
-                        st.session_state["user_phone"] = user.get("phone", "")
-                        _save_session()   # persist â€” survives browser refresh
+                        st.session_state["user_phone"] = user.get("phone","")
+                        _save_session()   # persist — survives browser refresh
                         st.rerun()
                     else:
-                        st.error("Wrong email or PIN.")
+                        st.error("❌ Wrong email or PIN.")
 
+        # ══════════════════════════════════════════════════════════════════════
+        # METHOD 2 — TELEGRAM OTP LOGIN
+        # ══════════════════════════════════════════════════════════════════════
         else:
-            # â”€â”€ Telegram OTP flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Step 1: Request OTP ───────────────────────────────────────────
             if not st.session_state.get("tg_otp_code"):
+
                 st.markdown("""
-                <div style="background:#f0f9f0;border:1.5px solid #b8dfc0;border-radius:10px;
-                            padding:1rem;margin-bottom:1rem;font-family:'DM Sans',sans-serif;
-                            font-size:0.85rem;color:#1e3a1e;">
-                    <b>How it works:</b><br>
+                <div style='background:#f0f9f0;border:1.5px solid #b8dfc0;border-radius:10px;
+                            padding:1rem;margin-bottom:1rem;font-family:DM Sans,sans-serif;
+                            font-size:0.85rem;color:#1e3a1e;'>
+                    <b>📱 How it works:</b><br>
                     1. Click <b>Send OTP to Telegram</b><br>
                     2. A 6-digit code appears in your <b>Telegram bot chat</b><br>
-                    3. Enter the code here to login
-                </div>""", unsafe_allow_html=True)
+                    3. Enter the code here to login ✅
+                </div>
+                """, unsafe_allow_html=True)
 
-                tg_bt, tg_ci = _tg_creds()
-                tg_ready = bool(tg_bt and tg_ci)
-                if not tg_ready:
-                    st.warning("Telegram not configured. Please login with PIN first, "
-                               "then set up Telegram in Settings.")
+                # Check if Telegram is configured
+                # _tg_creds() returns (bot_token, chat_id) tuple
+                _tg_bt, _tg_ci = _tg_creds()
+                _tg_ready = bool(_tg_bt and _tg_ci)
+
+                if not _tg_ready:
+                    st.warning("⚠️ Telegram not configured. "
+                               "Please login with PIN first, then set up Telegram in Settings.")
                 else:
                     st.markdown(
                         f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
                         f"color:#4a5e32;margin-bottom:0.75rem;text-align:center;'>"
                         f"OTP will be sent to your Telegram bot</div>",
                         unsafe_allow_html=True)
-                    if st.button("Send OTP to Telegram", use_container_width=True,
-                                 key="btn_tg_otp", type="primary"):
-                        otp = str(rnd.randint(100000, 999999))
+
+                    if st.button("📲 Send OTP to Telegram",
+                                 use_container_width=True,
+                                 key="btn_tg_otp",
+                                 type="primary"):
+                        # Generate 6-digit OTP
+                        otp = str(_rnd.randint(100000, 999999))
                         st.session_state["tg_otp_code"]    = otp
                         st.session_state["tg_otp_expires"] = (
                             datetime.now() + timedelta(minutes=5)).strftime("%H:%M:%S")
-                        msg = (f"ðŸ” <b>PivotVault AI - Login OTP</b>\n"
-                               f"--------------------\n"
-                               f"Your one-time login code\n<code>{otp}</code>\n"
-                               f"Valid for 5 minutes\n"
-                               f"Expires at {st.session_state.get('tg_otp_expires','')}\n"
-                               f"If you did not request this, ignore it.")
+
+                        # Send via Telegram bot
+                        msg = (
+                            "\U0001f510 <b>PivotVault AI - Login OTP</b>\n"
+                            "--------------------\n"
+                            "Your one-time login code:\n\n"
+                            f"<code>  {otp}  </code>\n\n"
+                            f"Valid for 5 minutes\n"
+                            f"Expires at: {st.session_state.get('tg_otp_expires','')}\n\n"
+                            "If you did not request this, ignore it."
+                        )
                         ok = _send_telegram(msg)
                         if ok:
-                            st.success("OTP sent to Telegram! Check your bot chat.")
+                            st.success("✅ OTP sent to Telegram! Check your bot chat.")
                             st.rerun()
                         else:
                             st.session_state["tg_otp_code"] = ""
-                            st.error("Failed to send OTP. Check Telegram settings.")
+                            st.error("❌ Failed to send OTP. Check Telegram settings.")
+
+            # ── Step 2: Enter + Verify OTP ────────────────────────────────────
             else:
-                expires = st.session_state.get("tg_otp_expires", "")
+                _expires = st.session_state.get("tg_otp_expires", "")
                 st.markdown(
                     f"<div style='background:#fff8e1;border:1.5px solid #ffe082;"
                     f"border-radius:10px;padding:0.75rem;margin-bottom:0.75rem;"
                     f"font-family:DM Mono,monospace;font-size:0.78rem;color:#5a4000;"
-                    f"text-align:center;'>â± OTP sent to Telegram â€” Expires <b>{expires}</b></div>",
+                    f"text-align:center;'>"
+                    f"⏱ OTP sent to Telegram · Expires <b>{_expires}</b>"
+                    f"</div>",
                     unsafe_allow_html=True)
+
                 entered = st.text_input("Enter 6-digit OTP from Telegram",
-                                        max_chars=6, placeholder="Â·Â·Â·Â·Â·Â·",
-                                        key="tg_otp_entered")
+                    max_chars=6,
+                    placeholder="_ _ _ _ _ _",
+                    key="tg_otp_entered")
+
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Verify Login", use_container_width=True,
-                                 key="btn_tg_verify", type="primary"):
+                    if st.button("✅ Verify & Login",
+                                 use_container_width=True,
+                                 key="btn_tg_verify",
+                                 type="primary"):
+                        # Check expiry
                         try:
-                            exp_t = datetime.strptime(expires, "%H:%M:%S").replace(
+                            exp_t = datetime.strptime(_expires, "%H:%M:%S").replace(
                                 year=datetime.now().year,
                                 month=datetime.now().month,
                                 day=datetime.now().day)
                             expired = datetime.now() > exp_t
                         except Exception:
                             expired = False
+
                         if expired:
                             st.session_state["tg_otp_code"] = ""
-                            st.error("OTP expired. Please request a new one.")
+                            st.error("⌛ OTP expired. Please request a new one.")
                             st.rerun()
-                        elif entered.strip() == st.session_state.get("tg_otp_code", ""):
-                            admin  = list(USERS.keys())[0]
-                            u_data = USERS[admin]
+                        elif entered.strip() == st.session_state.get("tg_otp_code",""):
+                            # ✅ Valid OTP — log in as admin
+                            _admin = list(USERS.keys())[0]
+                            _udata = USERS[_admin]
                             st.session_state.update({
                                 "logged_in":  True,
-                                "username":   u_data["name"],
-                                "user_id":    admin,
-                                "user_email": admin,
-                                "user_phone": u_data.get("phone", ""),
+                                "username":   _udata["name"],
+                                "user_id":    _admin,
+                                "user_email": _admin,
+                                "user_phone": _udata.get("phone",""),
                                 "tg_otp_code": "",
                             })
                             _save_session()
+                            # Send confirmation to Telegram
                             _send_telegram(
-                                f"âœ… Login Successful - PivotVault AI\n"
-                                f"--------------------\n"
-                                f"User: {u_data['name']} logged in via Telegram OTP\n"
-                                f"Time: {datetime.now().strftime('%d %b %Y %I:%M %p')}")
+                                "Login Successful - PivotVault AI\n"
+                                "--------------------\n"
+                                f"User: {_udata['name']} logged in via Telegram OTP\n"
+                                f"Time: {datetime.now().strftime('%d %b %Y %I:%M %p')}"
+                            )
                             st.rerun()
                         else:
-                            st.error("Wrong OTP. Please check and try again.")
+                            st.error("❌ Wrong OTP. Please check and try again.")
+
                 with c2:
-                    if st.button("New OTP", use_container_width=True, key="btn_tg_resend"):
+                    if st.button("🔄 New OTP",
+                                 use_container_width=True,
+                                 key="btn_tg_resend"):
                         st.session_state["tg_otp_code"] = ""
                         st.rerun()
+
+
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
@@ -2740,11 +3024,11 @@ def page_market_snapshot(nse500: pd.DataFrame):
     )
     gainers, losers = get_market_movers()
     c1, c2 = st.columns(2)
-    with c1: render_movers_table(gainers, "â–² Top Gainers", "#00e5a0")
-    with c2: render_movers_table(losers,  "â–¼ Top Losers",  "#ff4d6a")
+    with c1: render_movers_table(gainers, "▲ Top Gainers", "#00e5a0")
+    with c2: render_movers_table(losers,  "▼ Top Losers",  "#ff4d6a")
     st.divider()
 
-    # â”€â”€ Performance Heatmap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Performance Heatmap ───────────────────────────────────────────────────
     hm_col, legend_col = st.columns([5, 1])
     with hm_col:
         st.markdown(
@@ -2752,35 +3036,35 @@ def page_market_snapshot(nse500: pd.DataFrame):
             "letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;"
             "margin-bottom:0.4rem;'>"
             "<span class='live-dot'></span>"
-            "Sectoral Heatmap Â· Nifty 500 Â· Colour = Avg 1-Day % Change Â· Click a sector for detail</div>",
+            "Sectoral Heatmap · Nifty 500 · Colour = Avg 1-Day % Change · Click a sector for detail</div>",
             unsafe_allow_html=True,
         )
     with legend_col:
         st.markdown(
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
             "color:#5a6a48;padding-top:0.1rem;line-height:1.9;'>"
-            "<span style='color:#2d7a3a;'>â– </span> Strong Gain<br>"
-            "<span style='color:#27ae60;'>â– </span> Gain<br>"
-            "<span style='color:#e2e8f0;border:1px solid #333;'>â– </span> Flat<br>"
-            "<span style='color:#e74c3c;'>â– </span> Loss<br>"
-            "<span style='color:#7b0020;'>â– </span> Strong Loss"
+            "<span style='color:#2d7a3a;'>■</span> Strong Gain<br>"
+            "<span style='color:#27ae60;'>■</span> Gain<br>"
+            "<span style='color:#e2e8f0;border:1px solid #333;'>■</span> Flat<br>"
+            "<span style='color:#e74c3c;'>■</span> Loss<br>"
+            "<span style='color:#7b0020;'>■</span> Strong Loss"
             "</div>",
             unsafe_allow_html=True,
         )
 
     symbols = nse500["Symbol"].dropna().tolist()
 
-    with st.spinner("Fetching live performance data for heatmapâ€¦"):
+    with st.spinner("Fetching live performance data for heatmap…"):
         perf_df = fetch_heatmap_performance(symbols, max_stocks=120)
 
-    # (summary metrics removed â€” detail shown below on sector click)
+    # (summary metrics removed — detail shown below on sector click)
 
-    # â”€â”€ Build sector lookup once (used both for chart and detail panel) â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Build sector lookup once (used both for chart and detail panel) ────────
     df_merged = nse500.merge(perf_df[["Symbol","Change%"]], on="Symbol", how="left") if not perf_df.empty else nse500.copy()
     df_merged["Change%"] = df_merged.get("Change%", pd.Series(0.0, index=df_merged.index)).fillna(0.0)
     valid_sectors = set(df_merged["Industry"].dropna().unique())
 
-    # â”€â”€ Treemap â€” sector level only, click to drill down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Treemap — sector level only, click to drill down ─────────────────────
     fig = build_sector_treemap(nse500, perf_df)
 
     # Persist selected sector across reruns in session_state
@@ -2794,7 +3078,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
         key="sector_heatmap",
     )
 
-    # â”€â”€ Parse click â€” try every field Streamlit/Plotly might return â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Parse click — try every field Streamlit/Plotly might return ──────────
     clicked_sector = None
     try:
         if selection:
@@ -2832,7 +3116,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
         st.session_state["heatmap_sector"] = clicked_sector
     clicked_sector = st.session_state.get("heatmap_sector")
 
-    # â”€â”€ Sector detail panel â€” shown directly beneath heatmap on click â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Sector detail panel — shown directly beneath heatmap on click ──────────
     if clicked_sector and not perf_df.empty:
         sector_stocks = df_merged[df_merged["Industry"] == clicked_sector].copy()
 
@@ -2842,22 +3126,22 @@ def page_market_snapshot(nse500: pd.DataFrame):
             avg_chg = sector_stocks["Change%"].mean()
             col_fg  = "#00e5a0" if avg_chg >= 0 else "#ff4d6a"
 
-            # Thin header bar â€” sector name + avg change + clear button
+            # Thin header bar — sector name + avg change + clear button
             hdr1, hdr2 = st.columns([5, 1])
             with hdr1:
-                arrow = "â–²" if avg_chg > 0 else "â–¼"
+                arrow = "▲" if avg_chg > 0 else "▼"
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;padding:0.5rem 0;"
                     f"border-bottom:1px solid #dce3ed;margin-bottom:0.6rem;'>"
                     f"<span style='font-size:1rem;font-weight:700;color:#1a1f0e;'>"
                     f"{clicked_sector}</span>"
                     f"<span style='font-size:0.8rem;color:{col_fg};margin-left:1rem;'>"
-                    f"{arrow} {avg_chg:+.2f}% avg  Â·  {len(sector_stocks)} stocks</span>"
+                    f"{arrow} {avg_chg:+.2f}% avg  ·  {len(sector_stocks)} stocks</span>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
             with hdr2:
-                if st.button("âœ• Clear", key="clear_sector"):
+                if st.button("✕ Clear", key="clear_sector"):
                     st.session_state["heatmap_sector"] = None
                     st.rerun()
 
@@ -2866,7 +3150,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
                     f"letter-spacing:0.08em;text-transform:uppercase;color:#2d7a3a;"
-                    f"margin-bottom:0.35rem;'>â–² Top 5 Gainers</div>",
+                    f"margin-bottom:0.35rem;'>▲ Top 5 Gainers</div>",
                     unsafe_allow_html=True,
                 )
                 g_rows = [{"Symbol": r["Symbol"], "Change %": f"+{r['Change%']:.2f}%"}
@@ -2877,7 +3161,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
                 st.markdown(
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;"
                     f"letter-spacing:0.08em;text-transform:uppercase;color:#c0392b;"
-                    f"margin-bottom:0.35rem;'>â–¼ Top 5 Losers</div>",
+                    f"margin-bottom:0.35rem;'>▼ Top 5 Losers</div>",
                     unsafe_allow_html=True,
                 )
                 l_rows = [{"Symbol": r["Symbol"], "Change %": f"{r['Change%']:.2f}%"}
@@ -2889,14 +3173,14 @@ def page_market_snapshot(nse500: pd.DataFrame):
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
             "color:#8a9a78;text-align:center;padding:0.55rem;"
             "border:1px dashed #e2e8f0;border-radius:6px;margin-top:0.25rem;'>"
-            "ðŸ‘†  Click any sector tile to see its Top 5 Gainers &amp; Losers</div>",
+            "👆  Click any sector tile to see its Top 5 Gainers &amp; Losers</div>",
             unsafe_allow_html=True,
         )
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  NARROW CPR SCANNER
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
                        analysis: dict, trade_levels: dict) -> bytes:
     """
@@ -2907,7 +3191,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     """
     buf = io.BytesIO()
 
-    # â”€â”€ Colour palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Colour palette ────────────────────────────────────────────────────────
     DARK        = colors.HexColor("#0d1a0a")
     OLIVE       = colors.HexColor("#3d4a1e")
     OLIVE_LIGHT = colors.HexColor("#e8eddf")
@@ -2931,13 +3215,13 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     mp     = analysis.get("market_profile", {})
     tl     = trade_levels  # short / medium / long
 
-    # â”€â”€ Document setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Document setup ────────────────────────────────────────────────────────
     doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
         leftMargin=18*mm, rightMargin=18*mm,
         topMargin=16*mm,  bottomMargin=16*mm,
-        title=f"PivotVault AI â€” {symbol} Analysis",
+        title=f"PivotVault AI — {symbol} Analysis",
         author="PivotVault AI",
     )
     W = A4[0] - 36*mm   # usable width
@@ -2975,9 +3259,9 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
 
     story = []
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     # HEADER BLOCK
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     header_data = [[
         Paragraph(f"<b>{symbol}</b>", ParagraphStyle("ht", fontSize=22,
                   textColor=WHITE, leading=26, fontName="Helvetica-Bold")),
@@ -3006,9 +3290,9 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     story.append(header_tbl)
     story.append(Spacer(1, 8*mm))
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     # CPR + PIVOT LEVELS  (side by side)
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     story.append(Paragraph("Central Pivot Range (CPR)", s_h2))
     story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=4))
 
@@ -3016,7 +3300,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
         [hdr("Level"), hdr("Value"), hdr("Width %"), hdr("CPR Bias")],
         [cell("Pivot (P)"),  cell(f"Rs.{cpr.get('Pivot',0):,.2f}"),
          cell(f"{cpr.get('Width%',0):.3f}%"),
-         Paragraph(cpr.get("Bias","â€”"), s_bull if ov_col=="bull" else (s_bear if ov_col=="bear" else s_neut))],
+         Paragraph(cpr.get("Bias","—"), s_bull if ov_col=="bull" else (s_bear if ov_col=="bear" else s_neut))],
         [cell("Top CPR (TC)"),  cell(f"Rs.{cpr.get('TC',0):,.2f}"),  cell(""), cell("")],
         [cell("Bot CPR (BC)"),  cell(f"Rs.{cpr.get('BC',0):,.2f}"),  cell(""), cell("")],
     ]
@@ -3032,7 +3316,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     story.append(cpr_tbl)
     story.append(Spacer(1, 5*mm))
 
-    # â”€â”€ Pivot Grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pivot Grid ────────────────────────────────────────────────────────────
     story.append(Paragraph("Pivot Level Grid", s_h2))
     story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=4))
 
@@ -3061,7 +3345,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     story.append(piv_tbl)
     story.append(Spacer(1, 5*mm))
 
-    # â”€â”€ Market Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Market Profile ────────────────────────────────────────────────────────
     if mp:
         story.append(Paragraph("Market Profile", s_h2))
         story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=4))
@@ -3082,10 +3366,10 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
         story.append(mp_tbl)
         story.append(Spacer(1, 5*mm))
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    # TRADE PLAN  â€” Short / Medium / Long
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    story.append(Paragraph("Trade Plan â€” Targets & Stop-Loss", s_h2))
+    # ════════════════════════════════════════════════════════════════
+    # TRADE PLAN  — Short / Medium / Long
+    # ════════════════════════════════════════════════════════════════
+    story.append(Paragraph("Trade Plan — Targets & Stop-Loss", s_h2))
     story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=4))
 
     if tl:
@@ -3099,29 +3383,29 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
             [hdr("Horizon"), hdr("Entry"), hdr("Target 1"),
              hdr("Target 2"), hdr("Target 3"), hdr("Stop Loss"), hdr("R:R")],
             # Short
-            [Paragraph("<b>Short Term</b><br/><font size='7' color='#94a3b8'>1 â€“ 3 Days</font>",
+            [Paragraph("<b>Short Term</b><br/><font size='7' color='#94a3b8'>1 – 3 Days</font>",
                        ParagraphStyle("stl", fontSize=8, leading=12, textColor=DARK)),
              cell(f"Rs.{sh.get('entry',0):,.2f}"),
              Paragraph(f"Rs.{sh.get('target',0):,.2f}",
                        ParagraphStyle("tg", fontSize=8, textColor=PAT_COL, fontName="Helvetica-Bold", leading=11)),
-             cell("â€”"), cell("â€”"),
+             cell("—"), cell("—"),
              Paragraph(f"Rs.{sh.get('sl',0):,.2f}",
                        ParagraphStyle("sl", fontSize=8, textColor=RED, fontName="Helvetica-Bold", leading=11)),
              cell(f"{sh.get('rr',0)}x", s_cell_b)],
             # Medium
-            [Paragraph("<b>Medium Term</b><br/><font size='7' color='#94a3b8'>1 â€“ 4 Weeks</font>",
+            [Paragraph("<b>Medium Term</b><br/><font size='7' color='#94a3b8'>1 – 4 Weeks</font>",
                        ParagraphStyle("stl2", fontSize=8, leading=12, textColor=DARK)),
              cell(f"Rs.{md.get('entry',0):,.2f}"),
              Paragraph(f"Rs.{md.get('target1',0):,.2f}",
                        ParagraphStyle("tg2", fontSize=8, textColor=PAT_COL, fontName="Helvetica-Bold", leading=11)),
              Paragraph(f"Rs.{md.get('target2',0):,.2f}",
                        ParagraphStyle("tg3", fontSize=8, textColor=PAT_COL, fontName="Helvetica-Bold", leading=11)),
-             cell("â€”"),
+             cell("—"),
              Paragraph(f"Rs.{md.get('sl',0):,.2f}",
                        ParagraphStyle("sl2", fontSize=8, textColor=RED, fontName="Helvetica-Bold", leading=11)),
              cell(f"{md.get('rr',0)}x", s_cell_b)],
             # Long
-            [Paragraph("<b>Long Term</b><br/><font size='7' color='#94a3b8'>1 â€“ 3 Months</font>",
+            [Paragraph("<b>Long Term</b><br/><font size='7' color='#94a3b8'>1 – 3 Months</font>",
                        ParagraphStyle("stl3", fontSize=8, leading=12, textColor=DARK)),
              cell(f"Rs.{lg.get('entry',0):,.2f}"),
              Paragraph(f"Rs.{lg.get('target1',0):,.2f}",
@@ -3170,28 +3454,28 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
 
     story.append(Spacer(1, 6*mm))
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     # SIGNAL SUMMARY
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     story.append(Paragraph("Signal Summary", s_h2))
     story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=4))
 
     sig_data = [
         [hdr("Indicator"), hdr("Signal"), hdr("Bias")],
-        [cell("CPR Position"),      cell(analysis.get("cpr_position","â€”")),
+        [cell("CPR Position"),      cell(analysis.get("cpr_position","—")),
          Paragraph(analysis.get("cpr_col","neut").upper(),
                    s_bull if analysis.get("cpr_col")=="bull" else
                    (s_bear if analysis.get("cpr_col")=="bear" else s_neut))],
-        [cell("3/10 Oscillator"),   cell(analysis.get("osc_sig","â€”")),
+        [cell("3/10 Oscillator"),   cell(analysis.get("osc_sig","—")),
          Paragraph(analysis.get("osc_col","neut").upper(),
                    s_bull if analysis.get("osc_col")=="bull" else
                    (s_bear if analysis.get("osc_col")=="bear" else s_neut))],
-        [cell("HMA-20 Trend"),      cell(analysis.get("hma_sig","â€”")),
+        [cell("HMA-20 Trend"),      cell(analysis.get("hma_sig","—")),
          Paragraph(analysis.get("hma_col","neut").upper(),
                    s_bull if analysis.get("hma_col")=="bull" else
                    (s_bear if analysis.get("hma_col")=="bear" else s_neut))],
         [cell("RSI-14"),
-         cell(f"{analysis.get('rsi','â€”')} â€” {analysis.get('rsi_sig','â€”')}"),
+         cell(f"{analysis.get('rsi','—')} — {analysis.get('rsi_sig','—')}"),
          Paragraph(analysis.get("rsi_col","neut").upper(),
                    s_bull if analysis.get("rsi_col")=="bull" else
                    (s_bear if analysis.get("rsi_col")=="bear" else s_neut))],
@@ -3207,9 +3491,9 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     story.append(sig_tbl)
     story.append(Spacer(1, 6*mm))
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     # NARRATIVE ANALYSIS
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     story.append(Paragraph("Analysis Narrative", s_h2))
     story.append(HRFlowable(width=W, thickness=1, color=OLIVE_MID, spaceAfter=5))
 
@@ -3230,7 +3514,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     w = cpr.get("Width%", 0)
     if w < 0.25:
         cpr_narr = (f"The CPR width of <b>{w:.3f}%</b> is <b>Narrow</b>, a key Pivot Boss setup. "
-                    "Frank Ochoa identifies narrow CPR days as high-probability trending days â€” "
+                    "Frank Ochoa identifies narrow CPR days as high-probability trending days — "
                     "price typically breaks decisively in one direction and does not look back.")
     elif w < 0.5:
         cpr_narr = (f"The CPR width of <b>{w:.3f}%</b> is <b>Moderate</b>. "
@@ -3244,18 +3528,18 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
 
     # 3. Momentum narrative
     story.append(narrative_para(
-        f"<b>Momentum (3/10 Oscillator):</b>  {analysis.get('osc_sig','â€”')}. "
+        f"<b>Momentum (3/10 Oscillator):</b>  {analysis.get('osc_sig','—')}. "
         "The 3/10 oscillator is Frank Ochoa's primary momentum tool. "
         + ("A bullish crossover or positive histogram confirms upside momentum is building."
            if analysis.get("osc_col")=="bull" else
            "A bearish crossover or negative histogram warns that downside momentum is dominant."
            if analysis.get("osc_col")=="bear" else
-           "The oscillator is near neutral â€” no strong momentum signal.")
+           "The oscillator is near neutral — no strong momentum signal.")
     ))
 
     # 4. HMA narrative
     story.append(narrative_para(
-        f"<b>Trend Filter (HMA-20):</b>  {analysis.get('hma_sig','â€”')}. "
+        f"<b>Trend Filter (HMA-20):</b>  {analysis.get('hma_sig','—')}. "
         "The Hull Moving Average (HMA-20) eliminates lag and gives a cleaner trend read. "
         + ("A rising HMA confirms the short-term trend is up, supporting long positions."
            if analysis.get("hma_col")=="bull" else
@@ -3266,7 +3550,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
     rsi_val = analysis.get("rsi")
     if rsi_val:
         if rsi_val >= 70:
-            rsi_narr = f"RSI at <b>{rsi_val}</b> is in overbought territory. Momentum is stretched â€” watch for reversal signals near resistance."
+            rsi_narr = f"RSI at <b>{rsi_val}</b> is in overbought territory. Momentum is stretched — watch for reversal signals near resistance."
         elif rsi_val <= 30:
             rsi_narr = f"RSI at <b>{rsi_val}</b> is oversold. A bounce or recovery is possible if price holds key support."
         elif rsi_val >= 55:
@@ -3274,7 +3558,7 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
         elif rsi_val <= 45:
             rsi_narr = f"RSI at <b>{rsi_val}</b> is in bearish territory (below 45), indicating sellers remain in control."
         else:
-            rsi_narr = f"RSI at <b>{rsi_val}</b> is neutral â€” no extreme reading."
+            rsi_narr = f"RSI at <b>{rsi_val}</b> is neutral — no extreme reading."
         story.append(narrative_para(f"<b>RSI-14:</b>  {rsi_narr}"))
 
     # 6. Market Profile narrative
@@ -3301,12 +3585,12 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
         story.append(narrative_para(
             f"<b>Trade Plan Summary:</b>  Based on the above analysis, the suggested bias is "
             f"<b>{direction}</b> on {symbol}. "
-            f"Short-term traders (1â€“3 days) can target <b>Rs.{sh.get('target',0):,.2f}</b> with a "
+            f"Short-term traders (1–3 days) can target <b>Rs.{sh.get('target',0):,.2f}</b> with a "
             f"stop at <b>Rs.{sh.get('sl',0):,.2f}</b> (R:R {sh.get('rr',0)}x). "
-            f"Medium-term traders (1â€“4 weeks) have targets at "
+            f"Medium-term traders (1–4 weeks) have targets at "
             f"<b>Rs.{md.get('target1',0):,.2f}</b> and <b>Rs.{md.get('target2',0):,.2f}</b> "
             f"with a stop at <b>Rs.{md.get('sl',0):,.2f}</b> (R:R {md.get('rr',0)}x). "
-            f"Long-term investors (1â€“3 months) can look towards "
+            f"Long-term investors (1–3 months) can look towards "
             f"<b>Rs.{lg.get('target1',0):,.2f}</b> / <b>Rs.{lg.get('target2',0):,.2f}</b> / "
             f"<b>Rs.{lg.get('target3',0):,.2f}</b> with a stop at "
             f"<b>Rs.{lg.get('sl',0):,.2f}</b> (R:R {lg.get('rr',0)}x)."
@@ -3314,9 +3598,9 @@ def generate_stock_pdf(symbol: str, tf_label: str, pivot_type: str,
 
     story.append(Spacer(1, 6*mm))
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     # DISCLAIMER
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════
     story.append(HRFlowable(width=W, thickness=0.5, color=BORDER, spaceAfter=4))
     story.append(Paragraph(
         "DISCLAIMER: This report is generated by PivotVault AI using the Frank Ochoa Pivot Boss "
@@ -3380,7 +3664,7 @@ def compute_trade_levels(symbol: str, ltp: float, tc: float, bc: float,
 @st.cache_data(ttl=60)
 def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d",
                         upstox_token: str = "") -> pd.DataFrame:
-    # â”€â”€ Try Upstox first (free, accurate, NSE data) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Try Upstox first (free, accurate, NSE data) ───────────────────────
     if upstox_token:
         try:
             # Map period to from_date
@@ -3396,7 +3680,7 @@ def fetch_stock_history(symbol: str, period: str = "1y", interval: str = "1d",
                 return df
         except Exception:
             pass
-    # â”€â”€ Fallback: yfinance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Fallback: yfinance ────────────────────────────────────────────────
     try:
         df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
         if not df.empty:
@@ -3418,7 +3702,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
                       html_body: str, scan_date: str) -> tuple:
     try:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"PivotVault AI â€” CPR Report {scan_date}"
+        msg["Subject"] = f"PivotVault AI — CPR Report {scan_date}"
         msg["From"]    = sender_email
         msg["To"]      = to_email
         msg.attach(MIMEText(html_body, "html"))
@@ -3437,12 +3721,8 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
 
 
 def page_pivot_boss(nse500: pd.DataFrame):
-    """â˜…  Full Frank Ochoa / Pivot Boss analysis page."""
-    # â”€â”€ Auto-refresh LTP + signals every 60s during market hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(interval=60_000, limit=None, key="pb_autorefresh")
-
-    _n200 = get_nse_list()  # Nifty Top 100 â€” instant, no HTTP
+    """★  Full Frank Ochoa / Pivot Boss analysis page."""
+    _n200 = fetch_nifty200_list()
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
@@ -3454,7 +3734,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
     symbols = sorted(_n200)
 
-    # â”€â”€ Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Controls ─────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1])
     with c1:
         symbol = st.selectbox("Symbol", symbols, key="pb_sym",
@@ -3473,14 +3753,14 @@ def page_pivot_boss(nse500: pd.DataFrame):
             key="pb_pt", label_visibility="collapsed",
         )
     with c4:
-        run_btn = st.button("â–¶  Analyse")
+        run_btn = st.button("▶  Analyse")
 
     TF_MAP = {
         "5 Min":   ("5d",  "5m",   False),
         "15 Min":  ("10d", "15m",  False),
         "30 Min":  ("20d", "30m",  False),
         "1 Hour":  ("60d", "1h",   False),
-        "4 Hour":  ("90d", "1h",   True),   # resample 1h â†’ 4h
+        "4 Hour":  ("90d", "1h",   True),   # resample 1h → 4h
         "Daily":   ("1y",  "1d",   False),
         "Weekly":  ("5y",  "1wk",  False),
         "Monthly": ("10y", "1mo",  False),
@@ -3488,7 +3768,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     period, interval, resample_4h = TF_MAP[tf_label]
     st.divider()
 
-    with st.spinner(f"Loading {symbol} [{tf_label}] â€¦"):
+    with st.spinner(f"Loading {symbol} [{tf_label}] …"):
         df = fetch_stock_history(symbol, period, interval, upstox_token=st.session_state.get('upstox_access_token',''))
         if resample_4h and not df.empty:
             df = df.resample("4h").agg({
@@ -3510,7 +3790,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
     mp     = analysis["market_profile"]
     pivots = analysis["pivots"]
 
-    # â”€â”€ Overall Bias Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Overall Bias Banner ───────────────────────────────────────────────────
     bias_palette = {
         "bull": ("#edf7ee", "#00e5a0"),
         "bear": ("#fdf0ee", "#ff4d6a"),
@@ -3521,31 +3801,31 @@ def page_pivot_boss(nse500: pd.DataFrame):
         f"<div style='background:{bg};border:1px solid {fg}33;border-left:4px solid {fg};"
         f"border-radius:6px;padding:0.75rem 1.25rem;margin-bottom:1rem;'>"
         f"<span style='font-family:IBM Plex Mono,monospace;font-size:0.65rem;color:{fg}88;"
-        f"letter-spacing:0.12em;text-transform:uppercase;'>Overall Bias  Â·  {tf_label}  Â·  {pivot_type}</span><br>"
+        f"letter-spacing:0.12em;text-transform:uppercase;'>Overall Bias  ·  {tf_label}  ·  {pivot_type}</span><br>"
         f"<span style='font-family:IBM Plex Mono,monospace;font-size:1.3rem;font-weight:700;color:{fg};'>"
         f"{analysis['overall']}</span>"
         f"<span style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:{fg}aa;margin-left:1.5rem;'>"
-        f"LTP â‚¹{ltp:,.2f}</span>"
+        f"LTP ₹{ltp:,.2f}</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    # â”€â”€ Main Chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    chart_tab1, chart_tab2 = st.tabs(["ðŸ“Š LW Chart + Pivots", "ðŸ“ˆ Multi-Panel (Oscillators)"])
+    # ── Main Chart ─────────────────────────────────────────────────────────
+    chart_tab1, chart_tab2 = st.tabs(["📊 LW Chart + Pivots", "📈 Multi-Panel (Oscillators)"])
     with chart_tab1:
         render_lw_chart(symbol, tf_label, analysis, pivot_type, height=650)
     with chart_tab2:
         fig = build_pivot_boss_chart(df, symbol, analysis, pivot_type)
         st.plotly_chart(fig, use_container_width=True)
 
-    # â”€â”€ Signal Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Signal Cards ──────────────────────────────────────────────────────────
     st.markdown("<h3 style='font-size:0.9rem;margin:1rem 0 0.5rem;'>Signal Summary</h3>",
                 unsafe_allow_html=True)
     ca, cb, cc, cd = st.columns(4)
 
     with ca:
         cpr_detail = (
-            f"TC {cpr['TC']} Â· P {cpr['Pivot']} Â· BC {cpr['BC']}<br>"
+            f"TC {cpr['TC']} · P {cpr['Pivot']} · BC {cpr['BC']}<br>"
             f"Width: {cpr['Width%']}%<br>{cpr['Bias']}"
         ) if cpr else ""
         st.markdown(
@@ -3578,20 +3858,20 @@ def page_pivot_boss(nse500: pd.DataFrame):
         )
 
     with cd:
-        rsi_val   = f"{analysis['rsi']}" if analysis["rsi"] else "â€”"
+        rsi_val   = f"{analysis['rsi']}" if analysis["rsi"] else "—"
         stoch_txt = (f"Stoch %K {analysis['stoch_k']} / %D {analysis['stoch_d']}"
                      if analysis["stoch_k"] else "")
         st.markdown(
             f"<div class='pb-card'>"
             f"<div class='pb-card-title'>RSI (14)</div>"
             f"<div class='pb-card-value pb-{analysis['rsi_col']}'>"
-            f"{rsi_val} Â· {analysis['rsi_sig']}</div>"
+            f"{rsi_val} · {analysis['rsi_sig']}</div>"
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
             f"margin-top:0.4rem;'>{stoch_txt}</div></div>",
             unsafe_allow_html=True,
         )
 
-    # â”€â”€ Pivot Levels + Market Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pivot Levels + Market Profile ─────────────────────────────────────────
     st.markdown(f"<h3 style='font-size:0.9rem;margin:1rem 0 0.5rem;'>"
                 f"{pivot_type} Pivot Levels</h3>", unsafe_allow_html=True)
     col_piv, col_mp = st.columns(2)
@@ -3601,8 +3881,8 @@ def page_pivot_boss(nse500: pd.DataFrame):
             rows = []
             for k, v in sorted(pivots.items(), key=lambda x: x[1], reverse=True):
                 dist  = round((v - ltp) / ltp * 100, 2)
-                arrow = "â–²" if v > ltp else "â–¼"
-                star  = " â˜…" if analysis.get("nearest") and analysis["nearest"][0] == k else ""
+                arrow = "▲" if v > ltp else "▼"
+                star  = " ★" if analysis.get("nearest") and analysis["nearest"][0] == k else ""
                 rows.append({"Level": k + star, "Price": v,
                              "Distance": f"{arrow} {abs(dist)}%"})
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -3616,13 +3896,13 @@ def page_pivot_boss(nse500: pd.DataFrame):
         )
         if mp:
             for label, val, col in [
-                ("POC â€” Point of Control", mp.get("POC"), "#f5a623"),
-                ("VAH â€” Value Area High",  mp.get("VAH"), "#b0b8d0"),
-                ("VAL â€” Value Area Low",   mp.get("VAL"), "#b0b8d0"),
+                ("POC — Point of Control", mp.get("POC"), "#f5a623"),
+                ("VAH — Value Area High",  mp.get("VAH"), "#b0b8d0"),
+                ("VAL — Value Area Low",   mp.get("VAL"), "#b0b8d0"),
             ]:
                 if val:
                     dist = round((val - ltp) / ltp * 100, 2)
-                    arr  = "â–²" if val > ltp else "â–¼"
+                    arr  = "▲" if val > ltp else "▼"
                     st.markdown(
                         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;"
                         f"padding:0.3rem 0;border-bottom:1px solid #dce3ed;'>"
@@ -3635,7 +3915,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         else:
             st.caption("Market profile unavailable.")
 
-    # â”€â”€ ATR + Nearest Pivot + Signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── ATR + Nearest Pivot + Signals ─────────────────────────────────────────
     st.divider()
     v1, v2, v3 = st.columns(3)
 
@@ -3643,7 +3923,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         st.markdown(
             f"<div class='pb-card'><div class='pb-card-title'>ATR(14) Volatility</div>"
             f"<div class='pb-card-value pb-neut'>"
-            f"{'â‚¹' + str(analysis['atr']) if analysis['atr'] else 'â€”'}</div>"
+            f"{'₹' + str(analysis['atr']) if analysis['atr'] else '—'}</div>"
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;margin-top:0.4rem;'>"
             f"{'% of price: ' + str(analysis['atr_pct']) + '%' if analysis['atr_pct'] else ''}"
             f"</div></div>", unsafe_allow_html=True,
@@ -3652,9 +3932,9 @@ def page_pivot_boss(nse500: pd.DataFrame):
     with v2:
         nl = analysis.get("nearest")
         st.markdown(
-            f"<div class='pb-card'><div class='pb-card-title'>Nearest Pivot â˜…</div>"
+            f"<div class='pb-card'><div class='pb-card-title'>Nearest Pivot ★</div>"
             f"<div class='pb-card-value pb-neut'>"
-            f"{nl[0] + '  â‚¹' + str(nl[1]) if nl else 'â€”'}</div>"
+            f"{nl[0] + '  ₹' + str(nl[1]) if nl else '—'}</div>"
             f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;margin-top:0.4rem;'>"
             f"Immediate support / resistance</div></div>", unsafe_allow_html=True,
         )
@@ -3672,36 +3952,37 @@ def page_pivot_boss(nse500: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    # â”€â”€ Virgin CPRs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Virgin CPRs ────────────────────────────────────────────────────────────
     virgins = [v for v in analysis.get("virgin_cprs", []) if v["Virgin"]]
     if virgins:
         st.divider()
         st.markdown(
-            "<h3 style='font-size:0.9rem;margin:1rem 0 0.25rem;'>ðŸ”² Virgin CPR Levels</h3>"
+            "<h3 style='font-size:0.9rem;margin:1rem 0 0.25rem;'>🔲 Virgin CPR Levels</h3>"
             "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
-            "margin-bottom:0.5rem;'>Untouched CPR bands â€” Ochoa's high-significance price magnets</div>",
+            "margin-bottom:0.5rem;'>Untouched CPR bands — Ochoa's high-significance price magnets</div>",
             unsafe_allow_html=True,
         )
         st.dataframe(pd.DataFrame(virgins)[["Date", "TC", "BC"]],
                      use_container_width=True, hide_index=True)
 
-    # â”€â”€ Stochastic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Stochastic ────────────────────────────────────────────────────────────
     # Stochastic is embedded in TV chart above; show Plotly fallback only
     df_ind = analysis.get("df_ind")
+    _TV_CHARTS = False  # TradingView charts not used — using built-in Plotly
     if not _TV_CHARTS and df_ind is not None and "STOCH_K" in df_ind.columns:
         st.divider()
         st.plotly_chart(build_stoch_chart(df_ind), use_container_width=True)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  PDF REPORT â€” Trade Plan with Targets & Stop-Loss
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ════════════════════════════════════════════════════════════════════════
+    #  PDF REPORT — Trade Plan with Targets & Stop-Loss
+    # ════════════════════════════════════════════════════════════════════════
     st.divider()
     st.markdown(
         '<div class="title-bar" style="margin-top:0.25rem;">'
-        '<h2 style="font-size:1.05rem;margin:0;">ðŸ“„  Download Analysis Report (PDF)</h2>'
+        '<h2 style="font-size:1.05rem;margin:0;">📄  Download Analysis Report (PDF)</h2>'
         '<span style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
         'color:#5a6a48;margin-left:0.75rem;">'
-        'Short Term Â· Medium Term Â· Long Term Targets Â· Stop-Loss Â· Narrative</span>'
+        'Short Term · Medium Term · Long Term Targets · Stop-Loss · Narrative</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3715,7 +3996,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
             label_visibility="collapsed",
         )
     with pdf_col2:
-        gen_pdf_btn = st.button("ðŸ“„  Generate PDF Report", key="gen_pdf_btn",
+        gen_pdf_btn = st.button("📄  Generate PDF Report", key="gen_pdf_btn",
                                 use_container_width=True)
 
     if gen_pdf_btn:
@@ -3725,7 +4006,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         else:
             auto_pat = pdf_pattern
 
-        with st.spinner("Computing trade levels & building PDFâ€¦"):
+        with st.spinner("Computing trade levels & building PDF…"):
             # Compute trade levels
             tl = compute_trade_levels(
                 symbol=symbol,
@@ -3752,7 +4033,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 md = tl.get("medium", {})
                 lg = tl.get("long",   {})
                 col_fg = "#00e5a0" if auto_pat == "Bullish" else "#ff4d6a"
-                arrow  = "â–²" if auto_pat == "Bullish" else "â–¼"
+                arrow  = "▲" if auto_pat == "Bullish" else "▼"
 
                 st.markdown(
                     f"<div style='background:#edf7ee;border:1px solid {col_fg}33;"
@@ -3761,7 +4042,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
 
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.65rem;"
                     f"letter-spacing:0.12em;text-transform:uppercase;color:{col_fg}88;'>"
-                    f"{arrow} {auto_pat} Trade Plan  Â·  {symbol}</div>"
+                    f"{arrow} {auto_pat} Trade Plan  ·  {symbol}</div>"
 
                     f"<div style='display:flex;gap:2rem;margin-top:0.6rem;flex-wrap:wrap;'>"
 
@@ -3769,27 +4050,27 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     f"color:#5a6a48;text-transform:uppercase;'>Short Term (1-3d)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
                     f"color:#1a1f0e;'>T: <span style='color:{col_fg};font-weight:700;'>"
-                    f"â‚¹{sh.get('target',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#c0392b;'>â‚¹{sh.get('sl',0):,.2f}</span>"
+                    f"₹{sh.get('target',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{sh.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{sh.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
                     f"color:#5a6a48;text-transform:uppercase;'>Medium Term (1-4w)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
                     f"color:#1a1f0e;'>T1: <span style='color:{col_fg};font-weight:700;'>"
-                    f"â‚¹{md.get('target1',0):,.2f}</span>"
-                    f" T2: <span style='color:{col_fg};font-weight:700;'>â‚¹{md.get('target2',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#c0392b;'>â‚¹{md.get('sl',0):,.2f}</span>"
+                    f"₹{md.get('target1',0):,.2f}</span>"
+                    f" T2: <span style='color:{col_fg};font-weight:700;'>₹{md.get('target2',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{md.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{md.get('rr',0)}x</b></div></div>"
 
                     f"<div><div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
                     f"color:#5a6a48;text-transform:uppercase;'>Long Term (1-3m)</div>"
                     f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;"
                     f"color:#1a1f0e;'>T1: <span style='color:{col_fg};font-weight:700;'>"
-                    f"â‚¹{lg.get('target1',0):,.2f}</span>"
-                    f" T2: <span style='color:{col_fg};font-weight:700;'>â‚¹{lg.get('target2',0):,.2f}</span>"
-                    f" T3: <span style='color:{col_fg};font-weight:700;'>â‚¹{lg.get('target3',0):,.2f}</span>"
-                    f" &nbsp; SL: <span style='color:#c0392b;'>â‚¹{lg.get('sl',0):,.2f}</span>"
+                    f"₹{lg.get('target1',0):,.2f}</span>"
+                    f" T2: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target2',0):,.2f}</span>"
+                    f" T3: <span style='color:{col_fg};font-weight:700;'>₹{lg.get('target3',0):,.2f}</span>"
+                    f" &nbsp; SL: <span style='color:#c0392b;'>₹{lg.get('sl',0):,.2f}</span>"
                     f" &nbsp; R:R <b>{lg.get('rr',0)}x</b></div></div>"
 
                     f"</div></div>",
@@ -3797,7 +4078,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
                 )
 
                 st.download_button(
-                    label=f"â¬‡ï¸  Download {symbol} PDF Report",
+                    label=f"⬇️  Download {symbol} PDF Report",
                     data=pdf_bytes,
                     file_name=f"PivotVault_{symbol}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                     mime="application/pdf",
@@ -3805,40 +4086,36 @@ def page_pivot_boss(nse500: pd.DataFrame):
                     key="pdf_download_btn",
                 )
 
-    # â”€â”€ Methodology footnote â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Methodology footnote ──────────────────────────────────────────────────
     st.divider()
     st.markdown(
         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#8a9a78;line-height:1.8;'>"
-        "ðŸ“–  Based on <i>Secrets of a Pivot Boss</i> by Frank Ochoa.  "
-        "Tools implemented: CPR Â· 3/10 Oscillator Â· Virgin CPRs Â· Market Profile (POC/VAH/VAL) Â· "
-        "HMA Trend Filter Â· ATR Â· RSI Â· Stochastic.  "
-        "For educational purposes only â€” not financial advice.</div>",
+        "📖  Based on <i>Secrets of a Pivot Boss</i> by Frank Ochoa.  "
+        "Tools implemented: CPR · 3/10 Oscillator · Virgin CPRs · Market Profile (POC/VAH/VAL) · "
+        "HMA Trend Filter · ATR · RSI · Stochastic.  "
+        "For educational purposes only — not financial advice.</div>",
         unsafe_allow_html=True,
     )
 
 
 def page_watchlist():
-    # â”€â”€ Auto-refresh prices every 60s during market hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(interval=60_000, limit=None, key="wl_autorefresh")
-
     st.markdown("""
     <div class="title-bar">
-        <span style="font-size:1.5rem;">â­</span>
+        <span style="font-size:1.5rem;">⭐</span>
         <h1 style="color:#1a1f0e;">Watchlist</h1>
     </div>
     """, unsafe_allow_html=True)
 
-    nifty200 = sorted(get_nse_list())  # Nifty Top 100 â€” instant
+    nifty200 = sorted(fetch_nifty200_list())
     wl       = st.session_state.get("watchlist", [])
 
-    # â”€â”€ Always-visible stock selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from NSE Top 100</div>", unsafe_allow_html=True)
+    # ── Always-visible stock selector ────────────────────────────────────
+    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 200</div>", unsafe_allow_html=True)
     selected = st.multiselect(
         "wl_stocks",
         options=nifty200,
         default=[s for s in wl if s in nifty200],
-        placeholder="Search â€” RELIANCE, TCS, INFYâ€¦",
+        placeholder="Search — RELIANCE, TCS, INFY…",
         label_visibility="collapsed",
         key="wl_multiselect",
     )
@@ -3850,7 +4127,7 @@ def page_watchlist():
             st.rerun()
     with ac2:
         if st.button("Refresh Prices", use_container_width=True, key="wl_refresh"):
-            with st.spinner("Fetchingâ€¦"):
+            with st.spinner("Fetching…"):
                 st.session_state["wl_data"]         = refresh_watchlist_prices(selected)
                 st.session_state["wl_last_refresh"] = datetime.now()
             st.rerun()
@@ -3872,7 +4149,7 @@ def page_watchlist():
             "<div style='text-align:center;padding:3rem 1rem;margin-top:1rem;"
             "background:#f7f9f2;border:2px dashed #dae0cb;border-radius:12px;"
             "font-family:DM Mono,monospace;'>"
-            "<div style='font-size:2rem;'>â­</div>"
+            "<div style='font-size:2rem;'>⭐</div>"
             "<div style='font-size:0.95rem;font-weight:700;color:#1a1f0e;margin-top:0.5rem;'>Watchlist is empty</div>"
             "<div style='font-size:0.8rem;color:#5a6a48;margin-top:0.4rem;'>"
             "Select stocks above and click Save Watchlist</div></div>",
@@ -3880,7 +4157,7 @@ def page_watchlist():
         )
         return
 
-    # â”€â”€ Build active signals map (15m + 1h only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Build active signals map (15m + 1h only) ─────────────────────────
     active_signals = {}
     for tf_key, tf_label, tf_col in [("cpr_scan_15m","15Min","#e67e22"),("cpr_scan_1h","1Hour","#2980b9")]:
         raw = st.session_state.get(tf_key)
@@ -3894,12 +4171,12 @@ def page_watchlist():
                 "side": "BUY" if r["Pattern"]=="Bullish" else "SELL",
                 "entry": r["Entry"], "t1": r["T1"], "t2": r.get("T2",r["T1"]),
                 "sl": r["SL"], "rr1": r["RR1"], "rr": r["RR1"],
-                "strength": int(r["Strength%"]), "candle": r.get("Candle","â€”"),
+                "strength": int(r["Strength%"]), "candle": r.get("Candle","—"),
             })
 
     # Auto-fetch prices
     if not st.session_state.get("wl_data") and wl:
-        with st.spinner("Fetching live pricesâ€¦"):
+        with st.spinner("Fetching live prices…"):
             st.session_state["wl_data"]         = refresh_watchlist_prices(wl)
             st.session_state["wl_last_refresh"] = datetime.now()
     data = st.session_state.get("wl_data", {})
@@ -3928,12 +4205,12 @@ def page_watchlist():
     else:
         st.info("No watchlist stocks have active signals. Run CPR Scanner (15Min/1Hour) to generate signals.")
         if st.button("Go to CPR Scanner", key="wl_go_scanner"):
-            st.session_state["current_page"] = "CPR Scanner"
+            st.session_state["current_page"] = "Scanner & Signals"
             st.rerun()
 
     st.divider()
 
-    # â”€â”€ Stocks WITH live signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Stocks WITH live signals ──────────────────────────────────────────
     wl_live  = [s for s in wl if s in active_signals]
     wl_quiet = [s for s in wl if s not in active_signals]
 
@@ -3942,7 +4219,7 @@ def page_watchlist():
             "<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
             "color:#2d7a3a;font-weight:700;letter-spacing:0.08em;"
             "text-transform:uppercase;margin-bottom:0.75rem;'>"
-            "ðŸ”” LIVE SIGNALS</div>",
+            "🔔 LIVE SIGNALS</div>",
             unsafe_allow_html=True,
         )
         for sym in wl_live:
@@ -3950,9 +4227,9 @@ def page_watchlist():
             ltp     = d.get("ltp")
             chg     = d.get("change")
             sigs    = active_signals[sym]
-            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "â€”"
+            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "—"
             chg_col = "#2d7a3a" if chg and chg >= 0 else "#c0392b"
-            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "â€”"
+            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "—"
 
             # Signal detail per timeframe
             sig_info = ""
@@ -3968,7 +4245,7 @@ def page_watchlist():
                     f"<span style='background:{'#edf7ee' if bull else '#fdf0ee'};"
                     f"color:{ac};border:1px solid {'#b8dfc0' if bull else '#f0c0b8'};"
                     f"border-radius:20px;padding:1px 8px;font-size:0.65rem;font-weight:700;'>"
-                    f"{'â–² BUY' if bull else 'â–¼ SELL'}</span>"
+                    f"{'▲ BUY' if bull else '▼ SELL'}</span>"
                     f"<span style='font-size:0.67rem;color:#5a6a48;background:#f7f9f2;"
                     f"border:1px solid #dae0cb;border-radius:5px;padding:2px 7px;'>"
                     f"Entry {sg['entry']}</span>"
@@ -4003,13 +4280,13 @@ def page_watchlist():
                                 "t2": sg.get("t2", sg["t1"]),
                                 "t3": sg.get("t1"), "rr1": sg["rr1"]})
 
-    # â”€â”€ Stocks WITHOUT signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Stocks WITHOUT signals ─────────────────────────────────────────────
     if wl_quiet:
         if wl_live: st.divider()
         st.markdown(
             f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
             f"color:#8a9a78;letter-spacing:0.08em;text-transform:uppercase;"
-            f"margin-bottom:0.6rem;'>Watching â€” No Signal ({len(wl_quiet)})</div>",
+            f"margin-bottom:0.6rem;'>Watching — No Signal ({len(wl_quiet)})</div>",
             unsafe_allow_html=True,
         )
         cols = st.columns(2)
@@ -4017,9 +4294,9 @@ def page_watchlist():
             d       = data.get(sym, {})
             ltp     = d.get("ltp")
             chg     = d.get("change")
-            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "â€”"
+            ltp_str = f"Rs.{ltp:,.2f}" if ltp else "—"
             chg_col = "#2d7a3a" if chg and chg >= 0 else "#c0392b"
-            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "â€”"
+            chg_str = f"{'+' if chg and chg>=0 else ''}{chg:.2f}%" if chg is not None else "—"
             with cols[i % 2]:
                 st.markdown(
                     f"<div style='background:#ffffff;border:1px solid #dae0cb;"
@@ -4049,17 +4326,17 @@ def page_watchlist():
 
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 #  SIDEBAR
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════
 #  MULTI-TIMEFRAME CPR SCANNER  (new standalone tab)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-#  FRANK OCHOA â€” CANDLESTICK PATTERN DETECTOR
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────────────────────────────
+#  FRANK OCHOA — CANDLESTICK PATTERN DETECTOR
+# ─────────────────────────────────────────────────────────────────────
 
 def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
     """
@@ -4095,20 +4372,20 @@ def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
     bull1 = C1 > O1
     bear1 = C1 < O1
 
-    # â”€â”€ 1. Bullish Engulfing at CPR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Ochoa: When price engulfs prior candle after touching BC â€” powerful bull signal
+    # ── 1. Bullish Engulfing at CPR ──────────────────────────────────────────
+    # Ochoa: When price engulfs prior candle after touching BC — powerful bull signal
     if (bear1 and bull0 and
         O0 <= C1 and C0 >= O1 and
         body0 > body1 * 1.1):
         return ("Bullish Engulfing", "bull", 15)
 
-    # â”€â”€ 2. Bearish Engulfing at CPR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 2. Bearish Engulfing at CPR ──────────────────────────────────────────
     if (bull1 and bear0 and
         O0 >= C1 and C0 <= O1 and
         body0 > body1 * 1.1):
         return ("Bearish Engulfing", "bear", 15)
 
-    # â”€â”€ 3. Hammer (bullish reversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 3. Hammer (bullish reversal) ─────────────────────────────────────────
     # Long lower wick >= 2x body, small upper wick, at support / BC
     if (lower_wick0 >= 2 * body0 and
         upper_wick0 <= body0 * 0.4 and
@@ -4116,7 +4393,7 @@ def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
         lower_wick0 >= rng0 * 0.55):
         return ("Hammer", "bull", 12)
 
-    # â”€â”€ 4. Shooting Star (bearish reversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 4. Shooting Star (bearish reversal) ──────────────────────────────────
     # Long upper wick >= 2x body, small lower wick, at resistance / TC
     if (upper_wick0 >= 2 * body0 and
         lower_wick0 <= body0 * 0.4 and
@@ -4124,36 +4401,36 @@ def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
         upper_wick0 >= rng0 * 0.55):
         return ("Shooting Star", "bear", 12)
 
-    # â”€â”€ 5. Doji (indecision â€” strong at CPR) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 5. Doji (indecision — strong at CPR) ─────────────────────────────────
     # Ochoa: Doji inside CPR = explosive breakout coming
     if body0 <= rng0 * 0.1 and rng0 > 0:
         return ("Doji at CPR", "neut", 8)
 
-    # â”€â”€ 6. Morning Star (3-candle bullish reversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 6. Morning Star (3-candle bullish reversal) ───────────────────────────
     if (bear2 and body2 > 0 and
         abs(C1 - O1) <= min(body2, body0) * 0.3 and  # small middle
         bull0 and C0 > (O2 + C2) / 2):
         return ("Morning Star", "bull", 18)
 
-    # â”€â”€ 7. Evening Star (3-candle bearish reversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 7. Evening Star (3-candle bearish reversal) ───────────────────────────
     if (bull2 and body2 > 0 and
         abs(C1 - O1) <= min(body2, body0) * 0.3 and
         bear0 and C0 < (O2 + C2) / 2):
         return ("Evening Star", "bear", 18)
 
-    # â”€â”€ 8. Inside Bar (Ochoa: compression before breakout) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 8. Inside Bar (Ochoa: compression before breakout) ───────────────────
     if H0 < H1 and L0 > L1:
         direction = "bull" if bull1 else "bear"
         return ("Inside Bar", direction, 10)
 
-    # â”€â”€ 9. Pin Bar / Rejection Candle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Tail >= 3x body â€” strong rejection at key level
+    # ── 9. Pin Bar / Rejection Candle ────────────────────────────────────────
+    # Tail >= 3x body — strong rejection at key level
     if lower_wick0 >= 3 * body0 and body0 > 0:
         return ("Bull Pin Bar", "bull", 14)
     if upper_wick0 >= 3 * body0 and body0 > 0:
         return ("Bear Pin Bar", "bear", 14)
 
-    # â”€â”€ 10. Strong Bullish / Bearish candle (Marubozu) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 10. Strong Bullish / Bearish candle (Marubozu) ───────────────────────
     if bull0 and body0 >= rng0 * 0.85:
         return ("Bullish Marubozu", "bull", 10)
     if bear0 and body0 >= rng0 * 0.85:
@@ -4208,7 +4485,7 @@ def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
 def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
     """
-    Frank Ochoa CPR Scanner â€” Enhanced with Upstox data + strategy rationale.
+    Frank Ochoa CPR Scanner — Enhanced with Upstox data + strategy rationale.
     Timeframes: 15m / 30m / 1h / 1d / 1wk / 1mo
     Upstox used for data if token is active, else yfinance fallback.
     Each row includes a human-readable strategy rationale for backtest reference.
@@ -4250,15 +4527,17 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     def _fetch_yfinance(sym: str) -> pd.DataFrame:
-        """Fetch from yfinance â€” auto-detects US vs NSE symbols.
-        US stocks (Dow/Nasdaq) skip .NS suffix. Indian stocks get .NS appended."""
+        """Fetch from yfinance with full error handling."""
         try:
+            # Map interval for yfinance (it uses different strings)
             yf_interval_map = {
                 "15m":"15m","30m":"30m","1h":"60m",
                 "1d":"1d","1wk":"1wk","1mo":"1mo"
             }
-            yf_iv   = yf_interval_map.get(interval, interval)
-            ticker  = yf.Ticker(sym if is_us_symbol(sym) else sym + ".NS")
+            yf_iv = yf_interval_map.get(interval, interval)
+            # US stocks use ticker as-is; Indian stocks need .NS suffix
+            ticker_sym = sym if is_us_symbol(sym) else sym + ".NS"
+            ticker = yf.Ticker(ticker_sym)
             df = ticker.history(
                 period=period,
                 interval=yf_iv,
@@ -4271,11 +4550,11 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     def _fetch_upstox(sym: str) -> pd.DataFrame:
-        """Fetch from Upstox historical API â€” NSE stocks only.
-        US symbols always routed to yfinance. Gate on live token only."""
-        if is_us_symbol(sym):          # Upstox is NSE-only; US stocks â†’ yfinance
+        """Fetch from Upstox historical API — NSE stocks only; skip US symbols."""
+        if is_us_symbol(sym):  # Upstox is NSE-only — US stocks use yfinance
             return pd.DataFrame()
-        if not _upstox_connected():    # No live token â†’ silent fallback to yfinance
+        # Use Upstox if token present (connected) OR if creds saved (try anyway)
+        if not _upstox_connected() and not _upstox_has_credentials():
             return pd.DataFrame()
         try:
             lb_map = {"15m":"60d","30m":"90d","1h":"180d",
@@ -4290,18 +4569,19 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
     def _fetch_one(sym):
         """
-        Dual data feed â€” yfinance is ALWAYS the live fallback.
-        1. Upstox live (only if token valid AND NSE symbol) â€” real-time
-        2. yfinance (ALWAYS runs if Upstox unavailable/expired/US symbol)
-        App works 24x7 without any Upstox token â€” yfinance handles all markets.
+        Dual data feed with intelligent fallback:
+        1. Upstox (whenever credentials/token available — no cloud rate limits)
+        2. yfinance (automatic fallback if Upstox fails or no creds)
+        Whichever gives more data wins.
         """
-        df = pd.DataFrame()
+        df     = pd.DataFrame()
+        has_up = _upstox_connected() or _upstox_has_credentials()
 
-        # Primary: Upstox â€” only for NSE symbols with live token
-        if _upstox_connected() and not is_us_symbol(sym):
+        # Primary: Upstox (reliable, no NSE rate limits on Streamlit Cloud)
+        if has_up:
             df = _fetch_upstox(sym)
 
-        # ALWAYS fallback to yfinance (handles NSE + US, works without token)
+        # Fallback/supplement: yfinance
         if df.empty or len(df) < 10:
             yf_df = _fetch_yfinance(sym)
             if not yf_df.empty and len(yf_df) > len(df):
@@ -4331,7 +4611,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             close  = df["Close"];  high = df["High"]
             low_s  = df["Low"];    vol  = df["Volume"]
 
-            # â”€â”€ CPR from prior completed candle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── CPR from prior completed candle ──────────────────────────────
             ref   = df.iloc[-2]
             H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
             P   = (H + L + C) / 3
@@ -4339,76 +4619,130 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             TC  = (P - BC) + P
             width = abs(TC - BC) / P * 100 if P else 0
 
-            # Wider CPR acceptable for shorter timeframes
-            max_width = 3.0 if interval in ("15m","30m") else (2.5 if interval == "1h" else 2.0)
+            # CPR width limits per timeframe — Ochoa: narrow = trending day
+            # 30M is primary (best quality), 15M tighter, 1H slightly wider
+            if interval == "15m":   max_width = 2.0   # tight for scalp
+            elif interval == "30m": max_width = 1.5   # 30M primary — strictest
+            elif interval == "1h":  max_width = 2.5   # swing — allow wider
+            else:                   max_width = 2.0
             if width > max_width:
                 continue
 
             ltp = float(close.iloc[-1])
 
-            # â”€â”€ Pivot levels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Pivot levels ─────────────────────────────────────────────────
             R1 = round(2*P-L,2);  R2 = round(P+(H-L),2);  R3 = round(H+2*(P-L),2)
             S1 = round(2*P-H,2);  S2 = round(P-(H-L),2);  S3 = round(L-2*(H-P),2)
 
-            # â”€â”€ HMA-20 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── HMA-20 ───────────────────────────────────────────────────────
             def wma(s, n):
                 w = np.arange(1, n+1)
                 return s.rolling(n).apply(lambda x: np.dot(x,w)/w.sum(), raw=True)
             hma    = wma(2*wma(close,10)-wma(close,20), 4)
             hma_up = bool(hma.iloc[-1]>hma.iloc[-2]) if len(hma.dropna())>=2 else None
 
-            # â”€â”€ 3/10 Oscillator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── 3/10 Oscillator ──────────────────────────────────────────────
             diff         = close.rolling(3).mean() - close.rolling(10).mean()
             sig16        = diff.rolling(16).mean()
             hist_val     = float(diff.iloc[-1]-sig16.iloc[-1]) if not np.isnan(diff.iloc[-1]) else 0
             osc_cross_bull = bool(diff.iloc[-1]>sig16.iloc[-1] and diff.iloc[-2]<=sig16.iloc[-2])
             osc_cross_bear = bool(diff.iloc[-1]<sig16.iloc[-1] and diff.iloc[-2]>=sig16.iloc[-2])
 
-            # â”€â”€ RSI-14 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── RSI-14 ───────────────────────────────────────────────────────
             delta = close.diff()
             gain  = delta.clip(lower=0).rolling(14).mean()
             loss  = (-delta.clip(upper=0)).rolling(14).mean()
             rsi   = float(100-(100/(1+gain.iloc[-1]/max(loss.iloc[-1],1e-9))))
 
-            # â”€â”€ ATR-14 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── ATR-14 ───────────────────────────────────────────────────────
             tr  = pd.concat([high-low_s,(high-close.shift()).abs(),(low_s-close.shift()).abs()],axis=1).max(axis=1)
             atr = float(tr.rolling(14).mean().iloc[-1])
 
-            # â”€â”€ VWAP (20-bar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── VWAP (20-bar) ────────────────────────────────────────────────
             tp   = (high+low_s+close)/3
             vwap = (tp*vol).rolling(20).sum()/vol.rolling(20).sum()
             above_vwap = bool(ltp>float(vwap.iloc[-1])) if not np.isnan(vwap.iloc[-1]) else None
 
-            # â”€â”€ Volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Volume ───────────────────────────────────────────────────────
             vol_avg   = float(vol.rolling(20).mean().iloc[-1])
             vol_cur   = float(vol.iloc[-1])
             vol_surge = vol_cur > vol_avg*1.5 if vol_avg>0 else False
 
-            # â”€â”€ Stochastic %K (14,3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Stochastic %K (14,3) ─────────────────────────────────────────
             lo14 = low_s.rolling(14).min()
             hi14 = high.rolling(14).max()
             stk  = float(100*(close.iloc[-1]-lo14.iloc[-1])/max(hi14.iloc[-1]-lo14.iloc[-1],1e-9))
             stk_prev = float(100*(close.iloc[-2]-lo14.iloc[-2])/max(hi14.iloc[-2]-lo14.iloc[-2],1e-9))
 
-            # â”€â”€ Candlestick â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Candlestick ──────────────────────────────────────────────────
             candle_name, candle_dir, candle_bonus = detect_candlestick_pattern(df)
 
-            # â”€â”€ Virgin CPR check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Virgin CPR check ─────────────────────────────────────────────
             # CPR is virgin if price never closed inside it in last 10 bars
             inside_cpr = ((close.iloc[-12:-2] >= BC) & (close.iloc[-12:-2] <= TC)).any()
             virgin_cpr = not inside_cpr
 
-            # â”€â”€ Frank Ochoa Scoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Two-Day CPR Relationship (Frank Ochoa) ───────────────────────
+            # Compare today's CPR with yesterday's CPR
+            # Overlapping CPR → choppy/sideways day — avoid breakout trades
+            # Non-overlapping CPR → trending day — high probability breakout
+            if len(df) >= 4:
+                ref_prev  = df.iloc[-3]
+                H2p, L2p, C2p = float(ref_prev["High"]), float(ref_prev["Low"]), float(ref_prev["Close"])
+                P2p  = (H2p + L2p + C2p) / 3
+                BC2p = (H2p + L2p) / 2
+                TC2p = (P2p - BC2p) + P2p
+                # Overlap check: today's CPR overlaps yesterday's
+                cpr_overlap   = not (TC < BC2p or BC > TC2p)
+                cpr_above_prev = BC > TC2p   # today's CPR entirely above yesterday → strong bull
+                cpr_below_prev = TC < BC2p   # today's CPR entirely below yesterday → strong bear
+            else:
+                cpr_overlap = False
+                cpr_above_prev = cpr_below_prev = False
+
+            # ── CPR Day-Type Classifier ───────────────────────────────────────
+            if width < 0.25:
+                day_type = "Trending"     # Narrow CPR → expect strong trend
+            elif width < 0.5:
+                day_type = "Moderate"
+            elif cpr_overlap:
+                day_type = "Sideways"     # Wide + overlapping → avoid
+            else:
+                day_type = "Volatile"
+
+            # ── ATR Bar-Size for Extreme/Outside Reversal ────────────────────
+            bar_sizes  = (high - low_s).rolling(10).mean()
+            avg_bar    = float(bar_sizes.iloc[-1]) if not np.isnan(bar_sizes.iloc[-1]) else atr
+            cur_bar    = float(high.iloc[-1] - low_s.iloc[-1])
+            bar_mult   = cur_bar / avg_bar if avg_bar > 0 else 0
+
+            # ── Extreme Reversal (Rubber Band) — Ochoa SPB Setup ─────────────
+            # Price over-extended (bar_mult >= 2×) snapping back toward CPR
+            extreme_bull = (bar_mult >= 2.0 and bear0 and ltp < BC and
+                            float(low_s.iloc[-1]) < float(low_s.iloc[-5:-2].min()))
+            extreme_bear = (bar_mult >= 2.0 and bull0 and ltp > TC and
+                            float(high.iloc[-1]) > float(high.iloc[-5:-2].max()))
+
+            # ── Outside Reversal (False Breakout Fade) — Ochoa SPB Setup ─────
+            # Bar sweeps beyond prev H/L then reverses back inside
+            outside_bull = (bar_mult >= 1.25 and
+                            float(low_s.iloc[-1])  < float(low_s.iloc[-2]) and
+                            float(close.iloc[-1])  > float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+            outside_bear = (bar_mult >= 1.25 and
+                            float(high.iloc[-1])   > float(high.iloc[-2]) and
+                            float(close.iloc[-1])  < float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+
+            # ── Frank Ochoa Scoring ──────────────────────────────────────────
             bull_pts = bear_pts = 0
             bull_reasons = []; bear_reasons = []
 
-            # 1. CPR Position â€” core signal (3 pts)
+            # 1. CPR Position — core signal (3 pts)
             if ltp > TC:
                 bull_pts += 3; bull_reasons.append("Price above CPR")
             elif ltp < BC:
                 bear_pts += 3; bear_reasons.append("Price below CPR")
 
-            # Virgin CPR bonus (2 pts) â€” highest quality setup
+            # Virgin CPR bonus (2 pts) — highest quality setup
             if virgin_cpr and ltp > TC:
                 bull_pts += 2; bull_reasons.append("Virgin CPR breakout")
             elif virgin_cpr and ltp < BC:
@@ -4461,16 +4795,47 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             elif candle_dir == "bear":
                 bear_pts += 2; bear_reasons.append(f"{candle_name} pattern")
 
+            # 8b. Wick Reversal at CPR (Ochoa SPB Setup — +3 pts)
+            # Hammer/Pin Bar forming within 0.5×ATR of BC (bull) or TC (bear)
+            _near_bc = abs(ltp - BC) <= atr * 0.5
+            _near_tc = abs(ltp - TC) <= atr * 0.5
+            if candle_name in ("Hammer", "Bull Pin Bar", "Morning Star", "Bullish Engulfing") and _near_bc:
+                bull_pts += 3; bull_reasons.append(f"Wick Reversal at CPR BC ({candle_name})")
+            elif candle_name in ("Shooting Star", "Bear Pin Bar", "Evening Star", "Bearish Engulfing") and _near_tc:
+                bear_pts += 3; bear_reasons.append(f"Wick Reversal at CPR TC ({candle_name})")
+
             # 9. Pivot position bonus (1 pt)
             if ltp > P:
                 bull_pts += 1; bull_reasons.append("Above Pivot P")
             elif ltp < P:
                 bear_pts += 1; bear_reasons.append("Below Pivot P")
 
-            # 10. CPR width bonus â€” narrow CPR = stronger signal (1 pt)
+            # 10. CPR width bonus — narrow CPR = stronger signal (1 pt)
             if width < 0.25:
                 if bull_pts >= bear_pts: bull_pts += 1; bull_reasons.append("Narrow CPR (<0.25%)")
                 else: bear_pts += 1; bear_reasons.append("Narrow CPR (<0.25%)")
+
+            # 11. Two-Day CPR Relationship (Ochoa — 3 pts, highest conviction)
+            if cpr_above_prev:
+                bull_pts += 3; bull_reasons.append("CPR above prior (trending bull day)")
+            elif cpr_below_prev:
+                bear_pts += 3; bear_reasons.append("CPR below prior (trending bear day)")
+            elif cpr_overlap:
+                # Overlapping CPR — PENALISE breakout signals (choppy day risk)
+                bull_pts = max(0, bull_pts - 2)
+                bear_pts = max(0, bear_pts - 2)
+                bull_reasons.append("⚠️ Overlapping CPR (sideways risk)")
+                bear_reasons.append("⚠️ Overlapping CPR (sideways risk)")
+
+            # 12. Extreme Reversal / Outside Reversal bonus (2 pts each)
+            if extreme_bull:
+                bull_pts += 2; bull_reasons.append("Extreme reversal — rubber band bull")
+            elif extreme_bear:
+                bear_pts += 2; bear_reasons.append("Extreme reversal — rubber band bear")
+            if outside_bull:
+                bull_pts += 2; bull_reasons.append("Outside reversal — false breakdown fade")
+            elif outside_bear:
+                bear_pts += 2; bear_reasons.append("Outside reversal — false breakout fade")
 
             total = bull_pts + bear_pts
             if   bull_pts > bear_pts: pattern_main = "Bullish"; reasons = bull_reasons
@@ -4482,7 +4847,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             if pattern_main == "Neutral":
                 continue
 
-            # â”€â”€ Targets & SL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
             if trade_dir == "bull":
                 entry = round(TC + atr*0.05, 2)
@@ -4510,40 +4875,88 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
             cpr_type = "Narrow" if width<0.25 else ("Moderate" if width<0.5 else "Wide")
 
-            # â”€â”€ SL Distance Filter: 0.5% â€“ 1.0% from entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            # â‰¥0.5% avoids noise whipsaws | â‰¤1.0% enforces R:R discipline
-            # Proven impact: 46â†’10 trades, 54%â†’90% win rate, PF 3.3â†’14.2
-            if entry > 0 and sl > 0:
-                _sl_pct = abs(entry - sl) / entry * 100
-                if _sl_pct < 0.5 or _sl_pct > 1.0:
-                    continue   # Skip: SL too tight (<0.5%) or too wide (>1.0%)
-
-            # â”€â”€ Strategy rationale string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Strategy rationale string ────────────────────────────────────
             # Used in signal card + backtest reference
             top3 = reasons[:3] if len(reasons) >= 3 else reasons
-            rationale = " Â· ".join(top3)
+            rationale = " · ".join(top3)
             if virgin_cpr:
-                rationale = "â­ " + rationale  # highlight virgin CPR
+                rationale = "⭐ Virgin CPR · " + rationale
+            # Append Day Type and CPR overlap to rationale
+            rationale += f" | {day_type} Day"
+            if cpr_above_prev or cpr_below_prev:
+                rationale += " | Non-Overlap CPR"
+            if extreme_bull or extreme_bear:
+                rationale += " | Extreme Reversal"
+            if outside_bull or outside_bear:
+                rationale += " | Outside Reversal"
 
+            # ── Frank Ochoa Strategy Classifier ─────────────────────────
+            # Match signal to the BEST fitting named strategy based on
+            # conditions actually triggered — in priority order
+            def _classify_strategy():
+                # P1: Two-Day CPR Non-Overlap (highest conviction trending day)
+                if (cpr_above_prev or cpr_below_prev) and width < 0.5:
+                    return "Two-Day CPR Non-Overlap"
+                # P2: Extreme Reversal (Rubber Band)
+                if extreme_bull or extreme_bear:
+                    return "Extreme Reversal (Rubber Band)"
+                # P3: Outside Reversal (False Breakout Fade)
+                if outside_bull or outside_bear:
+                    return "Outside Reversal (False Breakout Fade)"
+                # P4: Wick Reversal at CPR
+                if candle_name in ("Hammer","Bull Pin Bar","Bullish Engulfing",
+                                   "Shooting Star","Bear Pin Bar","Bearish Engulfing",
+                                   "Morning Star","Evening Star"):
+                    _near_bc = abs(ltp - BC) <= atr * 0.5
+                    _near_tc = abs(ltp - TC) <= atr * 0.5
+                    if _near_bc or _near_tc:
+                        return "Wick Reversal at CPR"
+                # P5: Virgin CPR Weekly Magnet
+                if virgin_cpr and width < 0.5:
+                    return "Virgin CPR Breakout"
+                # P6: CPR Narrow Breakout (width < 0.5%, trending day)
+                if width < 0.5 and day_type in ("Trending","Moderate"):
+                    return "CPR Narrow Breakout"
+                # P7: 3/10 Oscillator Cross
+                if osc_cross_bull or osc_cross_bear:
+                    return "3/10 Oscillator Cross"
+                # P8: RSI + CPR Confluence
+                if (pattern_main == "Bullish" and rsi >= 50) or                    (pattern_main == "Bearish" and rsi <= 50):
+                    return "RSI + CPR Confluence"
+                # P9: Candlestick + CPR
+                if candle_name not in ("None","—",""):
+                    return "Candlestick + CPR"
+                # P10: HMA Trend Follower
+                if hma_up is not None:
+                    return "HMA Trend Follower"
+                # Default
+                return "CPR Signal"
+
+            strat_name = _classify_strategy()
             strat_name = _build_strategy_name({
+                "side":       pattern_main,
+                "tf":         interval,
+                "candle":     candle_name,
+                "rsi":        round(rsi,1),
+                "hma":        "▲" if hma_up else "▼",
+                "vol":        "✅" if vol_surge else "—",
+                "cpr_w":      round(width,3),
+                "strength":   min(strength,100),
+                "rr1":        rr1,
+                "ltp":        ltp,
+                "entry":      entry,
+                "day_type":   day_type,
                 "tf_label":   interval,
-                "CPR Type":   cpr_type,
-                "Candle":     candle_name,
-                "Pattern":    pattern_main,
-                "RSI":        round(rsi,1),
-                "HMA":        "â–²" if hma_up else "â–¼",
-                "Vol Surge":  "âœ…" if vol_surge else "â€”",
-                "Osc Cross":  "ðŸ”¼" if osc_cross_bull else ("ðŸ”½" if osc_cross_bear else "â€”"),
-                "CPR Width%": round(width,3),
-                "Strength%":  min(strength,100),
             })
+            # Prepend strategy classification to name
+            strat_name = f"{_classify_strategy()} — {strat_name}"
 
             rows.append({
                 "Symbol":     sym,
                 "LTP":        round(ltp,2),
                 "CPR Width%": round(width,3),
                 "CPR Type":   cpr_type,
-                "Virgin CPR": "â­ Yes" if virgin_cpr else "â€”",
+                "Virgin CPR": "⭐ Yes" if virgin_cpr else "—",
                 "Strategy":   strat_name,
                 "Rationale":  rationale,
                 "TC":         round(TC,2),  "BC": round(BC,2),  "Pivot P": round(P,2),
@@ -4552,12 +4965,14 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "Pattern":    pattern_main,
                 "Candle":     candle_name,
                 "Strength%":  min(strength,100),
+                "Day Type":   day_type,
+                "CPR Overlap":cpr_overlap,
                 "RSI":        round(rsi,1),
-                "HMA":        "â–²" if hma_up else "â–¼",
+                "HMA":        "▲" if hma_up else "▼",
                 "ATR":        round(atr,2),
                 "Stoch%K":    round(stk,1),
-                "Vol Surge":  "âœ…" if vol_surge else "â€”",
-                "Osc Cross":  "ðŸ”¼" if osc_cross_bull else ("ðŸ”½" if osc_cross_bear else "â€”"),
+                "Vol Surge":  "✅" if vol_surge else "—",
+                "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
                 "Entry":      entry,
                 "SL":         sl,
                 "T1":         round(t1,2),  "T2": round(t2,2),  "T3": round(t3,2),
@@ -4607,17 +5022,17 @@ def build_scanner_pdf(top_bull: pd.DataFrame, top_bear: pd.DataFrame,
                  textColor=rl_c.HexColor("#94a3b8"), leading=10)
 
     story = []
-    story.append(Paragraph("PivotVault AI â€” CPR Scanner Report", s_title))
+    story.append(Paragraph("PivotVault AI — CPR Scanner Report", s_title))
     story.append(Paragraph(
-        f"{tf_choice}  Â·  Frank Ochoa Strategy  Â·  {scan_time_str}", s_sub))
+        f"{tf_choice}  ·  Frank Ochoa Strategy  ·  {scan_time_str}", s_sub))
     story.append(HRFlowable(width=W, thickness=1, color=BORDER, spaceAfter=5))
 
     def _tbl(df, direction):
         is_bull = direction == "Bullish"
         hdr_c   = GREEN if is_bull else RED
-        arrow   = "â–²" if is_bull else "â–¼"
+        arrow   = "▲" if is_bull else "▼"
         story.append(Paragraph(
-            f"{arrow} {direction} Setups â€” Top 10 Â· Pivot-Based Targets Â· Frank Ochoa", s_h))
+            f"{arrow} {direction} Setups — Top 10 · Pivot-Based Targets · Frank Ochoa", s_h))
         if df.empty:
             story.append(Paragraph(f"No {direction} setups found.", s_disc))
             return
@@ -4629,7 +5044,7 @@ def build_scanner_pdf(top_bull: pd.DataFrame, top_bear: pd.DataFrame,
                 str(r["Symbol"]),
                 f"Rs.{r['LTP']:,.2f}",
                 f"{int(r['Strength%'])}%",
-                str(r.get("Candle","â€”")),
+                str(r.get("Candle","—")),
                 f"Rs.{r['Entry']:,.2f}",
                 f"Rs.{r['T1']:,.2f}",
                 f"Rs.{r['T2']:,.2f}",
@@ -4681,13 +5096,13 @@ def send_scanner_pdf_email(pdf_bytes: bytes, to_email: str, tf_label: str,
     from email              import encoders
     try:
         msg            = MIMEMultipart()
-        msg["Subject"] = f"PivotVault AI â€” CPR Scanner {tf_label} â€” {scan_time}"
+        msg["Subject"] = f"PivotVault AI — CPR Scanner {tf_label} — {scan_time}"
         msg["From"]    = smtp_cfg["sender"]
         msg["To"]      = to_email
 
         body = MIMEText(
             f"<html><body style='font-family:monospace;'>"
-            f"<h2 style='color:#1a1f0e;'>PivotVault AI â€” CPR Scanner Auto-Report</h2>"
+            f"<h2 style='color:#1a1f0e;'>PivotVault AI — CPR Scanner Auto-Report</h2>"
             f"<p style='color:#5a6a48;'>{tf_label} &nbsp;|&nbsp; {scan_time}</p>"
             f"<p>Please find the latest CPR Scanner report attached as PDF.</p>"
             f"<p style='color:#2d7a3a;'>Scan completed automatically. Top 10 Bullish + Top 10 Bearish stocks.</p>"
@@ -4716,14 +5131,14 @@ def send_scanner_pdf_email(pdf_bytes: bytes, to_email: str, tf_label: str,
                 s.ehlo(); s.starttls(context=ctx)
                 s.login(smtp_cfg["sender"], smtp_cfg["password"])
                 s.sendmail(smtp_cfg["sender"], to_email, msg.as_string())
-        return True, "âœ… Auto-report sent!"
+        return True, "✅ Auto-report sent!"
     except Exception as e:
         return False, str(e)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#  BROKER INTEGRATION â€” Zerodha Kite Â· Upstox Â· Groww
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════
+#  BROKER INTEGRATION — Zerodha Kite · Upstox · Groww
+# ══════════════════════════════════════════════════════════════
 
 def _zerodha_place_order(symbol: str, side: str, qty: int,
                           order_type: str = "MARKET") -> tuple:
@@ -4733,7 +5148,7 @@ def _zerodha_place_order(symbol: str, side: str, qty: int,
         api_key      = st.session_state.get("zerodha_api_key", "")
         access_token = st.session_state.get("zerodha_access_token", "")
         if not api_key or not access_token:
-            return False, "Zerodha not configured. Add API key & access token in âš™ï¸ Broker Settings."
+            return False, "Zerodha not configured. Add API key & access token in ⚙️ Broker Settings."
         kite = KiteConnect(api_key=api_key)
         kite.set_access_token(access_token)
         tx = kite.TRANSACTION_TYPE_BUY if side == "BUY" else kite.TRANSACTION_TYPE_SELL
@@ -4759,7 +5174,7 @@ def _upstox_place_order(symbol: str, side: str, qty: int) -> tuple:
         import upstox_client
         access_token = st.session_state.get("upstox_access_token", "")
         if not access_token:
-            return False, "Upstox not configured. Add access token in âš™ï¸ Broker Settings."
+            return False, "Upstox not configured. Add access token in ⚙️ Broker Settings."
         config = upstox_client.Configuration()
         config.access_token = access_token
         api = upstox_client.OrderApi(upstox_client.ApiClient(config))
@@ -4909,7 +5324,7 @@ function buildCards() {{
     if (!w._pvNotifEnabled && w.Notification && w.Notification.permission !== "denied") {{
         var bar = document.createElement("div");
         bar.className = "pv-notif-bar";
-        bar.innerHTML = "ðŸ”” Enable desktop notifications for instant trade alerts &nbsp;<button onclick=\"reqNotif()\">Allow</button>";
+        bar.innerHTML = "🔔 Enable desktop notifications for instant trade alerts &nbsp;<button onclick=\"reqNotif()\">Allow</button>";
         popup.appendChild(bar);
     }}
 
@@ -4924,51 +5339,51 @@ function buildCards() {{
         // Groww button (always show)
         btns += "<a href=\"" + growwUrl(sig.symbol) + "\" target=\"_blank\" class=\"pv-btn " +
                 (bull ? "btn-groww" : "btn-bear-groww") + "\">" +
-                (bull ? "ðŸŸ¢ Buy on Groww" : "ðŸ”´ Sell on Groww") + "</a>";
+                (bull ? "🟢 Buy on Groww" : "🔴 Sell on Groww") + "</a>";
 
         // Zerodha button
         btns += "<a href=\"" + zerodhaUrl(sig.symbol, sig.side) + "\" target=\"_blank\" class=\"pv-btn " +
                 (bull ? "btn-zerodha" : "btn-bear-zerodha") + "\">" +
-                "âš¡ " + sig.side + " on Zerodha Kite</a>";
+                "⚡ " + sig.side + " on Zerodha Kite</a>";
 
         // Upstox button
         btns += "<a href=\"" + upstoxUrl(sig.symbol, sig.side) + "\" target=\"_blank\" class=\"pv-btn " +
                 (bull ? "btn-upstox" : "btn-bear-upstox") + "\">" +
-                "ðŸ’œ " + sig.side + " on Upstox</a>";
+                "💜 " + sig.side + " on Upstox</a>";
 
         // Paper trade button
         btns += "<button class=\"pv-btn btn-paper\" onclick=\"paperTrade(" + idx + ")\">" +
-                "ðŸ“ Paper Trade (Test)</button>";
+                "📝 Paper Trade (Test)</button>";
 
         card.innerHTML =
-            "<button class=\"pv-dismiss\" onclick=\"dismissCard(" + idx + ")\">âœ•</button>" +
+            "<button class=\"pv-dismiss\" onclick=\"dismissCard(" + idx + ")\">✕</button>" +
             "<div class=\"pv-sc-head\">" +
             "  <span class=\"pv-sc-sym\">" + sig.symbol + "</span>" +
             "  <span class=\"pv-sc-badge " + (bull ? "bull-badge" : "bear-badge") + "\">" + sig.side + "</span>" +
             "</div>" +
             "<div class=\"pv-sc-levels\">" +
-            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Entry</div><div class=\"pv-sc-lv\">â‚¹" + sig.entry + "</div></div>" +
-            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Target</div><div class=\"pv-sc-lv\">â‚¹" + sig.t1 + "</div></div>" +
-            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">SL</div><div class=\"pv-sc-lv\">â‚¹" + sig.sl + "</div></div>" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Entry</div><div class=\"pv-sc-lv\">₹" + sig.entry + "</div></div>" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">Target</div><div class=\"pv-sc-lv\">₹" + sig.t1 + "</div></div>" +
+            "  <div class=\"pv-sc-lev\"><div class=\"pv-sc-ll\">SL</div><div class=\"pv-sc-lv\">₹" + sig.sl + "</div></div>" +
             "</div>" +
-            "<div class=\"pv-sc-meta\">R:R " + sig.rr + "x Â· Strength " + sig.strength + "% Â· " + sig.candle + "</div>" +
+            "<div class=\"pv-sc-meta\">R:R " + sig.rr + "x · Strength " + sig.strength + "% · " + sig.candle + "</div>" +
             "<div class=\"pv-broker-btns\">" + btns + "</div>";
 
         popup.appendChild(card);
 
-        // Desktop notification â€” use parent window to escape iframe sandbox
+        // Desktop notification — use parent window to escape iframe sandbox
         (function() {{
             var w = window.parent || window;
             if (w._pvNotify) {{
                 w._pvNotify(
-                    (bull ? "ðŸŸ¢ BUY" : "ðŸ”´ SELL") + " â€” " + sig.symbol + " (" + sig.strength + "%)",
-                    "Entry â‚¹" + sig.entry + "  T1 â‚¹" + sig.t1 + "  SL â‚¹" + sig.sl + "  R:R " + sig.rr + "x",
+                    (bull ? "🟢 BUY" : "🔴 SELL") + " — " + sig.symbol + " (" + sig.strength + "%)",
+                    "Entry ₹" + sig.entry + "  T1 ₹" + sig.t1 + "  SL ₹" + sig.sl + "  R:R " + sig.rr + "x",
                     "pv-" + sig.symbol
                 );
             }} else if (w.Notification && w.Notification.permission === "granted") {{
                 var n = new w.Notification(
-                    (bull ? "ðŸŸ¢ BUY" : "ðŸ”´ SELL") + " â€” " + sig.symbol + " (" + sig.strength + "%)",
-                    {{ body: "Entry â‚¹" + sig.entry + "  T1 â‚¹" + sig.t1 + "  SL â‚¹" + sig.sl + "  R:R " + sig.rr + "x",
+                    (bull ? "🟢 BUY" : "🔴 SELL") + " — " + sig.symbol + " (" + sig.strength + "%)",
+                    {{ body: "Entry ₹" + sig.entry + "  T1 ₹" + sig.t1 + "  SL ₹" + sig.sl + "  R:R " + sig.rr + "x",
                        icon: "/static/icon-192.png", tag: "pv-" + sig.symbol, requireInteraction: false }}
                 );
                 n.onclick = function() {{ w.focus(); n.close(); }};
@@ -4994,8 +5409,8 @@ function paperTrade(idx) {{
     var trades = JSON.parse(sessionStorage.getItem("pv_paper_queue") || "[]");
     trades.push(sig);
     sessionStorage.setItem("pv_paper_queue", JSON.stringify(trades));
-    alert("ðŸ“ Paper trade queued for " + sig.symbol + " " + sig.side +
-          " @ â‚¹" + sig.entry + "\nGo to Test Trading tab to see result.");
+    alert("📝 Paper trade queued for " + sig.symbol + " " + sig.side +
+          " @ ₹" + sig.entry + "\nGo to Test Trading tab to see result.");
     dismissCard(idx);
 }}
 
@@ -5020,1331 +5435,1249 @@ buildCards();
     st.markdown(groww_html, unsafe_allow_html=True)
 
 
-def page_cpr_scanner(nse500: pd.DataFrame):
-    """
-    CPR Scanner â€” one timeframe at a time.
-    Each timeframe auto-refreshes at its own natural interval:
-      15m  â†’ every 15 minutes
-      30m  â†’ every 30 minutes
-      1h   â†’ every 1 hour
-      1d   â†’ every 4 hours (daily chart doesn't change intraday)
-      1wk  â†’ every 24 hours
-      1mo  â†’ every 24 hours
-    Filters: Narrow CPR < 0.25% + Strength 85â€“100% + Top 10 only.
-    """
+def page_scanner_signals(nse500: pd.DataFrame):
+    """CPR Scanner + Trade Signals merged."""
+    import json
+    tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
+    with tab_scan:
+        # ── Market Toggle ──────────────────────────────────────────────────
+        _market = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
+        _tm1, _tm2, _tm3, _tm4 = st.columns(4)
+        with _tm1:
+            if st.button("🇮🇳 Nifty 200", use_container_width=True,
+                         type="primary" if _market == "🇮🇳 Nifty 200" else "secondary",
+                         key="mkt_nifty200"):
+                st.session_state["scanner_market"] = "🇮🇳 Nifty 200"; st.rerun()
+        with _tm2:
+            if st.button("🇮🇳 Nifty 50", use_container_width=True,
+                         type="primary" if _market == "🇮🇳 Nifty 50" else "secondary",
+                         key="mkt_nifty50"):
+                st.session_state["scanner_market"] = "🇮🇳 Nifty 50"; st.rerun()
+        with _tm3:
+            if st.button("🇺🇸 Dow 30", use_container_width=True,
+                         type="primary" if _market == "🇺🇸 Dow 30" else "secondary",
+                         key="mkt_dow30"):
+                st.session_state["scanner_market"] = "🇺🇸 Dow 30"; st.rerun()
+        with _tm4:
+            if st.button("🇺🇸 Nasdaq 100", use_container_width=True,
+                         type="primary" if _market == "🇺🇸 Nasdaq 100" else "secondary",
+                         key="mkt_nasdaq"):
+                st.session_state["scanner_market"] = "🇺🇸 Nasdaq 100"; st.rerun()
+        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        st.markdown(
+            f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
+            f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
+            f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
+            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; "
+            f"{'<b>$USD</b> · yfinance (US)' if _is_us else '<b>₹INR</b> · Upstox / yfinance'}"
+            f"</div>", unsafe_allow_html=True)
+        st.divider()
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+            "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
+            "border-radius:6px;border-left:3px solid #4e6130;'>"
+            "⚡ <b>15 Min &amp; 30 Min</b> → Auto Forward Testing &nbsp;|&nbsp; "
+            "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required</div>",
+            unsafe_allow_html=True)
 
-    TF_CONFIG = {
-        "âš¡ 15 Min  â€” Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
-        "â±ï¸ 30 Min  â€” Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
-        "ðŸ• 1 Hour  â€” Swing Scalping":  {"interval":"1h", "period":"60d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
-        "ðŸ“… 1 Day   â€” Swing Trading":   {"interval":"1d", "period":"120d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
-        "ðŸ“† 1 Week  â€” Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
-        "ðŸ—“ï¸ 1 Month â€” Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
-    }
+        TF_CONFIG = {
+            "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+            "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
+            "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"60d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
+            "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"120d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
+            "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
+            "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
+        }
 
-    # â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    st.markdown("""
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.25rem;
-                padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dae0cb;
-                border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-        <div style="font-size:2rem;">ðŸ“¡</div>
-        <div style="flex:1;">
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
-                        font-weight:700;color:#1a1f0e;">CPR Scanner</div>
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
-                        color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
-                NSE Top 100 Â· All CPR Setups Â· Best 10 Bullish + 10 Bearish Â· Pivot-Based Targets
+        # ── Header ────────────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.25rem;
+                    padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dae0cb;
+                    border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+            <div style="font-size:2rem;">📡</div>
+            <div style="flex:1;">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
+                            font-weight:700;color:#1a1f0e;">CPR Scanner</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                            color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
+                    Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+                </div>
+            </div>
+            <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
+                <div style="font-size:0.62rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
+                <div id="countdown" style="font-size:1.3rem;font-weight:700;color:#1a6b3c;">—</div>
             </div>
         </div>
-        <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
-            <div style="font-size:0.62rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
-            <div id="countdown" style="font-size:1.3rem;font-weight:700;color:#1a6b3c;">â€”</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # â”€â”€ Notification bar â€” device-aware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    st.markdown("""
-    <div id="pvNBar" style="border-radius:9px;padding:9px 14px;
-         margin-bottom:0.75rem;font-family:DM Mono,monospace;font-size:0.76rem;
-         border:1.5px solid #b8c89a;background:#f0f4e8;min-height:38px;">
-        <div id="pvNContent"></div>
-    </div>
-    <script>
-    (function(){
-        var w  = window.parent||window;
-        var ua = navigator.userAgent||"";
-        var isIOS     = /iPhone|iPad|iPod/i.test(ua);
-        var isAndroid = /Android/i.test(ua);
-        var isPWA     = window.matchMedia("(display-mode:standalone)").matches||
-                        window.navigator.standalone===true;
-        var isMobile  = isIOS||isAndroid;
-        var el = document.getElementById("pvNContent");
-        if(!el) return;
-
-        function render(){
-            if(isIOS && !isPWA){
-                el.innerHTML = "ðŸ“± <b>iOS:</b> Notifications not supported in Safari. "
-                    +"<span style='color:#7a5800;'>Add to Home Screen (PWA) to enable.</span>";
-                return;
-            }
-            if(!("Notification" in w)){
-                el.innerHTML = "âš ï¸ Browser doesn't support notifications. Use Chrome/Edge.";
-                return;
-            }
-            var p = w.Notification.permission;
-            if(p==="granted"){
-                document.getElementById("pvNBar").style.background="#e4f5e8";
-                document.getElementById("pvNBar").style.borderColor="#8dcc9a";
-                el.innerHTML = "<span style='color:#1a6b2e;font-weight:700;'>âœ… Notifications active</span>"
-                    +" Â· <span style='color:#2e3d1a;'>"+(isMobile?"Android Chrome":"Desktop browser")+"</span>"
-                    +" <button onclick='pvSendTest()' style='margin-left:8px;background:#1a6b2e;"
-                    +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
-                    +"font-size:0.72rem;cursor:pointer;font-weight:700;'>ðŸ§ª Test</button>";
-            } else if(p==="denied"){
-                document.getElementById("pvNBar").style.background="#fbe8e6";
-                document.getElementById("pvNBar").style.borderColor="#dc9090";
-                el.innerHTML = "âŒ Notifications blocked. "
-                    +(isAndroid?"Chrome â†’ 3-dot menu â†’ Site settings â†’ Notifications â†’ Allow."
-                    :"Browser Settings â†’ Notifications â†’ Allow this site.");
-            } else {
-                el.innerHTML = "ðŸ”” Enable "+(isMobile?"mobile":"desktop")+" notifications for instant signal alerts"
-                    +" <button onclick='pvAskNotif()' style='margin-left:8px;background:#3d5a1c;"
-                    +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
-                    +"font-size:0.72rem;cursor:pointer;font-weight:700;'>Allow</button>";
-            }
-        }
-        window.pvAskNotif = function(){
-            w.Notification.requestPermission().then(function(){ render(); });
-        };
-        window.pvSendTest = function(){
-            try{
-                var n = new w.Notification("ðŸ§ª PivotVault AI â€” Test",{
-                    body:"RELIANCE BUY Â· Entry â‚¹2,850 Â· T1 â‚¹2,920 Â· SL â‚¹2,800 Â· R:R 2.1x",
-                    icon:"/static/icon-192.png", tag:"pv-test"
-                });
-                n.onclick=function(){w.focus();n.close();};
-                el.innerHTML="<span style='color:#1a6b2e;font-weight:700;'>"
-                    +"âœ… Test sent! Check your "+(isMobile?"phone":"desktop")+".</span>";
-                setTimeout(render,3500);
-            }catch(e){ el.innerHTML="âŒ "+e.message; }
-        };
-        render();
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
-    # â”€â”€ Market Toggle (NSE default / US testing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    mg1, mg2 = st.columns([3, 1])
-    with mg1:
-        market_choice = st.radio(
-            "Market",
-            ["ðŸ‡®ðŸ‡³ NSE Top 100", "ðŸ‡®ðŸ‡³ Nifty 50", "ðŸ‡ºðŸ‡¸ Dow 30", "ðŸ‡ºðŸ‡¸ Nasdaq 100"],
-            horizontal=True,
-            index=0,
-            key="scanner_market",
-            label_visibility="collapsed",
-            help="NSE Top 100 = default live trading (NSE List) | Dow 30 / Nasdaq 100 = testing only (yfinance)",
-        )
-    with mg2:
-        _mkt_key = market_choice.split(" ", 1)[-1].strip()   # e.g. "Dow 30"
-        if "Dow" in market_choice or "Nasdaq" in market_choice:
-            st.markdown(
-                "<div style='background:#fff3cd;border-left:3px solid #f0ad4e;"
-                "border-radius:6px;padding:5px 10px;font-family:DM Mono,monospace;"
-                "font-size:0.70rem;color:#856404;margin-top:4px;'>"
-                "ðŸ§ª Test Mode â€” US via yfinance</div>",
-                unsafe_allow_html=True,
-            )
-
-    # â”€â”€ Timeframe selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    c1, c2 = st.columns([4, 1])
-    with c1:
-        tf_choice = st.selectbox(
-            "Timeframe",
-            list(TF_CONFIG.keys()),
-            index=2,
-            label_visibility="collapsed",
-            key="scanner_tf",
-        )
-    with c2:
-        manual_btn = st.button("ðŸ”„ Scan Now", use_container_width=True, key="run_cpr_scan_btn")
-
-    # â”€â”€ Smart auto-refresh tied to timeframe candle interval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(
-            interval = cfg["refresh"] * 1000,
-            limit    = None,
-            key      = f"scanner_ar_{cfg['tag']}",
-        )
-    elif is_market_open() and not _HAS_AUTOREFRESH:
-        st.caption(f"ðŸ’¡ pip install streamlit-autorefresh â†’ auto-scan every {cfg['refreshlabel']}")
-
-    cfg        = TF_CONFIG[tf_choice]
-    tf_col     = cfg["color"]
-    tf_bg      = cfg["bg"]
-    tf_tag     = cfg["tag"]
-    refresh_s  = cfg["refresh"]
-
-    scan_key      = f"cpr_scan_{tf_tag}"
-    scan_time_key = f"cpr_scan_time_{tf_tag}"
-
-    now           = time.time()
-    last_scan     = st.session_state.get(scan_time_key, 0)
-    age           = now - last_scan
-    needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
-
-    # â”€â”€ Run scan only for selected timeframe â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if needs_refresh:
-        # Warn if Upstox not connected â€” yfinance may be blocked on Streamlit Cloud
-        if not _upstox_connected():
-            st.info(
-                "ðŸ“Š **Running on yfinance** (15-min delay) â€” scanner fully works without Upstox. "
-                "Paste today's token in âš™ï¸ Broker Settings for real-time data & live orders.",
-                icon="ðŸ“Š",
-            )
-        upstox_live  = _upstox_connected()
-        has_creds    = _upstox_has_credentials()
-        n_stocks    = 100  # Nifty Top 100 â€” 2x faster, covers 85% NSE market cap
-
-        if has_creds and not upstox_live:
-            st.warning(
-                "âš ï¸ Upstox token expired â€” scanner will use yfinance. "
-                "Paste today's token above to restore Upstox live feed.",
-                icon="ðŸ”‘",
-            )
-
-        src_label = "ðŸ“¡ Upstox Live" if upstox_live else "ðŸ“Š yfinance (15-min delay)"
-        with st.spinner(f"Scanning {n_stocks} stocks Â· {tf_tag.upper()} Â· {src_label}â€¦"):
-            try:
-                _mkt    = st.session_state.get("scanner_market", "ðŸ‡®ðŸ‡³ NSE Top 100")
-                _mkt_lbl = _mkt.split(" ", 1)[-1].strip()  # "NSE List", "Dow 30" etc.
-                _sym_list = get_market_list(_mkt_lbl)
-                result = scan_cpr_multi_tf(
-                    _sym_list,
-                    interval=cfg["interval"],
-                    period=cfg["period"],
-                    max_stocks=n_stocks,
-                )
-                if result.empty:
-                    st.warning(
-                        f"âš ï¸ No setups found on {tf_tag.upper()}. "
-                        f"{'Market may be closed â€” data is from last session.' if not is_market_open() else 'All stocks filtered out â€” try a different timeframe.'}"
-                    )
-                else:
-                    st.toast(f"âœ… {len(result)} setups found Â· {src_label}", icon="ðŸ“¡")
-            except Exception as e:
-                st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
-                result = pd.DataFrame()
-        st.session_state[scan_key]      = result
-        st.session_state[scan_time_key] = now
-
-        # â”€â”€ Auto-feed signals into Forward Testing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if not result.empty and tf_tag in ("15m","30m","1h"):
-            for _, row in result.iterrows():
-                sig = {
-                    "symbol":    row.get("Symbol",""),
-                    "side":      "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
-                    "entry":     row.get("Entry",   row.get("LTP",0)),
-                    "sl":        row.get("SL",      0),
-                    "t1":        row.get("T1",      0),
-                    "t2":        row.get("T2",      0),
-                    "rr1":       row.get("RR1",     2.0),
-                    "tf":        tf_tag,
-                    "rationale": row.get("Rationale", row.get("Strategy","CPR")),
-                    "strategy":  row.get("Strategy","CPR"),
-                    "strength":  row.get("Strength%",0),
-                    "candle":    row.get("Candle","â€”"),
-                }
-                if sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]:
-                    ft_add_signal(sig, source=f"Auto Â· {tf_tag.upper()}")
-        last_scan = now
-
-        # â”€â”€ Always sync canonical keys read by Trade Signals tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
-        if tf_tag in ("15m", "30m", "1h"):
-            st.session_state[f"cpr_scan_{tf_tag}"]      = result
-            st.session_state[f"cpr_scan_time_{tf_tag}"] = now
-
-        # â”€â”€ Store signals + fire desktop notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if not result.empty:
-            top3_bull = result[result["Pattern"]=="Bullish"].head(3)
-            top3_bear = result[result["Pattern"]=="Bearish"].head(3)
-            notif_signals = []
-            for _, r in top3_bull.iterrows():
-                notif_signals.append({
-                    "symbol": r["Symbol"], "side": "BUY",
-                    "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
-                    "rr": r["RR1"], "strength": int(r["Strength%"]),
-                    "candle": r.get("Candle","â€”"),
-                })
-            for _, r in top3_bear.iterrows():
-                notif_signals.append({
-                    "symbol": r["Symbol"], "side": "SELL",
-                    "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
-                    "rr": r["RR1"], "strength": int(r["Strength%"]),
-                    "candle": r.get("Candle","â€”"),
-                })
-            st.session_state["pending_signals"] = notif_signals
-            # Also update the per-tag scan time key used by Trade Signals tab
-            st.session_state[f"cpr_scan_time_{tf_tag}"] = now
-
-            # â”€â”€ Fire desktop notifications via window.parent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            # window.parent escapes the Streamlit iframe â€” works on Chrome/Edge/Firefox
-            notif_js_list = json.dumps([
-                {"sym": s["symbol"], "side": s["side"],
-                 "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
-                 "rr": s["rr"], "str": s["strength"]}
-                for s in notif_signals[:6]
-            ])
-            st.markdown(f"""
-<script>
-(function fireNotifs() {{
-    var sigs = {notif_js_list};
-    var w    = window.parent || window;
-    if (!("Notification" in w)) return;
-    if (w.Notification.permission !== "granted") {{
-        // Flash the allow button if not granted
-        var btn = document.getElementById("pv-allow-btn");
-        if (btn) {{
-            btn.style.animation = "none";
-            btn.style.background = "#c0392b";
-            btn.innerText = "âš ï¸ Allow Notifications!";
-        }}
-        return;
-    }}
-    sigs.forEach(function(s, i) {{
-        setTimeout(function() {{
-            var emoji = s.side === "BUY" ? "ðŸŸ¢" : "ðŸ”´";
-            w.pvNotify(
-                emoji + " " + s.side + " Signal â€” " + s.sym + " (" + s.str + "%)",
-                "Entry â‚¹" + s.entry + "  |  T1 â‚¹" + s.t1 + "  |  SL â‚¹" + s.sl + "  |  R:R " + s.rr + "x",
-                "pv-" + s.sym
-            );
-        }}, i * 800);  // Stagger by 800ms so they don't all fire at once
-    }});
-}})();
-</script>
-""", unsafe_allow_html=True)
-
-    scan_df  = st.session_state.get(scan_key, pd.DataFrame())
-    elapsed  = int(now - last_scan)
-    remaining = max(0, refresh_s - elapsed)
-
-    # â”€â”€ Countdown JS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    st.markdown(f"""
-    <script>
-    (function() {{
-        var secs = {remaining};
-        function pad(n) {{ return n < 10 ? "0"+n : n; }}
-        function fmt(s) {{
-            if (s >= 3600) return pad(Math.floor(s/3600))+"h "+pad(Math.floor((s%3600)/60))+"m";
-            return pad(Math.floor(s/60))+":"+pad(s%60);
-        }}
-        function tick() {{
-            if (secs <= 0) {{ window.location.reload(); return; }}
-            var el = document.getElementById("countdown");
-            if (el) el.innerText = fmt(secs);
-            secs--;
-            setTimeout(tick, 1000);
-        }}
-        tick();
-    }})();
-    </script>
-    """, unsafe_allow_html=True)
-
-    # â”€â”€ Status bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    scan_dt = datetime.fromtimestamp(last_scan).strftime("%d %b  %H:%M:%S") if last_scan else "â€”"
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
-        f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
-        f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{tf_bg};"
-        f"border:1px solid {tf_col}33;border-left:3px solid {tf_col};border-radius:6px;'>"
-        f"<span style='color:{tf_col};font-weight:700;'>{tf_choice}</span>"
-        f"<span>Last scan: <b>{scan_dt}</b></span>"
-        f"<span>Auto-refresh: every <b>{cfg['refresh_label']}</b></span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-    if scan_df.empty:
-        st.warning("âš ï¸ Scanner returned no results. Click ðŸ”„ Scan Now to retry.")
-        with st.expander("ðŸ” Debug â€” What to check if scanner shows no data"):
-            st.markdown("""
-**Common causes:**
-
-1. **First run** â€” Click **ðŸ”„ Scan Now** manually to trigger the first scan.
-
-2. **yfinance rate limit** â€” NSE/yfinance blocks frequent requests from cloud IPs.
-   Connect Upstox in âš™ï¸ Broker Settings for live data that always works.
-
-3. **Weekend / market closed** â€” Scanner still works but data is from last trading day.
-
-4. **All CPR widths > 2%** â€” All stocks filtered out. Try switching to **1 Day** timeframe
-   which typically has more narrow CPR setups.
-
-5. **Streamlit Cloud cold start** â€” Wait 30 seconds then click Scan Now.
-            """)
-            st.code("Connect Upstox â†’ âš™ï¸ Broker Settings â†’ Paste your Access Token â†’ Save")
-        return
-
-    # â”€â”€ All bullish & bearish â€” no strength cutoff â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
-    all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
-
-    # â”€â”€ Summary metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    n_scanned = len(scan_df)
-    n_narrow  = int((scan_df["CPR Width%"] < 0.25).sum())
-    n_bull    = len(all_bull)
-    n_bear    = len(all_bear)
-    n_qual    = n_bull + n_bear   # all directional stocks
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("ðŸ“Š Scanned",   n_scanned)
-    m2.metric("ðŸŽ¯ Narrow CPR", n_narrow)
-    m3.metric("ðŸ“ˆ Directional", n_qual)
-    m4.metric("ðŸŸ¢ Bullish",   n_bull)
-    m5.metric("ðŸ”´ Bearish",   n_bear)
-
-    st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
-
-    if n_qual == 0:
-        st.markdown(
-            f"<div style='text-align:center;padding:2rem;background:#f7f9f2;"
-            f"border:2px dashed #dce3ed;border-radius:10px;"
-            f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8a9a78;'>"
-            f"Scanned <b>{n_scanned}</b> stocks on {tf_tag.upper()} â€” no directional CPR setups found right now.<br>"
-            f"<span style='font-size:0.72rem;'>All CPR widths may be > 2%, or no RSI/HMA confirmation. "
-            f"Try switching to ðŸ“… 1 Day timeframe or ðŸ”„ Scan Now again.</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        return
-
-    # â”€â”€ Top 10 each side â€” sorted by Strength then tightest CPR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
-    top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10)
-
-    def _cards(df, direction):
-        is_bull = direction == "Bullish"
-        hc  = "#16a34a" if is_bull else "#dc2626"
-        hbg = "#edf7ee" if is_bull else "#fdf0ee"
-        hbd = "#b8dfc0" if is_bull else "#f0c0b8"
-        arr = "â–²" if is_bull else "â–¼"
-
-        if df.empty:
-            return (f"<div style='padding:2rem;text-align:center;background:#f7f9f2;"
-                    f"border:2px dashed #dce3ed;border-radius:10px;"
-                    f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#8a9a78;'>"
-                    f"No {direction} picks match criteria on this timeframe</div>")
-
-        html = (f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
-                f"font-weight:700;color:{hc};letter-spacing:0.05em;text-transform:uppercase;"
-                f"padding:0.5rem 0.9rem;background:{hbg};border:1px solid {hbd};"
-                f"border-left:4px solid {hc};border-radius:6px;margin-bottom:0.6rem;'>"
-                f"{arr} Top 10 {direction} Â· Narrow CPR Â· Frank Ochoa Strategy</div>")
-
-        medals = {1: "ðŸ¥‡", 2: "ðŸ¥ˆ", 3: "ðŸ¥‰"}
-        for rank, (_, row) in enumerate(df.iterrows(), 1):
-            prob     = int(row["Strength%"])
-            rsi_c    = "#16a34a" if row["RSI"] >= 55 else ("#dc2626" if row["RSI"] <= 45 else "#d97706")
-            medal    = medals.get(rank, f"#{rank}")
-            candle   = str(row.get("Candle", "None"))
-            candle_icon = "ðŸ•¯ï¸" if candle != "None" else ""
-            rr1      = float(row.get("RR1", 0))
-            rr2      = float(row.get("RR2", 0))
-            rr_col   = "#16a34a" if rr1 >= 2 else ("#d97706" if rr1 >= 1.5 else "#dc2626")
-            osc      = str(row.get("Osc Cross", "â€”"))
-            vol      = str(row.get("Vol Surge", "â€”"))
-            cpr_w    = float(row.get("CPR Width%", 0))
-
-            html += (
-                f'<div style="background:#fff;border:1px solid {hbd};border-radius:10px;'
-                f'padding:0.85rem 1rem;margin-bottom:0.5rem;box-shadow:0 1px 5px rgba(0,0,0,0.05);">'
-                f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">'
-                f'<div style="display:flex;align-items:center;gap:8px;">'
-                f'<span style="font-size:1rem;">{medal}</span>'
-                f'<div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a1f0e;">{row["Symbol"]}</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a48;">'
-                f'&#8377;{row["LTP"]:,.2f} &nbsp;Â·&nbsp; ATR &#8377;{row["ATR"]:,.2f} &nbsp;Â·&nbsp; {candle_icon} {candle}</div>'
-                f'</div></div>'
-                f'<div style="text-align:right;">'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:{hc};">{prob}%</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;">Strength</div>'
-                f'</div></div>'
-                f'<div style="background:#f1f5f9;border-radius:3px;height:5px;margin-bottom:0.5rem;">'
-                f'<div style="background:{hc};width:{prob}%;height:100%;border-radius:3px;"></div></div>'
-                f'<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.45rem;'
-                f'padding:0.4rem 0.6rem;background:#f7f9f2;border-radius:6px;'
-                f'font-family:IBM Plex Mono,monospace;font-size:0.68rem;">'
-                f'<span style="color:#5a6a48;">Entry <b style="color:#1a1f0e;">&#8377;{row["Entry"]:,.2f}</b></span>'
-                f'<span>|</span>'
-                f'<span style="color:#5a6a48;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
-                f'<span style="color:#5a6a48;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
-                f'<span>|</span>'
-                f'<span style="color:#5a6a48;">SL <b style="color:#c0392b;">&#8377;{row["SL"]:,.2f}</b></span>'
-                f'<span>|</span>'
-                f'<span style="color:#5a6a48;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
-                f'</div>'
-                f'<div style="display:flex;flex-wrap:wrap;gap:0.3rem;">'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">CPR {cpr_w:.3f}%</span>'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Osc {osc}</span>'
-                f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Vol {vol}</span>'
-                f'<span style="background:{hbg};border:1px solid {hbd};border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};font-weight:600;">{arr} NARROW</span>'
-                f'</div></div>'
-            )
-        return html
-
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.markdown(_cards(top_bull, "Bullish"), unsafe_allow_html=True)
-    with col_r:
-        st.markdown(_cards(top_bear, "Bearish"), unsafe_allow_html=True)
-
-    # Full results table
-    if n_qual > 0:
-        with st.expander(f"ðŸ“‹ All {n_qual} stocks ({n_bull} Bullish + {n_bear} Bearish)", expanded=False):
-            disp = scan_df[scan_df["Pattern"] != "Neutral"].sort_values(["Strength%","CPR Width%"], ascending=[False,True]).copy()
-            for c in ["LTP","Entry","T1","T2","T3","SL","TC","BC"]:
-                if c in disp.columns:
-                    disp[c] = disp[c].apply(lambda x: f"Rs.{x:,.2f}")
-            disp["CPR Width%"] = disp["CPR Width%"].apply(lambda x: f"{x:.3f}%" if isinstance(x, float) else x)
-            disp["Strength%"]  = disp["Strength%"].apply(lambda x: f"{x}%")
-            show_cols = [c for c in ["Symbol","LTP","Strength%","Candle","Entry","T1","T2","SL","RR1","RR2","RSI","HMA","Vol Surge","CPR Width%"] if c in disp.columns]
-            st.dataframe(disp[show_cols], use_container_width=True, hide_index=True)
-
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SEND REPORT
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.divider()
-    st.markdown(
-        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;font-weight:700;"
-        "color:#1a1f0e;margin-bottom:0.75rem;'>ðŸ“¤  Send / Download Scanner Report</div>",
-        unsafe_allow_html=True,
-    )
-
-    scan_time_str = datetime.now().strftime("%d %b %Y  %H:%M")
-
-    # Build WhatsApp message text
-    def _wa_text(bull_df, bear_df, tf_lbl, scan_t):
-        lines = [
-            "ðŸ¦ *PivotVault AI â€” CPR Scanner*",
-            f"ðŸ“… {tf_lbl}  |  {scan_t}",
-            "ðŸ” Frank Ochoa Strategy  |  Narrow CPR  |  R:R >= 1.5x",
-            "",
-            "ðŸŸ¢ *BULLISH SETUPS*",
-        ]
-        if bull_df.empty:
-            lines.append("No bullish picks found.")
-        else:
-            for i, (_, r) in enumerate(bull_df.head(10).iterrows(), 1):
-                lines.append(
-                    f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
-                    f"{r.get('Candle','â€”')}  "
-                    f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
-                )
-        lines += ["", "ðŸ”´ *BEARISH SETUPS*"]
-        if bear_df.empty:
-            lines.append("No bearish picks found.")
-        else:
-            for i, (_, r) in enumerate(bear_df.head(10).iterrows(), 1):
-                lines.append(
-                    f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
-                    f"{r.get('Candle','â€”')}  "
-                    f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
-                )
-        lines += ["", "âš ï¸ Educational use only. Not financial advice.", "ðŸ“± Sent via PivotVault AI"]
-        return "\n".join(lines)
-
-    # Build HTML email body
-    def _html_email(bull_df, bear_df, tf_lbl, scan_t):
-        def _tbl_rows(df, is_bull):
-            if df.empty:
-                return "<tr><td colspan='9' style='padding:8px;color:#8a9a78;font-style:italic;'>No qualifying stocks found.</td></tr>"
-            hc = "#16a34a" if is_bull else "#dc2626"
-            out = ""
-            for _, r in df.iterrows():
-                rr_c = "#16a34a" if r.get("RR1",0)>=2 else ("#d97706" if r.get("RR1",0)>=1.5 else "#dc2626")
-                out += (
-                    f"<tr style='border-bottom:1px solid #f1f5f9;'>"
-                    f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a1f0e;'>{r['Symbol']}</td>"
-                    f"<td style='padding:7px 5px;font-size:0.83rem;'>Rs.{r['LTP']:,.2f}</td>"
-                    f"<td style='padding:7px 5px;color:{hc};font-weight:700;'>{int(r['Strength%'])}%</td>"
-                    f"<td style='padding:7px 5px;font-size:0.8rem;'>{r.get('Candle','â€”')}</td>"
-                    f"<td style='padding:7px 5px;font-size:0.8rem;'>Rs.{r['Entry']:,.2f}</td>"
-                    f"<td style='padding:7px 5px;color:{hc};'>Rs.{r['T1']:,.2f} / Rs.{r['T2']:,.2f}</td>"
-                    f"<td style='padding:7px 5px;color:#c0392b;'>Rs.{r['SL']:,.2f}</td>"
-                    f"<td style='padding:7px 5px;color:{rr_c};font-weight:700;'>{r.get('RR1',0)}x</td>"
-                    f"<td style='padding:7px 5px;color:#5a6a48;'>{r['RSI']}</td>"
-                    f"</tr>"
-                )
-            return out
-
-        TH = "background:#1e293b;color:#e2e8f0;padding:7px 5px;text-align:left;font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;"
-        TBLS = "width:100%;border-collapse:collapse;font-family:Courier New,monospace;font-size:0.82rem;"
-        HDR_COL = "background:linear-gradient(135deg,#0d1f0a,#1a4a10)"
-
-        return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:#f1f5f9;">
-<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:20px 10px;">
-<table width="700" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
-<tr><td style="{HDR_COL};padding:22px 26px;">
-  <div style="font-family:Courier New,monospace;font-size:1.25rem;font-weight:700;color:#e8eddf;">ðŸ¦ PivotVault AI â€” CPR Scanner</div>
-  <div style="font-family:Courier New,monospace;font-size:0.72rem;color:#b5c77a;margin-top:4px;letter-spacing:0.07em;text-transform:uppercase;">{tf_lbl} Â· Frank Ochoa Strategy Â· {scan_t}</div>
-</td></tr>
-<tr><td style="padding:20px 22px;">
-  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#2d7a3a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">â–² BULLISH SETUPS</div>
-  <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
-  {_tbl_rows(bull_df, True)}</table>
-  <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#c0392b;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">â–¼ BEARISH SETUPS</div>
-  <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
-  {_tbl_rows(bear_df, False)}</table>
-</td></tr>
-<tr><td style="padding:12px 22px 20px;"><div style="background:#f7f9f2;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#8a9a78;line-height:1.6;font-family:Courier New,monospace;">âš ï¸ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
-</table></td></tr></table></body></html>"""
-
-    rtab1, rtab2, rtab3 = st.tabs(["ðŸ“§ Gmail / Email", "ðŸ’¬ WhatsApp", "â¬‡ï¸ Download PDF"])
-
-    with rtab1:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
-        cfg = st.session_state.get("smtp_cfg", {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""})
-        with st.expander("âš™ï¸ SMTP Settings", expanded=not bool(cfg.get("sender"))):
-            sc1, sc2 = st.columns(2)
-            with sc1:
-                nh = st.text_input("SMTP Host",     value=cfg["host"],     key="sc_host")
-                ns = st.text_input("Sender Email",  value=cfg["sender"],   key="sc_sender")
-            with sc2:
-                np = st.selectbox("Port", [587, 465], index=0 if cfg["port"] == 587 else 1, key="sc_port")
-                nw = st.text_input("App Password",  value=cfg["password"], type="password", key="sc_pwd",
-                                   help="Gmail: Google Account â†’ Security â†’ App Passwords (not your normal password)")
-            if st.button("ðŸ’¾ Save", key="sc_save"):
-                st.session_state["smtp_cfg"] = {"host": nh, "port": np, "sender": ns, "password": nw}
-                st.success("SMTP settings saved!")
-
-        ec1, ec2 = st.columns([3, 1])
-        with ec1:
-            to_em = st.text_input("Recipient Email", placeholder="you@gmail.com", label_visibility="collapsed", key="sc_to")
-        with ec2:
-            send_em = st.button("ðŸ“§ Send", use_container_width=True, key="sc_send_em")
-
-        if send_em:
-            cfg2 = st.session_state.get("smtp_cfg", {})
-            if not to_em.strip():
-                st.error("Enter recipient email address.")
-            elif not cfg2.get("sender") or not cfg2.get("password"):
-                st.error("Configure SMTP settings above first.")
-            else:
-                body = _html_email(top_bull, top_bear, tf_choice, scan_time_str)
-                with st.spinner("Sending emailâ€¦"):
-                    ok, msg = send_report_email(to_em.strip(), cfg2["host"], cfg2["port"], cfg2["sender"], cfg2["password"], body, scan_time_str)
-                if ok:
-                    st.success(f"âœ… Report sent to {to_em.strip()}")
-                else:
-                    st.error(f"âŒ {msg}")
-                    st.caption("Gmail tip: use an App Password not your regular password. Requires 2FA enabled.")
-
-    with rtab2:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
-        wa_msg = _wa_text(top_bull, top_bear, tf_choice, scan_time_str)
-        st.text_area("Message Preview (copy or use button below)", wa_msg, height=200, key="wa_prev")
-        wc1, wc2 = st.columns([3, 1])
-        with wc1:
-            wa_ph = st.text_input("Phone number with country code", placeholder="919876543210", label_visibility="collapsed", key="wa_ph")
-        with wc2:
-            wa_go = st.button("ðŸ’¬ Open WhatsApp", use_container_width=True, key="wa_go")
-        if wa_go and wa_ph.strip():
-            import urllib.parse as _up
-            wa_url = "https://wa.me/" + wa_ph.strip().replace("+","") + "?text=" + _up.quote(wa_msg)
-            st.markdown(
-                f"<a href='{wa_url}' target='_blank' style='display:inline-block;background:#25d366;color:#fff;"
-                f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;font-weight:600;"
-                f"padding:0.55rem 1.5rem;border-radius:8px;text-decoration:none;margin-top:0.5rem;'>"
-                f"ðŸ’¬ Open WhatsApp â†’</a>",
-                unsafe_allow_html=True,
-            )
-            st.caption("Opens WhatsApp with message pre-filled. Just tap Send.")
-        elif wa_go:
-            st.warning("Enter phone number with country code (e.g. 919876543210)")
-        st.caption("ðŸ’¡ You can also copy the message above and paste into any chat â€” WhatsApp, Telegram, SMS, etc.")
-
-    with rtab3:
-        st.markdown(
-            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;"
-            "margin-bottom:0.75rem;'>Download the scanner report as a PDF. "
-            "Download a snapshot of the current scan results.</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("ðŸ“„ Generate & Download PDF", use_container_width=True, key="sc_gen_pdf"):
-            with st.spinner("Building PDFâ€¦"):
-                try:
-                    pdf_bytes = build_scanner_pdf(top_bull, top_bear, tf_choice, scan_time_str)
-                    st.download_button(
-                        label=f"â¬‡ï¸ Download PDF â€” {tf_tag.upper()} Scanner",
-                        data=pdf_bytes,
-                        file_name=f"PivotVault_Scanner_{tf_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key="sc_pdf_dl",
-                    )
-                    st.success("PDF ready â€” click button above to download!")
-                except Exception as ex:
-                    st.error(f"PDF error: {ex}")
-
-    # â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-        # â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    st.markdown(f"""
-    <div style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:10px;
-                padding:0.9rem 1.1rem;margin-top:0.75rem;
-                font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;line-height:1.9;">
-    <b style="color:#1a1f0e;">Auto-Refresh Schedule</b><br>
-    âš¡ 15 Min chart â†’ refreshes every <b>15 minutes</b> &nbsp;|&nbsp;
-    ðŸ• 1 Hour chart â†’ refreshes every <b>1 hour</b> &nbsp;|&nbsp;
-    ðŸ“… 1 Day chart â†’ refreshes every <b>4 hours</b> &nbsp;|&nbsp;
-    ðŸ“† 1 Week / ðŸ—“ï¸ 1 Month â†’ refresh every <b>24 hours</b><br>
-    <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% Â· Strength 85â€“100% Â· Top 10 per direction Â· NSE Top 100 only
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#  TRADE SIGNALS PAGE  (push notifications + live signal board)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-@st.cache_data(ttl=60)
-def compute_signals_for_symbol(symbol: str, interval: str = "1d", period: str = "90d") -> dict:
-    """
-    Compute all trading signals for a symbol on a given timeframe.
-    Returns a rich signal dict with entry, targets, SL and confidence.
-    """
-    try:
-        df = yf.Ticker(symbol + ".NS").history(period=period, interval=interval)
-        if df.empty or len(df) < 20:
-            return {}
-        try:
-            if df.index.tz is not None:
-                df.index = df.index.tz_convert('Asia/Kolkata').tz_localize(None)
-            else:
-                df.index = df.index.tz_localize(None)
-        except Exception:
-            pass
-
-        close = df["Close"]
-        high  = df["High"]
-        low   = df["Low"]
-        ltp   = float(close.iloc[-1])
-
-        # â”€â”€ Pivot Points (Traditional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        ref  = df.iloc[-2]
-        H, L, C = float(ref["High"]), float(ref["Low"]), float(ref["Close"])
-        P  = (H + L + C) / 3
-        R1 = 2 * P - L
-        R2 = P + (H - L)
-        R3 = H + 2 * (P - L)
-        S1 = 2 * P - H
-        S2 = P - (H - L)
-        S3 = L - 2 * (H - P)
-
-        # â”€â”€ CPR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        BC = (H + L) / 2
-        TC = (P - BC) + P
-        cpr_width = abs(TC - BC) / P * 100
-
-        # â”€â”€ ATR-14 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        tr  = pd.concat([
-            high - low,
-            (high - close.shift()).abs(),
-            (low  - close.shift()).abs(),
-        ], axis=1).max(axis=1)
-        atr = float(tr.rolling(14).mean().iloc[-1])
-
-        # â”€â”€ RSI-14 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        delta = close.diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-        rsi   = float(100 - (100 / (1 + gain.iloc[-1] / max(loss.iloc[-1], 1e-9))))
-
-        # â”€â”€ HMA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        def wma(s, n):
-            w = np.arange(1, n + 1)
-            return s.rolling(n).apply(lambda x: np.dot(x, w) / w.sum(), raw=True)
-        hma    = wma(2 * wma(close, 10) - wma(close, 20), 4)
-        hma_up = bool(hma.iloc[-1] > hma.iloc[-2]) if len(hma.dropna()) >= 2 else None
-
-        # â”€â”€ 3/10 Osc â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        diff  = close.rolling(3).mean() - close.rolling(10).mean()
-        sig16 = diff.rolling(16).mean()
-        osc_bull = bool(diff.iloc[-1] > sig16.iloc[-1])
-        osc_cross_bull = bool(diff.iloc[-1] > sig16.iloc[-1] and diff.iloc[-2] <= sig16.iloc[-2])
-        osc_cross_bear = bool(diff.iloc[-1] < sig16.iloc[-1] and diff.iloc[-2] >= sig16.iloc[-2])
-
-        # â”€â”€ Stochastic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        lo14 = low.rolling(14).min()
-        hi14 = high.rolling(14).max()
-        stk  = float(100 * (close.iloc[-1] - lo14.iloc[-1]) / max(hi14.iloc[-1] - lo14.iloc[-1], 1e-9))
-
-        # â”€â”€ Signal logic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        score = 0
-        signals = []
-
-        # CPR position (strongest signal)
-        if ltp > TC:
-            score += 25
-            signals.append(("ðŸŸ¢", "Price above TC (CPR Bullish)", "bull"))
-        elif ltp < BC:
-            score -= 25
-            signals.append(("ðŸ”´", "Price below BC (CPR Bearish)", "bear"))
-        else:
-            signals.append(("ðŸŸ¡", "Price inside CPR (Indecision)", "neut"))
-
-        # Narrow CPR
-        if cpr_width < 0.25:
-            signals.append(("ðŸŽ¯", f"Narrow CPR ({cpr_width:.3f}%) â€” Trending Day Setup", "bull" if ltp > P else "bear"))
-
-        # HMA
-        if hma_up is True:
-            score += 15
-            signals.append(("ðŸ“ˆ", "HMA-20 Rising (Uptrend)", "bull"))
-        elif hma_up is False:
-            score -= 15
-            signals.append(("ðŸ“‰", "HMA-20 Falling (Downtrend)", "bear"))
-
-        # 3/10 Crossover (strongest momentum signal)
-        if osc_cross_bull:
-            score += 25
-            signals.append(("âš¡", "3/10 Bullish Crossover (Fresh Signal!)", "bull"))
-        elif osc_cross_bear:
-            score -= 25
-            signals.append(("âš¡", "3/10 Bearish Crossover (Fresh Signal!)", "bear"))
-        elif osc_bull:
-            score += 10
-            signals.append(("ðŸ“Š", "3/10 Oscillator Positive", "bull"))
-        else:
-            score -= 10
-            signals.append(("ðŸ“Š", "3/10 Oscillator Negative", "bear"))
-
-        # RSI
-        if rsi >= 70:
-            score -= 10
-            signals.append(("âš ï¸", f"RSI {rsi:.0f} â€” Overbought (caution)", "bear"))
-        elif rsi <= 30:
-            score += 10
-            signals.append(("âš ï¸", f"RSI {rsi:.0f} â€” Oversold (watch for bounce)", "bull"))
-        elif rsi >= 55:
-            score += 10
-            signals.append(("âœ…", f"RSI {rsi:.0f} â€” Bullish Zone", "bull"))
-        elif rsi <= 45:
-            score -= 10
-            signals.append(("âŒ", f"RSI {rsi:.0f} â€” Bearish Zone", "bear"))
-
-        # Stochastic
-        if stk >= 80:
-            signals.append(("ðŸ“›", f"Stoch %K {stk:.0f} â€” Overbought", "bear"))
-        elif stk <= 20:
-            signals.append(("ðŸ’¡", f"Stoch %K {stk:.0f} â€” Oversold Reversal Zone", "bull"))
-
-        # Pivot proximity
-        for label, val in [("R3",R3),("R2",R2),("R1",R1),("P",P),("S1",S1),("S2",S2),("S3",S3)]:
-            if abs(ltp - val) / ltp < 0.004:
-                signals.append(("ðŸ“", f"Price at {label} ({val:,.2f}) â€” Key Level", "neut"))
-
-        # Overall bias
-        if   score >= 40:  bias, bias_col = "STRONG BUY",  "bull"
-        elif score >= 15:  bias, bias_col = "BUY",          "bull"
-        elif score <= -40: bias, bias_col = "STRONG SELL", "bear"
-        elif score <= -15: bias, bias_col = "SELL",         "bear"
-        else:              bias, bias_col = "NEUTRAL",      "neut"
-
-        confidence = min(abs(score), 75)
-
-        # Trade levels
-        if bias_col == "bull":
-            entry  = round(ltp, 2)
-            tgt1   = round(R1, 2)
-            tgt2   = round(R2, 2)
-            sl     = round(max(S1, ltp - atr * 1.2), 2)
-            rr     = round((tgt1 - entry) / max(entry - sl, 0.01), 2)
-        else:
-            entry  = round(ltp, 2)
-            tgt1   = round(S1, 2)
-            tgt2   = round(S2, 2)
-            sl     = round(min(R1, ltp + atr * 1.2), 2)
-            rr     = round((entry - tgt1) / max(sl - entry, 0.01), 2)
-
-        return {
-            "symbol": symbol, "ltp": ltp, "bias": bias, "bias_col": bias_col,
-            "score": score, "confidence": confidence,
-            "signals": signals,
-            "P": round(P,2), "R1": round(R1,2), "R2": round(R2,2), "R3": round(R3,2),
-            "S1": round(S1,2), "S2": round(S2,2), "S3": round(S3,2),
-            "TC": round(TC,2), "BC": round(BC,2), "cpr_width": round(cpr_width,3),
-            "rsi": round(rsi,1), "atr": round(atr,2), "stoch_k": round(stk,1),
-            "hma_up": hma_up,
-            "entry": entry, "tgt1": tgt1, "tgt2": tgt2, "sl": sl, "rr": rr,
-        }
-    except Exception:
-        return {}
-
-
-def _signal_card(sig: dict) -> str:
-    """Render a single signal card as HTML."""
-    col_map = {
-        "bull": ("#16a34a", "#edf7ee", "#b8dfc0"),
-        "bear": ("#dc2626", "#fdf0ee", "#f0c0b8"),
-        "neut": ("#d97706", "#fdf9ec", "#fde68a"),
-    }
-    fc, bg, bdr = col_map.get(sig["bias_col"], col_map["neut"])
-    bias_labels = {
-        "STRONG BUY": "ðŸš€ STRONG BUY", "BUY": "âœ… BUY",
-        "STRONG SELL": "ðŸ”» STRONG SELL", "SELL": "âŒ SELL",
-        "NEUTRAL": "âšª NEUTRAL"
-    }
-    bias_label = bias_labels.get(sig["bias"], sig["bias"])
-
-    sig_rows = ""
-    for icon, text, kind in sig["signals"][:6]:
-        c = col_map.get(kind, col_map["neut"])[0]
-        sig_rows += (
-            f"<div style='display:flex;align-items:flex-start;gap:6px;padding:3px 0;"
-            f"border-bottom:1px solid #f1f5f9;font-size:0.72rem;'>"
-            f"<span>{icon}</span>"
-            f"<span style='color:#1a1f0e;'>{text}</span></div>"
-        )
-
-    return f"""
-<div style="background:#ffffff;border:1px solid {bdr};border-top:4px solid {fc};
-            border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem;
-            box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-    <div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a1f0e;">
-        {sig['symbol']}
-      </div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;">
-        â‚¹{sig['ltp']:,.2f} &nbsp;Â·&nbsp; ATR â‚¹{sig['atr']:,.2f}
-      </div>
-    </div>
-    <div style="text-align:right;">
-      <div style="background:{bg};border:1px solid {bdr};border-radius:6px;
-                  padding:0.3rem 0.7rem;font-family:IBM Plex Mono,monospace;
-                  font-size:0.78rem;font-weight:700;color:{fc};">{bias_label}</div>
-      <div style="font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;margin-top:3px;">
-        Confidence: {sig['confidence']}%
-      </div>
-    </div>
-  </div>
-  {sig_rows}
-  <div style="display:flex;gap:1rem;margin-top:0.6rem;padding-top:0.5rem;
-              border-top:1px solid #f1f5f9;flex-wrap:wrap;">
-    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a48;">Entry</span>
-      <span style="color:#1a1f0e;font-weight:700;"> â‚¹{sig['entry']:,.2f}</span>
-    </div>
-    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a48;">T1</span>
-      <span style="color:{fc};font-weight:700;"> â‚¹{sig['tgt1']:,.2f}</span>
-    </div>
-    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a48;">T2</span>
-      <span style="color:{fc};font-weight:700;"> â‚¹{sig['tgt2']:,.2f}</span>
-    </div>
-    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a48;">SL</span>
-      <span style="color:#c0392b;font-weight:700;"> â‚¹{sig['sl']:,.2f}</span>
-    </div>
-    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;">
-      <span style="color:#5a6a48;">R:R</span>
-      <span style="color:#1a1f0e;font-weight:700;"> {sig['rr']}x</span>
-    </div>
-  </div>
-  <div style="margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:0.68rem;
-              color:#8a9ab0;display:flex;flex-wrap:wrap;gap:0.5rem;">
-    <span>P:{sig['P']:,.0f}</span>
-    <span style="color:#c0392b;">R1:{sig['R1']:,.0f} R2:{sig['R2']:,.0f}</span>
-    <span style="color:#2d7a3a;">S1:{sig['S1']:,.0f} S2:{sig['S2']:,.0f}</span>
-    <span>RSI:{sig['rsi']}</span>
-    <span>CPR:{sig['cpr_width']}%</span>
-  </div>
-</div>"""
-
-
-def page_trade_signals(nse500: pd.DataFrame):
-    """
-    Trade Signal Board â€” synced live from CPR Scanner.
-    Shows 15Min and 1Hour scanner results as actionable trade cards.
-    Refreshes automatically when scanner refreshes.
-    """
-    import json
-
-    # â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    h1, h2 = st.columns([5, 1])
-    with h1:
-        st.markdown("""
-        <div class="title-bar">
-            <span style="font-size:1.5rem;">ðŸ””</span>
-            <h1 style="color:#1a1f0e;">Trade Signals</h1>
-            <span style="margin-left:auto;background:#edf7ee;border:1px solid #b8dfc0;
-                         color:#2d7a3a;padding:3px 12px;border-radius:20px;
-                         font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
-                LIVE Â· CPR SCANNER SYNC
-            </span>
-        </div>
         """, unsafe_allow_html=True)
-    with h2:
-        # Notification enable button â€” calls window.parent
+
+        # ── Notification bar — device-aware ─────────────────────────────────────
         st.markdown("""
-        <button onclick="(function(){
-            var w = window.parent || window;
-            if (!w.Notification) { alert('Notifications not supported in this browser.'); return; }
-            w.Notification.requestPermission().then(function(p){
-                if (p === 'granted') {
-                    w._pvNotifEnabled = true;
-                    new w.Notification('ðŸ¦ PivotVault AI', {
-                        body: 'Trade signal notifications are now ON!',
-                        icon: '/static/icon-192.png',
-                        tag:  'pv-enable'
-                    });
-                } else {
-                    alert('Notification permission denied. Please allow notifications in your browser settings.');
-                }
-            });
-        })()"
-        style="width:100%;padding:8px 6px;background:#4e6130;color:#fff;
-               border:none;border-radius:8px;font-family:DM Sans,sans-serif;
-               font-size:0.75rem;font-weight:700;cursor:pointer;
-               transition:opacity 0.2s;" id="notif-enable-btn">
-        ðŸ”” Enable Alerts
-        </button>
+        <div id="pvNBar" style="border-radius:9px;padding:9px 14px;
+             margin-bottom:0.75rem;font-family:DM Mono,monospace;font-size:0.76rem;
+             border:1.5px solid #b8c89a;background:#f0f4e8;min-height:38px;">
+            <div id="pvNContent"></div>
+        </div>
         <script>
-        // Update button text based on current permission
-        (function checkPerm(){
-            var w = window.parent || window;
-            var btn = document.getElementById("notif-enable-btn");
-            if (!btn) { setTimeout(checkPerm, 300); return; }
-            if (w.Notification && w.Notification.permission === "granted") {
-                btn.style.background = "#2d7a3a";
-                btn.innerText = "âœ… Alerts ON";
-            } else if (w.Notification && w.Notification.permission === "denied") {
-                btn.style.background = "#c0392b";
-                btn.innerText = "ðŸ”• Blocked";
-                btn.title = "Allow notifications in browser settings (ðŸ”’ icon in address bar)";
+        (function(){
+            var w  = window.parent||window;
+            var ua = navigator.userAgent||"";
+            var isIOS     = /iPhone|iPad|iPod/i.test(ua);
+            var isAndroid = /Android/i.test(ua);
+            var isPWA     = window.matchMedia("(display-mode:standalone)").matches||
+                            window.navigator.standalone===true;
+            var isMobile  = isIOS||isAndroid;
+            var el = document.getElementById("pvNContent");
+            if(!el) return;
+
+            function render(){
+                if(isIOS && !isPWA){
+                    el.innerHTML = "📱 <b>iOS:</b> Notifications not supported in Safari. "
+                        +"<span style='color:#7a5800;'>Add to Home Screen (PWA) to enable.</span>";
+                    return;
+                }
+                if(!("Notification" in w)){
+                    el.innerHTML = "⚠️ Browser doesn't support notifications. Use Chrome/Edge.";
+                    return;
+                }
+                var p = w.Notification.permission;
+                if(p==="granted"){
+                    document.getElementById("pvNBar").style.background="#e4f5e8";
+                    document.getElementById("pvNBar").style.borderColor="#8dcc9a";
+                    el.innerHTML = "<span style='color:#1a6b2e;font-weight:700;'>✅ Notifications active</span>"
+                        +" · <span style='color:#2e3d1a;'>"+(isMobile?"Android Chrome":"Desktop browser")+"</span>"
+                        +" <button onclick='pvSendTest()' style='margin-left:8px;background:#1a6b2e;"
+                        +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                        +"font-size:0.72rem;cursor:pointer;font-weight:700;'>🧪 Test</button>";
+                } else if(p==="denied"){
+                    document.getElementById("pvNBar").style.background="#fbe8e6";
+                    document.getElementById("pvNBar").style.borderColor="#dc9090";
+                    el.innerHTML = "❌ Notifications blocked. "
+                        +(isAndroid?"Chrome → 3-dot menu → Site settings → Notifications → Allow."
+                        :"Browser Settings → Notifications → Allow this site.");
+                } else {
+                    el.innerHTML = "🔔 Enable "+(isMobile?"mobile":"desktop")+" notifications for instant signal alerts"
+                        +" <button onclick='pvAskNotif()' style='margin-left:8px;background:#3d5a1c;"
+                        +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                        +"font-size:0.72rem;cursor:pointer;font-weight:700;'>Allow</button>";
+                }
             }
+            window.pvAskNotif = function(){
+                w.Notification.requestPermission().then(function(){ render(); });
+            };
+            window.pvSendTest = function(){
+                try{
+                    var n = new w.Notification("🧪 PivotVault AI — Test",{
+                        body:"RELIANCE BUY · Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800 · R:R 2.1x",
+                        icon:"/static/icon-192.png", tag:"pv-test"
+                    });
+                    n.onclick=function(){w.focus();n.close();};
+                    el.innerHTML="<span style='color:#1a6b2e;font-weight:700;'>"
+                        +"✅ Test sent! Check your "+(isMobile?"phone":"desktop")+".</span>";
+                    setTimeout(render,3500);
+                }catch(e){ el.innerHTML="❌ "+e.message; }
+            };
+            render();
         })();
         </script>
         """, unsafe_allow_html=True)
 
-    # â”€â”€ Auto-refresh: inherit from scanner (15m & 1h only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(interval=30_000, limit=None, key="signals_autorefresh")  # 30s â€” signal board
-    # Also track 30m scan time
-    if 'cpr_scan_time_30m' not in st.session_state:
-        st.session_state['cpr_scan_time_30m'] = 0
-
-    # â”€â”€ Pull data from CPR scanner session state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Only use 15Min and 1Hour scans as requested
-    TF_LABELS = {
-        "cpr_scan_15m":  ("âš¡ 15 Min",  "#7c3aed", "15m"),
-        "cpr_scan_30m":  ("â±ï¸ 30 Min",  "#ea580c", "30m"),
-        "cpr_scan_1h":   ("ðŸ• 1 Hour",  "#1d4ed8", "1h"),
-    }
-
-    all_signals = []
-    scan_times  = {}
-
-    for key, (label, color, tag) in TF_LABELS.items():
-        _raw = st.session_state.get(key)
-        df = _raw if isinstance(_raw, pd.DataFrame) else pd.DataFrame()
-        ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
-        if not df.empty:
-            scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "â€”"
-            for _, r in df.iterrows():
-                _sig = {
-                    "tf":       label,
-                    "tf_color": color,
-                    "symbol":   r["Symbol"],
-                    "side":     "BUY"  if r["Pattern"] == "Bullish" else "SELL",
-                    "ltp":      r["LTP"],
-                    "entry":    r["Entry"],
-                    "t1":       r["T1"],
-                    "t2":       r["T2"],
-                    "t3":       r["T3"],
-                    "sl":       r["SL"],
-                    "rr1":      r["RR1"],
-                    "rr2":      r.get("RR2", 0),
-                    "strength": int(r["Strength%"]),
-                    "candle":   r.get("Candle", "â€”"),
-                    "rsi":       r.get("RSI", 0),
-                    "hma":       r.get("HMA", "â€”"),
-                    "vol":       r.get("Vol Surge", "â€”"),
-                    "cpr_w":     r.get("CPR Width%", 0),
-                    "cpr_type":  r.get("CPR Type", "â€”"),
-                    "virgin_cpr":r.get("Virgin CPR","â€”") == "â­ Yes",
-                    "atr":       r.get("ATR", 0),
-                    "stoch":     r.get("Stoch%K", "â€”"),
-                    "rationale": r.get("Rationale",""),
-                }
-                _sig["strategy_name"] = _build_strategy_name(_sig)
-                _sig["strategy_id"]   = _strategy_short_id(_sig)
-                all_signals.append(_sig)
-
-    # â”€â”€ Status bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if not all_signals:
-        st.markdown("""
-        <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
-                    border:2px dashed #dae0cb;border-radius:12px;
-                    font-family:DM Mono,monospace;">
-            <div style="font-size:2rem;margin-bottom:0.75rem;">ðŸ“¡</div>
-            <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
-                No signals yet
-            </div>
-            <div style="font-size:0.82rem;color:#5a6a48;">
-                Go to <b>ðŸ“¡ CPR Scanner</b> â†’ select <b>15 Min</b> or <b>1 Hour</b>
-                â†’ click <b>ðŸ”„ Scan Now</b><br>
-                Signals will appear here automatically and refresh with every scan.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        # Quick scan shortcut buttons
-        st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([1,2,1])
+        # ── Timeframe selector ────────────────────────────────────────────────────
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            tf_choice = st.selectbox(
+                "Timeframe",
+                list(TF_CONFIG.keys()),
+                index=2,
+                label_visibility="collapsed",
+                key="scanner_tf",
+            )
         with c2:
-            if st.button("ðŸ“¡ Go to CPR Scanner â†’ Run Scan", use_container_width=True, key="goto_scanner"):
-                st.session_state["current_page"] = "CPR Scanner"
-                st.rerun()
-        return
+            manual_btn = st.button("🔄 Scan Now", use_container_width=True, key="run_cpr_scan_btn")
 
-    # Scan time info
-    time_pills = " &nbsp;Â·&nbsp; ".join(
-        f"<span style='color:{TF_LABELS[k][1] if k in TF_LABELS else '#5a6a48'};font-weight:700;'>{label}</span> "
-        f"<span style='color:#8a9a78;'>scanned {t}</span>"
-        for label, t in scan_times.items()
-    ) if scan_times else ""
+        cfg        = TF_CONFIG[tf_choice]
+        tf_col     = cfg["color"]
+        tf_bg      = cfg["bg"]
+        tf_tag     = cfg["tag"]
+        refresh_s  = cfg["refresh"]
 
-    # Staleness check
-    now_ts   = time.time()
-    stale_15 = (now_ts - st.session_state.get("cpr_scan_time_15m", 0)) > 1800
-    stale_30 = (now_ts - st.session_state.get("cpr_scan_time_30m", 0)) > 3600
-    stale_1h = (now_ts - st.session_state.get("cpr_scan_time_1h",  0)) > 7200
-    any_stale = stale_15 or stale_30 or stale_1h
+        scan_key      = f"cpr_scan_{tf_tag}"
+        scan_time_key = f"cpr_scan_time_{tf_tag}"
 
-    if any_stale:
-        st.warning(
-            "âš ï¸ Some signals may be stale â€” go to ðŸ“¡ Scanner and run a fresh scan "
-            "before acting on these signals.",
-            icon="â°",
-        )
+        now           = time.time()
+        last_scan     = st.session_state.get(scan_time_key, 0)
+        age           = now - last_scan
+        needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
 
-    st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-        f"color:#5a6a48;margin-bottom:1rem;padding:0.5rem 0.9rem;"
-        f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
-        f"border-left:3px solid #4e6130;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
-        f"<span class='live-dot'></span>"
-        f"<span style='font-weight:700;color:#4e6130;'>LIVE SIGNALS</span>"
-        f"{time_pills}"
-        f"<span style='margin-left:auto;color:#8a9a78;'>{len(all_signals)} signals total</span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+        # ── Run scan only for selected timeframe ──────────────────────────────────
+        if needs_refresh:
+            # Warn if Upstox not connected — yfinance may be blocked on Streamlit Cloud
+            if not _upstox_connected():
+                st.info(
+                    "💡 **Tip:** Connect your Upstox API token in ⚙️ Broker Settings for reliable data. "
+                    "yfinance may be rate-limited on Streamlit Cloud.",
+                    icon="ℹ️",
+                )
+            upstox_live  = _upstox_connected()
+            has_creds    = _upstox_has_credentials()
+            n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
 
-    # â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
-    with fc1:
-        tf_filter = st.multiselect("Timeframe", ["âš¡ 15 Min","â±ï¸ 30 Min","ðŸ• 1 Hour"],
-                                    default=["âš¡ 15 Min","â±ï¸ 30 Min","ðŸ• 1 Hour"],
-                                    key="sig_tf_filter", label_visibility="collapsed")
-    with fc2:
-        side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
-                                horizontal=True, key="sig_side_filter", label_visibility="collapsed")
-    with fc3:
-        min_str = st.slider("Min Strength%", 0, 100, 60, key="sig_min_str")
-    with fc4:
-        min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
+            if has_creds and not upstox_live:
+                st.warning(
+                    "⚠️ Upstox token expired — scanner will use yfinance. "
+                    "Paste today's token above to restore Upstox live feed.",
+                    icon="🔑",
+                )
 
-    # Apply filters
-    filtered = [s for s in all_signals
-                if s["tf"] in (tf_filter if tf_filter else ["âš¡ 15 Min","ðŸ• 1 Hour"])
-                and (side_filter == "All"
-                     or (side_filter == "BUY only"  and s["side"] == "BUY")
-                     or (side_filter == "SELL only" and s["side"] == "SELL"))
-                and s["strength"] >= min_str
-                and s["rr1"] >= min_rr]
+            src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
+            with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
+                try:
+                    result = scan_cpr_multi_tf(
+                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200")),
+                        interval=cfg["interval"],
+                        period=cfg["period"],
+                        max_stocks=n_stocks,
+                    )
+                    if result.empty:
+                        st.warning(
+                            f"⚠️ No setups found on {tf_tag.upper()}. "
+                            f"{'Market may be closed — data is from last session.' if not is_market_open('us' if st.session_state.get('scanner_market','') in ('🇺🇸 Dow 30','🇺🇸 Nasdaq 100') else 'india') else 'All stocks filtered out — try a different timeframe.'}"
+                        )
+                    else:
+                        st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
+                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
+                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
+                            for _,_r in result.head(3).iterrows():
+                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
+                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
+                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
+                            _send_telegram("\n".join(_tl))
+                except Exception as e:
+                    st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
+                    result = pd.DataFrame()
+            st.session_state[scan_key]      = result
+            st.session_state[scan_time_key] = now
 
-    # Sort: strength desc, then CPR width asc
-    filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
+            # ── Rank signals & Auto-trade BEST 3 only ────────────────────
+            if not result.empty and tf_tag in ("15m","30m","1h"):
 
-    if not filtered:
-        st.info(f"No signals match current filters. Try reducing Min Strength or Min R:R.")
-        return
+                def _signal_rank_score(row):
+                    """
+                    Composite rank score — Frank Ochoa weighted.
+                    Higher score = better quality signal.
+                    """
+                    s   = float(row.get("Strength%",   0))
+                    rr  = float(row.get("RR1",         1.0))
+                    cw  = float(row.get("CPR Width%",  1.0))
+                    dt  = str(row.get("Day Type",      ""))
+                    ov  = bool(row.get("CPR Overlap",  False))
+                    cn  = str(row.get("Candle",        ""))
+                    rsi = float(row.get("RSI",         50))
+                    hma = str(row.get("HMA",           ""))
+                    vol = str(row.get("Vol Surge",     ""))
+                    side= str(row.get("Pattern",       ""))
 
-    bull_sigs = [s for s in filtered if s["side"] == "BUY"]
-    bear_sigs = [s for s in filtered if s["side"] == "SELL"]
+                    score = (s * 0.35) + (rr * 15)
 
-    st.markdown(
-        f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;color:#5a6a48;"
-        f"margin-bottom:0.75rem;'>Showing <b>{len(filtered)}</b> signals â€” "
-        f"<span style='color:#2d7a3a;font-weight:700;'>â–² {len(bull_sigs)} Bullish</span> &nbsp;"
-        f"<span style='color:#c0392b;font-weight:700;'>â–¼ {len(bear_sigs)} Bearish</span></div>",
-        unsafe_allow_html=True,
-    )
+                    # CPR Width — narrower = better (trending day)
+                    if cw < 0.25:   score += 20
+                    elif cw < 0.5:  score += 10
+                    elif cw > 1.0:  score -= 10
 
-    broker = st.session_state.get("broker", "none")
+                    # Day Type bonus/penalty (Ochoa Two-Day CPR)
+                    if dt == "Trending":    score += 25
+                    elif dt == "Moderate":  score += 10
+                    elif dt == "Sideways":  score -= 40
+                    elif dt == "Volatile":  score -= 5
 
-    # â”€â”€ Signal cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    def _signal_card_html(s: dict) -> str:
-        bull    = s["side"] == "BUY"
-        ac      = "#2d7a3a" if bull else "#c0392b"
-        bg      = "#edf7ee" if bull else "#fdf0ee"
-        bdr     = "#b8dfc0" if bull else "#f0c0b8"
-        arrow   = "â–²" if bull else "â–¼"
-        rr_col  = "#2d7a3a" if s["rr1"] >= 2 else ("#b8860b" if s["rr1"] >= 1.5 else "#c0392b")
-        str_w   = min(s["strength"], 100)
-        tf_c    = s["tf_color"]
-        return f"""
-<div style="background:#ffffff;border:1px solid #dae0cb;border-radius:12px;
-            padding:1rem 1.1rem;border-top:4px solid {ac};
-            box-shadow:0 2px 10px rgba(50,70,20,0.07);
-            animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
-  <!-- Strategy name badge -->
-  <div style="font-family:DM Mono,monospace;font-size:0.68rem;font-weight:700;
-              color:{ac};background:{bg};border:1px solid {bdr};
-              border-radius:6px;padding:3px 8px;margin-bottom:7px;
-              letter-spacing:0.03em;line-height:1.4;">
-    ðŸŽ¯ {s.get('strategy_name','â€”')}
-  </div>
-  <!-- Header row -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-      <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
-      <span style="background:{bg};color:{ac};border:1px solid {bdr};
-                   border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
-        {arrow} {s['side']}
-      </span>
-      <span style="background:{tf_c}18;color:{tf_c};border:1px solid {tf_c}44;
-                   border-radius:12px;padding:1px 7px;font-size:0.65rem;font-weight:700;">
-        {s['tf']}
-      </span>
-    </div>
-    <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
-      LTP â‚¹{s['ltp']:,.2f}
-    </span>
-  </div>
-  <!-- Strategy name banner -->
-  <div style="background:{'rgba(26,107,46,0.07)' if bull else 'rgba(158,32,24,0.07)'};
-              border-left:3px solid {ac};border-radius:0 6px 6px 0;
-              padding:4px 10px;margin-bottom:8px;
-              font-family:DM Mono,monospace;font-size:0.68rem;
-              color:{ac};font-weight:700;letter-spacing:0.02em;
-              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    ðŸŽ¯ {s.get('strategy_name','â€”')}
-  </div>
-  <!-- Level pills -->
-  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
-    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
-      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">Entry</div>
-      <div style="font-size:0.8rem;font-weight:700;color:#1a1f0e;font-family:DM Mono,monospace;">â‚¹{s['entry']}</div>
-    </div>
-    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
-      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T1</div>
-      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">â‚¹{s['t1']}</div>
-    </div>
-    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
-      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T2</div>
-      <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">â‚¹{s['t2']}</div>
-    </div>
-    <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
-      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">SL</div>
-      <div style="font-size:0.8rem;font-weight:700;color:#c0392b;font-family:DM Mono,monospace;">â‚¹{s['sl']}</div>
-    </div>
-    <div style="background:{rr_col}15;border-radius:7px;padding:5px 3px;text-align:center;border:1px solid {rr_col}33;">
-      <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">R:R</div>
-      <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
-    </div>
-  </div>
-  <!-- Strategy rationale -->
-  <div style="font-family:DM Mono,monospace;font-size:0.68rem;color:#4a5e32;
-              background:#f5f8ed;border-radius:5px;padding:4px 7px;
-              margin-bottom:6px;border-left:3px solid {ac};">
-    {s.get('rationale','') or (s['candle'] + ' Â· RSI ' + str(s['rsi']) + ' Â· HMA ' + str(s['hma']))}
-  </div>
-  <!-- Strength bar -->
-  <div style="margin-bottom:6px;">
-    <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
-      <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
-        Vol {s['vol']} &nbsp;Â·&nbsp; Stoch {s.get('stoch','â€”')} &nbsp;Â·&nbsp;
-        {('â­ Virgin CPR' if s.get('virgin_cpr') else 'CPR ' + s.get('cpr_type',''))}
-      </span>
-      <span style="font-family:DM Mono,monospace;font-size:0.72rem;font-weight:800;color:{ac};">
-        {s['strength']}%
-      </span>
-    </div>
-    <div style="background:#e8eddf;border-radius:4px;height:6px;overflow:hidden;">
-      <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
-                  transition:width 0.5s;"></div>
-    </div>
-  </div>
-</div>"""
+                    # Overlap heavy penalty
+                    if ov: score -= 30
 
-    # Render in 2-column grid (bull left, bear right on desktop)
-    if bull_sigs and bear_sigs:
-        col_bull, col_bear = st.columns(2)
-        with col_bull:
-            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                        f"color:#2d7a3a;font-weight:700;margin-bottom:0.5rem;'>â–² BULLISH ({len(bull_sigs)})</div>",
-                        unsafe_allow_html=True)
-            for s in bull_sigs:
-                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
-                _trade_buttons(s)
-        with col_bear:
-            st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                        f"color:#c0392b;font-weight:700;margin-bottom:0.5rem;'>â–¼ BEARISH ({len(bear_sigs)})</div>",
-                        unsafe_allow_html=True)
-            for s in bear_sigs:
-                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
-                _trade_buttons(s)
-    else:
-        for s in filtered:
-            st.markdown(_signal_card_html(s), unsafe_allow_html=True)
-            _trade_buttons(s)
+                    # Candle quality bonus
+                    _premium = {
+                        "Morning Star": 20, "Evening Star": 20,
+                        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+                        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+                        "Hammer": 12, "Shooting Star": 12,
+                        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+                        "Inside Bar": 5, "Doji at CPR": 3,
+                    }
+                    score += _premium.get(cn, 0)
 
-    # Desktop notifications for new signals
-    if filtered:
-        notif_js = json.dumps([{
-            "symbol":s["symbol"],"side":s["side"],
-            "entry":s["entry"],"t1":s["t1"],"sl":s["sl"],
-            "rr":s["rr1"],"strength":s["strength"],"candle":s["candle"]
-        } for s in filtered[:6]])
+                    # RSI alignment
+                    if side == "Bullish" and rsi >= 55:    score += 8
+                    elif side == "Bearish" and rsi <= 45:  score += 8
+                    elif side == "Bullish" and rsi <= 40:  score -= 5
+                    elif side == "Bearish" and rsi >= 60:  score -= 5
+
+                    # HMA alignment
+                    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+                        score += 10
+
+                    # Volume surge
+                    if "✅" in vol: score += 8
+
+                    # Timeframe bonus — 30M is primary (highest quality CPR signals)
+                    _tf = str(row.get("tf",""))
+                    if   "30m" in _tf or "30M" in _tf: score += 15  # primary TF
+                    elif "1h"  in _tf or "1H"  in _tf: score += 8   # swing TF
+                    elif "15m" in _tf or "15M" in _tf: score += 5   # scalp TF
+
+                    return round(score, 2)
+
+                # Compute rank score for every directional signal
+                ranked = result[result["Pattern"] != "Neutral"].copy()
+                if not ranked.empty:
+                    ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
+                    ranked["🤖 Auto"]        = ""   # will be filled below
+                    ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
+                    ranked.index = ranked.index + 1  # rank 1 = best
+
+                    # Store ranked result for scanner UI display
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+                    # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
+                    # Max 1 trade per symbol per day — no duplicate entries
+                    _today   = datetime.now().strftime("%Y-%m-%d")
+                    _ft_evts = _ft_state().get("events", [])
+                    _traded_today = set(
+                        e.get("symbol","") for e in _ft_evts
+                        if e.get("type","") == "ENTRY"
+                        and str(e.get("time","")).startswith(_today)
+                    )
+                    auto_traded = 0
+                    for _ri, row in ranked.iterrows():
+                        sig = {
+                            "symbol":     row.get("Symbol",""),
+                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                            "entry":      row.get("Entry",   row.get("LTP",0)),
+                            "sl":         row.get("SL",      0),
+                            "t1":         row.get("T1",      0),
+                            "t2":         row.get("T2",      0),
+                            "rr1":        row.get("RR1",     2.0),
+                            "tf":         tf_tag,
+                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
+                            "strategy":   row.get("Strategy","CPR"),
+                            "strength":   row.get("Strength%",0),
+                            "candle":     row.get("Candle","—"),
+                            "day_type":   row.get("Day Type",""),
+                            "cpr_overlap":row.get("CPR Overlap", False),
+                            "rsi":        row.get("RSI", 50),
+                            "hma":        row.get("HMA","—"),
+                            "vol":        row.get("Vol Surge","—"),
+                            "cprw":       row.get("CPR Width%", 1.0),
+                            "ltp":        row.get("LTP", 0),
+                            "rank_score": row.get("🏆 Rank Score", 0),
+                        }
+                        _strength = float(sig.get("strength", 0))
+                        _rr       = float(sig.get("rr1", 0))
+                        _overlap  = sig.get("cpr_overlap", False)
+                        _day_type = sig.get("day_type", "")
+
+                        # Block sideways + enforce quality gate
+                        if _overlap and _day_type == "Sideways":
+                            continue
+                        # Frank Ochoa optimal params:
+                        # Strength >= 75%, RR >= 2.0, Non-sideways day
+                        if not (_strength >= 75 and _rr >= 2.0):
+                            continue
+                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                            continue
+
+                        # Skip if this symbol already traded today
+                        if sig["symbol"] in _traded_today:
+                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
+                            continue
+
+                        if auto_traded < 3:
+                            # Auto-trade top 3 — 30M preferred, then 15M, then 1H
+                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
+                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                            _traded_today.add(sig["symbol"])
+                            auto_traded += 1
+                        # Rest are available for manual trade — marked in ranked table
+
+                    # Update stored ranked result with Auto markers
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+            last_scan = now
+
+            # ── Always sync canonical keys read by Trade Signals tab ──────────────
+            # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
+            if tf_tag in ("15m", "30m", "1h"):
+                st.session_state[f"cpr_scan_{tf_tag}"]      = result
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+            # ── Store signals + fire desktop notifications ────────────────────────
+            if not result.empty:
+                top3_bull = result[result["Pattern"]=="Bullish"].head(3)
+                top3_bear = result[result["Pattern"]=="Bearish"].head(3)
+                notif_signals = []
+                for _, r in top3_bull.iterrows():
+                    notif_signals.append({
+                        "symbol": r["Symbol"], "side": "BUY",
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "candle": r.get("Candle","—"),
+                    })
+                for _, r in top3_bear.iterrows():
+                    notif_signals.append({
+                        "symbol": r["Symbol"], "side": "SELL",
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "candle": r.get("Candle","—"),
+                    })
+                st.session_state["pending_signals"] = notif_signals
+                # Also update the per-tag scan time key used by Trade Signals tab
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+                # ── Fire desktop notifications via window.parent ──────────────────
+                # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
+                notif_js_list = json.dumps([
+                    {"sym": s["symbol"], "side": s["side"],
+                     "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
+                     "rr": s["rr"], "str": s["strength"]}
+                    for s in notif_signals[:6]
+                ])
+                st.markdown(f"""
+    <script>
+    (function fireNotifs() {{
+        var sigs = {notif_js_list};
+        var w    = window.parent || window;
+        if (!("Notification" in w)) return;
+        if (w.Notification.permission !== "granted") {{
+            // Flash the allow button if not granted
+            var btn = document.getElementById("pv-allow-btn");
+            if (btn) {{
+                btn.style.animation = "none";
+                btn.style.background = "#c0392b";
+                btn.innerText = "⚠️ Allow Notifications!";
+            }}
+            return;
+        }}
+        sigs.forEach(function(s, i) {{
+            setTimeout(function() {{
+                var emoji = s.side === "BUY" ? "🟢" : "🔴";
+                w.pvNotify(
+                    emoji + " " + s.side + " Signal — " + s.sym + " (" + s.str + "%)",
+                    "Entry ₹" + s.entry + "  |  T1 ₹" + s.t1 + "  |  SL ₹" + s.sl + "  |  R:R " + s.rr + "x",
+                    "pv-" + s.sym
+                );
+            }}, i * 800);  // Stagger by 800ms so they don't all fire at once
+        }});
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
+
+        scan_df  = st.session_state.get(scan_key, pd.DataFrame())
+        elapsed  = int(now - last_scan)
+        remaining = max(0, refresh_s - elapsed)
+
+        # ── Countdown JS ──────────────────────────────────────────────────────────
         st.markdown(f"""
         <script>
-        (function(){{
-            var sigs = {notif_js};
-            var w = window.parent || window;
-            if (w._pvNotifEnabled || (w.Notification && w.Notification.permission === "granted")) {{
-                sigs.forEach(function(s){{
-                    if (w._pvNotify) {{
-                        w._pvNotify(
-                            (s.side==="BUY"?"ðŸŸ¢ BUY":"ðŸ”´ SELL")+" â€” "+s.symbol+" ("+s.strength+"%)",
-                            "Entry â‚¹"+s.entry+"  T1 â‚¹"+s.t1+"  SL â‚¹"+s.sl+"  R:R "+s.rr+"x",
-                            "pv-"+s.symbol
-                        );
-                    }} else {{
-                        var n = new w.Notification(
-                            (s.side==="BUY"?"ðŸŸ¢ BUY":"ðŸ”´ SELL")+" â€” "+s.symbol+" ("+s.strength+"%)",
-                            {{body:"Entry â‚¹"+s.entry+"  T1 â‚¹"+s.t1+"  SL â‚¹"+s.sl+"  R:R "+s.rr+"x",
-                              icon:"/static/icon-192.png",tag:"pv-"+s.symbol,requireInteraction:false}}
-                        );
-                    }}
-                }});
+        (function() {{
+            var secs = {remaining};
+            function pad(n) {{ return n < 10 ? "0"+n : n; }}
+            function fmt(s) {{
+                if (s >= 3600) return pad(Math.floor(s/3600))+"h "+pad(Math.floor((s%3600)/60))+"m";
+                return pad(Math.floor(s/60))+":"+pad(s%60);
             }}
+            function tick() {{
+                if (secs <= 0) {{ window.location.reload(); return; }}
+                var el = document.getElementById("countdown");
+                if (el) el.innerText = fmt(secs);
+                secs--;
+                setTimeout(tick, 1000);
+            }}
+            tick();
         }})();
         </script>
         """, unsafe_allow_html=True)
 
-    st.caption("âš ï¸ Signals from CPR Scanner (15Min + 1Hour). Frank Ochoa Pivot methodology. Not financial advice.")
+        # ── Status bar ────────────────────────────────────────────────────────────
+        scan_dt = datetime.fromtimestamp(last_scan).strftime("%d %b  %H:%M:%S") if last_scan else "—"
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
+            f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+            f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{tf_bg};"
+            f"border:1px solid {tf_col}33;border-left:3px solid {tf_col};border-radius:6px;'>"
+            f"<span style='color:{tf_col};font-weight:700;'>{tf_choice}</span>"
+            f"<span>Last scan: <b>{scan_dt}</b></span>"
+            f"<span>Auto-refresh: every <b>{cfg['refresh_label']}</b></span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        if scan_df.empty:
+            st.warning("⚠️ Scanner returned no results. Click 🔄 Scan Now to retry.")
+            with st.expander("🔍 Debug — What to check if scanner shows no data"):
+                st.markdown("""
+    **Common causes:**
+
+    1. **First run** — Click **🔄 Scan Now** manually to trigger the first scan.
+
+    2. **yfinance rate limit** — NSE/yfinance blocks frequent requests from cloud IPs.
+       Connect Upstox in ⚙️ Broker Settings for live data that always works.
+
+    3. **Weekend / market closed** — Scanner still works but data is from last trading day.
+
+    4. **All CPR widths > 2%** — All stocks filtered out. Try switching to **1 Day** timeframe
+       which typically has more narrow CPR setups.
+
+    5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
+                """)
+                st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
+            pass  # empty state — stay in tab
+
+        # ── All bullish & bearish — no strength cutoff ────────────────────────────
+        all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
+        all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
+
+        # ── Summary metrics ───────────────────────────────────────────────────────
+        n_scanned = len(scan_df)
+        n_narrow  = int((scan_df["CPR Width%"] < 0.25).sum())
+        n_bull    = len(all_bull)
+        n_bear    = len(all_bear)
+        n_qual    = n_bull + n_bear   # all directional stocks
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("📊 Scanned",   n_scanned)
+        m2.metric("🎯 Narrow CPR", n_narrow)
+        m3.metric("📈 Directional", n_qual)
+        m4.metric("🟢 Bullish",   n_bull)
+        m5.metric("🔴 Bearish",   n_bear)
+
+        st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
+
+        if n_qual == 0:
+            st.markdown(
+                f"<div style='text-align:center;padding:2rem;background:#f7f9f2;"
+                f"border:2px dashed #dce3ed;border-radius:10px;"
+                f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8a9a78;'>"
+                f"Scanned <b>{n_scanned}</b> stocks on {tf_tag.upper()} — no directional CPR setups found right now.<br>"
+                f"<span style='font-size:0.72rem;'>All CPR widths may be > 2%, or no RSI/HMA confirmation. "
+                f"Try switching to 📅 1 Day timeframe or 🔄 Scan Now again.</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            pass  # empty state — stay in tab
+
+        # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
+        top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bull.empty else pd.DataFrame()
+        top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bear.empty else pd.DataFrame()
+
+        def _cards(df, direction):
+            is_bull = direction == "Bullish"
+            hc  = "#16a34a" if is_bull else "#dc2626"
+            hbg = "#edf7ee" if is_bull else "#fdf0ee"
+            hbd = "#b8dfc0" if is_bull else "#f0c0b8"
+            arr = "▲" if is_bull else "▼"
+
+            if df.empty:
+                return (f"<div style='padding:2rem;text-align:center;background:#f7f9f2;"
+                        f"border:2px dashed #dce3ed;border-radius:10px;"
+                        f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#8a9a78;'>"
+                        f"No {direction} picks match criteria on this timeframe</div>")
+
+            html = (f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
+                    f"font-weight:700;color:{hc};letter-spacing:0.05em;text-transform:uppercase;"
+                    f"padding:0.5rem 0.9rem;background:{hbg};border:1px solid {hbd};"
+                    f"border-left:4px solid {hc};border-radius:6px;margin-bottom:0.6rem;'>"
+                    f"{arr} Top 10 {direction} · Narrow CPR · Frank Ochoa Strategy</div>")
+
+            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+            for rank, (_, row) in enumerate(df.iterrows(), 1):
+                prob     = int(row["Strength%"])
+                rsi_c    = "#16a34a" if row["RSI"] >= 55 else ("#dc2626" if row["RSI"] <= 45 else "#d97706")
+                medal    = medals.get(rank, f"#{rank}")
+                candle   = str(row.get("Candle", "None"))
+                candle_icon = "🕯️" if candle != "None" else ""
+                rr1      = float(row.get("RR1", 0))
+                rr2      = float(row.get("RR2", 0))
+                rr_col   = "#16a34a" if rr1 >= 2 else ("#d97706" if rr1 >= 1.5 else "#dc2626")
+                osc      = str(row.get("Osc Cross", "—"))
+                vol      = str(row.get("Vol Surge", "—"))
+                cpr_w    = float(row.get("CPR Width%", 0))
+
+                html += (
+                    f'<div style="background:#fff;border:1px solid {hbd};border-radius:10px;'
+                    f'padding:0.85rem 1rem;margin-bottom:0.5rem;box-shadow:0 1px 5px rgba(0,0,0,0.05);">'
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">'
+                    f'<div style="display:flex;align-items:center;gap:8px;">'
+                    f'<span style="font-size:1rem;">{medal}</span>'
+                    f'<div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a1f0e;">{row["Symbol"]}</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a48;">'
+                    f'&#8377;{row["LTP"]:,.2f} &nbsp;·&nbsp; ATR &#8377;{row["ATR"]:,.2f} &nbsp;·&nbsp; {candle_icon} {candle}</div>'
+                    f'</div></div>'
+                    f'<div style="text-align:right;">'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:{hc};">{prob}%</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;">Strength</div>'
+                    f'</div></div>'
+                    f'<div style="background:#f1f5f9;border-radius:3px;height:5px;margin-bottom:0.5rem;">'
+                    f'<div style="background:{hc};width:{prob}%;height:100%;border-radius:3px;"></div></div>'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.45rem;'
+                    f'padding:0.4rem 0.6rem;background:#f7f9f2;border-radius:6px;'
+                    f'font-family:IBM Plex Mono,monospace;font-size:0.68rem;">'
+                    f'<span style="color:#5a6a48;">Entry <b style="color:#1a1f0e;">&#8377;{row["Entry"]:,.2f}</b></span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
+                    f'<span style="color:#5a6a48;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">SL <b style="color:#c0392b;">&#8377;{row["SL"]:,.2f}</b></span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
+                    f'</div>'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:0.3rem;">'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">CPR {cpr_w:.3f}%</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Osc {osc}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Vol {vol}</span>'
+                    f'<span style="background:{hbg};border:1px solid {hbd};border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};font-weight:600;">{arr} NARROW</span>'
+                    f'</div></div>'
+                )
+            return html
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown(_cards(top_bull, "Bullish"), unsafe_allow_html=True)
+        with col_r:
+            st.markdown(_cards(top_bear, "Bearish"), unsafe_allow_html=True)
+
+        # Full results table
+        if n_qual > 0:
+            with st.expander(f"📋 All {n_qual} stocks ({n_bull} Bullish + {n_bear} Bearish)", expanded=False):
+                # ── Ranked Signal Table — Best 3 Auto + Rest Manual ─────
+                _ranked_key = f"ranked_scan_{tf_tag}"
+                if st.session_state.get(_ranked_key) is not None and not st.session_state[_ranked_key].empty:
+                    ranked_df = st.session_state[_ranked_key].copy()
+                    st.markdown("#### 🏆 Signal Rankings — Sorted by Frank Ochoa Quality Score")
+                    # Colour-coded badge for auto vs manual
+                    def _auto_badge(v):
+                        return "🤖 AUTO" if v == "🤖 Auto" else "👤 Manual"
+                    if "🤖 Auto" in ranked_df.columns:
+                        ranked_df["Trade"] = ranked_df["🤖 Auto"].apply(_auto_badge)
+                    # Show key columns
+                    _rcols = [c for c in ["Trade","🏆 Rank Score","Symbol","Pattern","Strength%",
+                                          "Candle","Day Type","RR1","Entry","T1","SL","RSI","HMA",
+                                          "Vol Surge","CPR Width%"] if c in ranked_df.columns]
+                    st.dataframe(
+                        ranked_df[_rcols].rename(columns={"Pattern":"Side","CPR Width%":"CPR W%"}),
+                        use_container_width=True,
+                        hide_index=False,
+                        height=min(500, 60 + len(ranked_df) * 38),
+                    )
+                    # Manual trade buttons for non-auto signals
+                    _manual_sigs = ranked_df[ranked_df.get("🤖 Auto","") != "🤖 Auto"] if "🤖 Auto" in ranked_df.columns else ranked_df
+                    if not _manual_sigs.empty:
+                        st.markdown("##### 👤 Manual Trade — Click to enter any signal into Forward Testing")
+                        _mcols = st.columns(min(4, len(_manual_sigs)))
+                        for _mi, (_ri, _mr) in enumerate(_manual_sigs.iterrows()):
+                            _side_icon = "🟢" if _mr.get("Pattern","") == "Bullish" else "🔴"
+                            with _mcols[_mi % len(_mcols)]:
+                                if st.button(
+                                    f"{_side_icon} #{_ri} {_mr.get('Symbol','')}\n"
+                                    f"Str:{int(_mr.get('Strength%',0))}% RR:{_mr.get('RR1',0):.1f}x",
+                                    key=f"manual_ft_{tf_tag}_{_ri}_{_mr.get('Symbol','')}",
+                                    use_container_width=True,
+                                ):
+                                    _msig = {
+                                        "symbol":  _mr.get("Symbol",""),
+                                        "side":    "BUY" if _mr.get("Pattern","") == "Bullish" else "SELL",
+                                        "entry":   _mr.get("Entry", _mr.get("LTP",0)),
+                                        "sl":      _mr.get("SL", 0),
+                                        "t1":      _mr.get("T1", 0),
+                                        "t2":      _mr.get("T2", 0),
+                                        "rr1":     _mr.get("RR1", 2.0),
+                                        "tf":      tf_tag,
+                                        "strategy":_mr.get("Strategy","CPR"),
+                                        "strength":_mr.get("Strength%",0),
+                                        "candle":  _mr.get("Candle","—"),
+                                        "rank_score": _mr.get("🏆 Rank Score", 0),
+                                    }
+                                    ft_add_signal(_msig, source=f"👤 Manual · Rank#{_ri} · {tf_tag.upper()}")
+                                    st.success(f"✅ {_mr.get('Symbol','')} added to Forward Testing!")
+                    st.divider()
+
+                disp = scan_df[scan_df["Pattern"] != "Neutral"].sort_values(["Strength%","CPR Width%"], ascending=[False,True]).copy()
+                for c in ["LTP","Entry","T1","T2","T3","SL","TC","BC"]:
+                    if c in disp.columns:
+                        disp[c] = disp[c].apply(lambda x: f"Rs.{x:,.2f}")
+                disp["CPR Width%"] = disp["CPR Width%"].apply(lambda x: f"{x:.3f}%" if isinstance(x, float) else x)
+                disp["Strength%"]  = disp["Strength%"].apply(lambda x: f"{x}%")
+                show_cols = [c for c in ["Symbol","LTP","Strength%","Candle","Entry","T1","T2","SL","RR1","RR2","RSI","HMA","Vol Surge","CPR Width%"] if c in disp.columns]
+                st.dataframe(disp[show_cols], use_container_width=True, hide_index=True)
+
+        # ═══════════════════════════════════════════════════════════════════
+        #  SEND REPORT
+        # ═══════════════════════════════════════════════════════════════════
+        st.divider()
+        st.markdown(
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;font-weight:700;"
+            "color:#1a1f0e;margin-bottom:0.75rem;'>📤  Send / Download Scanner Report</div>",
+            unsafe_allow_html=True,
+        )
+
+        scan_time_str = datetime.now().strftime("%d %b %Y  %H:%M")
+
+        # Build WhatsApp message text
+        def _wa_text(bull_df, bear_df, tf_lbl, scan_t):
+            lines = [
+                "🏦 *PivotVault AI — CPR Scanner*",
+                f"📅 {tf_lbl}  |  {scan_t}",
+                "🔍 Frank Ochoa Strategy  |  Narrow CPR  |  R:R >= 1.5x",
+                "",
+                "🟢 *BULLISH SETUPS*",
+            ]
+            if bull_df.empty:
+                lines.append("No bullish picks found.")
+            else:
+                for i, (_, r) in enumerate(bull_df.head(10).iterrows(), 1):
+                    lines.append(
+                        f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                        f"{r.get('Candle','—')}  "
+                        f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                    )
+            lines += ["", "🔴 *BEARISH SETUPS*"]
+            if bear_df.empty:
+                lines.append("No bearish picks found.")
+            else:
+                for i, (_, r) in enumerate(bear_df.head(10).iterrows(), 1):
+                    lines.append(
+                        f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                        f"{r.get('Candle','—')}  "
+                        f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                    )
+            lines += ["", "⚠️ Educational use only. Not financial advice.", "📱 Sent via PivotVault AI"]
+            return "\n".join(lines)
+
+        # Build HTML email body
+        def _html_email(bull_df, bear_df, tf_lbl, scan_t):
+            def _tbl_rows(df, is_bull):
+                if df.empty:
+                    return "<tr><td colspan='9' style='padding:8px;color:#8a9a78;font-style:italic;'>No qualifying stocks found.</td></tr>"
+                hc = "#16a34a" if is_bull else "#dc2626"
+                out = ""
+                for _, r in df.iterrows():
+                    rr_c = "#16a34a" if r.get("RR1",0)>=2 else ("#d97706" if r.get("RR1",0)>=1.5 else "#dc2626")
+                    out += (
+                        f"<tr style='border-bottom:1px solid #f1f5f9;'>"
+                        f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a1f0e;'>{r['Symbol']}</td>"
+                        f"<td style='padding:7px 5px;font-size:0.83rem;'>Rs.{r['LTP']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{hc};font-weight:700;'>{int(r['Strength%'])}%</td>"
+                        f"<td style='padding:7px 5px;font-size:0.8rem;'>{r.get('Candle','—')}</td>"
+                        f"<td style='padding:7px 5px;font-size:0.8rem;'>Rs.{r['Entry']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{hc};'>Rs.{r['T1']:,.2f} / Rs.{r['T2']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:#c0392b;'>Rs.{r['SL']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{rr_c};font-weight:700;'>{r.get('RR1',0)}x</td>"
+                        f"<td style='padding:7px 5px;color:#5a6a48;'>{r['RSI']}</td>"
+                        f"</tr>"
+                    )
+                return out
+
+            TH = "background:#1e293b;color:#e2e8f0;padding:7px 5px;text-align:left;font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;"
+            TBLS = "width:100%;border-collapse:collapse;font-family:Courier New,monospace;font-size:0.82rem;"
+            HDR_COL = "background:linear-gradient(135deg,#0d1f0a,#1a4a10)"
+
+            return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+    <body style="margin:0;padding:0;background:#f1f5f9;">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:20px 10px;">
+    <table width="700" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+    <tr><td style="{HDR_COL};padding:22px 26px;">
+      <div style="font-family:Courier New,monospace;font-size:1.25rem;font-weight:700;color:#e8eddf;">🏦 PivotVault AI — CPR Scanner</div>
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;color:#b5c77a;margin-top:4px;letter-spacing:0.07em;text-transform:uppercase;">{tf_lbl} · Frank Ochoa Strategy · {scan_t}</div>
+    </td></tr>
+    <tr><td style="padding:20px 22px;">
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#2d7a3a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">▲ BULLISH SETUPS</div>
+      <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+      {_tbl_rows(bull_df, True)}</table>
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#c0392b;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">▼ BEARISH SETUPS</div>
+      <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+      {_tbl_rows(bear_df, False)}</table>
+    </td></tr>
+    <tr><td style="padding:12px 22px 20px;"><div style="background:#f7f9f2;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#8a9a78;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
+    </table></td></tr></table></body></html>"""
+
+        rtab1, rtab2, rtab3 = st.tabs(["📧 Gmail / Email", "💬 WhatsApp", "⬇️ Download PDF"])
+
+        with rtab1:
+            st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
+            cfg = st.session_state.get("smtp_cfg", {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""})
+            with st.expander("⚙️ SMTP Settings", expanded=not bool(cfg.get("sender"))):
+                sc1, sc2 = st.columns(2)
+                with sc1:
+                    nh = st.text_input("SMTP Host",     value=cfg["host"],     key="sc_host")
+                    ns = st.text_input("Sender Email",  value=cfg["sender"],   key="sc_sender")
+                with sc2:
+                    np = st.selectbox("Port", [587, 465], index=0 if cfg["port"] == 587 else 1, key="sc_port")
+                    nw = st.text_input("App Password",  value=cfg["password"], type="password", key="sc_pwd",
+                                       help="Gmail: Google Account → Security → App Passwords (not your normal password)")
+                if st.button("💾 Save", key="sc_save"):
+                    st.session_state["smtp_cfg"] = {"host": nh, "port": np, "sender": ns, "password": nw}
+                    st.success("SMTP settings saved!")
+
+            ec1, ec2 = st.columns([3, 1])
+            with ec1:
+                to_em = st.text_input("Recipient Email", placeholder="you@gmail.com", label_visibility="collapsed", key="sc_to")
+            with ec2:
+                send_em = st.button("📧 Send", use_container_width=True, key="sc_send_em")
+
+            if send_em:
+                cfg2 = st.session_state.get("smtp_cfg", {})
+                if not to_em.strip():
+                    st.error("Enter recipient email address.")
+                elif not cfg2.get("sender") or not cfg2.get("password"):
+                    st.error("Configure SMTP settings above first.")
+                else:
+                    body = _html_email(top_bull, top_bear, tf_choice, scan_time_str)
+                    with st.spinner("Sending email…"):
+                        ok, msg = send_report_email(to_em.strip(), cfg2["host"], cfg2["port"], cfg2["sender"], cfg2["password"], body, scan_time_str)
+                    if ok:
+                        st.success(f"✅ Report sent to {to_em.strip()}")
+                    else:
+                        st.error(f"❌ {msg}")
+                        st.caption("Gmail tip: use an App Password not your regular password. Requires 2FA enabled.")
+
+        with rtab2:
+            st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
+            wa_msg = _wa_text(top_bull, top_bear, tf_choice, scan_time_str)
+            st.text_area("Message Preview (copy or use button below)", wa_msg, height=200, key="wa_prev")
+            wc1, wc2 = st.columns([3, 1])
+            with wc1:
+                wa_ph = st.text_input("Phone number with country code", placeholder="919876543210", label_visibility="collapsed", key="wa_ph")
+            with wc2:
+                wa_go = st.button("💬 Open WhatsApp", use_container_width=True, key="wa_go")
+            if wa_go and wa_ph.strip():
+                import urllib.parse as _up
+                wa_url = "https://wa.me/" + wa_ph.strip().replace("+","") + "?text=" + _up.quote(wa_msg)
+                st.markdown(
+                    f"<a href='{wa_url}' target='_blank' style='display:inline-block;background:#25d366;color:#fff;"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;font-weight:600;"
+                    f"padding:0.55rem 1.5rem;border-radius:8px;text-decoration:none;margin-top:0.5rem;'>"
+                    f"💬 Open WhatsApp →</a>",
+                    unsafe_allow_html=True,
+                )
+                st.caption("Opens WhatsApp with message pre-filled. Just tap Send.")
+            elif wa_go:
+                st.warning("Enter phone number with country code (e.g. 919876543210)")
+            st.caption("💡 You can also copy the message above and paste into any chat — WhatsApp, Telegram, SMS, etc.")
+
+        with rtab3:
+            st.markdown(
+                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;"
+                "margin-bottom:0.75rem;'>Download the scanner report as a PDF. "
+                "Download a snapshot of the current scan results.</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("📄 Generate & Download PDF", use_container_width=True, key="sc_gen_pdf"):
+                with st.spinner("Building PDF…"):
+                    try:
+                        pdf_bytes = build_scanner_pdf(top_bull, top_bear, tf_choice, scan_time_str)
+                        st.download_button(
+                            label=f"⬇️ Download PDF — {tf_tag.upper()} Scanner",
+                            data=pdf_bytes,
+                            file_name=f"PivotVault_Scanner_{tf_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="sc_pdf_dl",
+                        )
+                        st.success("PDF ready — click button above to download!")
+                    except Exception as ex:
+                        st.error(f"PDF error: {ex}")
+
+        # ── Footer ────────────────────────────────────────────────────────────────
+
+            # ── Footer ────────────────────────────────────────────────────────────────
+        st.markdown(f"""
+        <div style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:10px;
+                    padding:0.9rem 1.1rem;margin-top:0.75rem;
+                    font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;line-height:1.9;">
+        <b style="color:#1a1f0e;">Auto-Refresh Schedule</b><br>
+        ⚡ 15 Min chart → refreshes every <b>15 minutes</b> &nbsp;|&nbsp;
+        🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
+        📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
+        📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
+        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_sig:
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+            "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
+            "border-radius:6px;border-left:3px solid #4e6130;'>"
+            "⚡ <b>AUTO</b> (15m/30m) = Forward Test auto-executes &nbsp;|&nbsp; "
+            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button &nbsp;|&nbsp; "
+            "🕐 Auto window: <b>9:45–14:45 IST</b> · Str≥75% · RR≥2.0</div>",
+            unsafe_allow_html=True)
+        import json
+
+        # ── Header ────────────────────────────────────────────────────────────
+        h1, h2 = st.columns([5, 1])
+        with h1:
+            st.markdown("""
+            <div class="title-bar">
+                <span style="font-size:1.5rem;">🔔</span>
+                <h1 style="color:#1a1f0e;">Trade Signals</h1>
+                <span style="margin-left:auto;background:#edf7ee;border:1px solid #b8dfc0;
+                             color:#2d7a3a;padding:3px 12px;border-radius:20px;
+                             font-family:DM Mono,monospace;font-size:0.72rem;font-weight:700;">
+                    LIVE · CPR SCANNER SYNC
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+        with h2:
+            # Notification enable button — calls window.parent
+            st.markdown("""
+            <button onclick="(function(){
+                var w = window.parent || window;
+                if (!w.Notification) { alert('Notifications not supported in this browser.'); return; }
+                w.Notification.requestPermission().then(function(p){
+                    if (p === 'granted') {
+                        w._pvNotifEnabled = true;
+                        new w.Notification('🏦 PivotVault AI', {
+                            body: 'Trade signal notifications are now ON!',
+                            icon: '/static/icon-192.png',
+                            tag:  'pv-enable'
+                        });
+                    } else {
+                        alert('Notification permission denied. Please allow notifications in your browser settings.');
+                    }
+                });
+            })()"
+            style="width:100%;padding:8px 6px;background:#4e6130;color:#fff;
+                   border:none;border-radius:8px;font-family:DM Sans,sans-serif;
+                   font-size:0.75rem;font-weight:700;cursor:pointer;
+                   transition:opacity 0.2s;" id="notif-enable-btn">
+            🔔 Enable Alerts
+            </button>
+            <script>
+            // Update button text based on current permission
+            (function checkPerm(){
+                var w = window.parent || window;
+                var btn = document.getElementById("notif-enable-btn");
+                if (!btn) { setTimeout(checkPerm, 300); return; }
+                if (w.Notification && w.Notification.permission === "granted") {
+                    btn.style.background = "#2d7a3a";
+                    btn.innerText = "✅ Alerts ON";
+                } else if (w.Notification && w.Notification.permission === "denied") {
+                    btn.style.background = "#c0392b";
+                    btn.innerText = "🔕 Blocked";
+                    btn.title = "Allow notifications in browser settings (🔒 icon in address bar)";
+                }
+            })();
+            </script>
+            """, unsafe_allow_html=True)
+
+        # ── Auto-refresh: inherit from scanner (15m & 1h only) ────────────────
+        if _HAS_AUTOREFRESH and is_market_open():
+            st_autorefresh(interval=15_000, limit=None, key="signals_autorefresh")
+        # Also track 30m scan time
+        if 'cpr_scan_time_30m' not in st.session_state:
+            st.session_state['cpr_scan_time_30m'] = 0
+
+        # ── Pull data from CPR scanner session state ──────────────────────────
+        # Only use 15Min and 1Hour scans as requested
+        TF_LABELS = {
+            "cpr_scan_15m":  ("⚡ 15 Min",  "#7c3aed", "15m"),
+            "cpr_scan_30m":  ("⏱️ 30 Min",  "#ea580c", "30m"),
+            "cpr_scan_1h":   ("🕐 1 Hour",  "#1d4ed8", "1h"),
+        }
+
+        all_signals = []
+        scan_times  = {}
+
+        for key, (label, color, tag) in TF_LABELS.items():
+            _raw = st.session_state.get(key)
+            df = _raw if isinstance(_raw, pd.DataFrame) else pd.DataFrame()
+            ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
+            if not df.empty:
+                scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
+                for _, r in df.iterrows():
+                    _sig = {
+                        "tf":       label,
+                        "tf_color": color,
+                        "symbol":   r["Symbol"],
+                        "side":     "BUY"  if r["Pattern"] == "Bullish" else "SELL",
+                        "ltp":      r["LTP"],
+                        "entry":    r["Entry"],
+                        "t1":       r["T1"],
+                        "t2":       r["T2"],
+                        "t3":       r["T3"],
+                        "sl":       r["SL"],
+                        "rr1":      r["RR1"],
+                        "rr2":      r.get("RR2", 0),
+                        "strength": int(r["Strength%"]),
+                        "candle":   r.get("Candle", "—"),
+                        "rsi":       r.get("RSI", 0),
+                        "hma":       r.get("HMA", "—"),
+                        "vol":       r.get("Vol Surge", "—"),
+                        "cpr_w":     r.get("CPR Width%", 0),
+                        "cpr_type":  r.get("CPR Type", "—"),
+                        "virgin_cpr":r.get("Virgin CPR","—") == "⭐ Yes",
+                        "atr":       r.get("ATR", 0),
+                        "stoch":     r.get("Stoch%K", "—"),
+                        "rationale": r.get("Rationale",""),
+                    }
+                    _sig["strategy_name"] = _build_strategy_name(_sig)
+                    _sig["strategy_id"]   = _strategy_short_id(_sig)
+                    all_signals.append(_sig)
+
+        # ── Status bar ────────────────────────────────────────────────────────
+        if not all_signals:
+            st.markdown("""
+            <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
+                        border:2px dashed #dae0cb;border-radius:12px;
+                        font-family:DM Mono,monospace;">
+                <div style="font-size:2rem;margin-bottom:0.75rem;">📡</div>
+                <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
+                    No signals yet
+                </div>
+                <div style="font-size:0.82rem;color:#5a6a48;">
+                    Go to <b>📡 CPR Scanner</b> → select <b>15 Min</b> or <b>1 Hour</b>
+                    → click <b>🔄 Scan Now</b><br>
+                    Signals will appear here automatically and refresh with every scan.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            # Quick scan shortcut buttons
+            st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1,2,1])
+            with c2:
+                if st.button("📡 Go to CPR Scanner → Run Scan", use_container_width=True, key="goto_scanner"):
+                    st.session_state["current_page"] = "Scanner & Signals"
+                    st.rerun()
+            return
+
+        # Scan time info
+        time_pills = " &nbsp;·&nbsp; ".join(
+            f"<span style='color:{TF_LABELS[k][1] if k in TF_LABELS else '#5a6a48'};font-weight:700;'>{label}</span> "
+            f"<span style='color:#8a9a78;'>scanned {t}</span>"
+            for label, t in scan_times.items()
+        ) if scan_times else ""
+
+        # Staleness check
+        now_ts   = time.time()
+        stale_15 = (now_ts - st.session_state.get("cpr_scan_time_15m", 0)) > 1800
+        stale_30 = (now_ts - st.session_state.get("cpr_scan_time_30m", 0)) > 3600
+        stale_1h = (now_ts - st.session_state.get("cpr_scan_time_1h",  0)) > 7200
+        any_stale = stale_15 or stale_30 or stale_1h
+
+        if any_stale:
+            st.warning(
+                "⚠️ Some signals may be stale — go to 📡 Scanner and run a fresh scan "
+                "before acting on these signals.",
+                icon="⏰",
+            )
+
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+            f"color:#5a6a48;margin-bottom:1rem;padding:0.5rem 0.9rem;"
+            f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:8px;"
+            f"border-left:3px solid #4e6130;display:flex;flex-wrap:wrap;gap:12px;align-items:center;'>"
+            f"<span class='live-dot'></span>"
+            f"<span style='font-weight:700;color:#4e6130;'>LIVE SIGNALS</span>"
+            f"{time_pills}"
+            f"<span style='margin-left:auto;color:#8a9a78;'>{len(all_signals)} signals total</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Filters ───────────────────────────────────────────────────────────
+        fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
+        with fc1:
+            tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
+                                        default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
+                                        key="sig_tf_filter", label_visibility="collapsed")
+        with fc2:
+            side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
+                                    horizontal=True, key="sig_side_filter", label_visibility="collapsed")
+        with fc3:
+            min_str = st.slider("Min Strength%", 0, 100, 60, key="sig_min_str")
+        with fc4:
+            min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
+
+        # Apply filters
+        filtered = [s for s in all_signals
+                    if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
+                    and (side_filter == "All"
+                         or (side_filter == "BUY only"  and s["side"] == "BUY")
+                         or (side_filter == "SELL only" and s["side"] == "SELL"))
+                    and s["strength"] >= min_str
+                    and s["rr1"] >= min_rr]
+
+        # Sort: strength desc, then CPR width asc
+        filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
+
+        if not filtered:
+            st.info(f"No signals match current filters. Try reducing Min Strength or Min R:R.")
+            return
+
+        bull_sigs = [s for s in filtered if s["side"] == "BUY"]
+        bear_sigs = [s for s in filtered if s["side"] == "SELL"]
+
+        st.markdown(
+            f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;color:#5a6a48;"
+            f"margin-bottom:0.75rem;'>Showing <b>{len(filtered)}</b> signals — "
+            f"<span style='color:#2d7a3a;font-weight:700;'>▲ {len(bull_sigs)} Bullish</span> &nbsp;"
+            f"<span style='color:#c0392b;font-weight:700;'>▼ {len(bear_sigs)} Bearish</span></div>",
+            unsafe_allow_html=True,
+        )
+
+        broker = st.session_state.get("broker", "none")
+
+        # ── Signal cards ──────────────────────────────────────────────────────
+        def _signal_card_html(s: dict) -> str:
+            bull    = s["side"] == "BUY"
+            ac      = "#2d7a3a" if bull else "#c0392b"
+            bg      = "#edf7ee" if bull else "#fdf0ee"
+            bdr     = "#b8dfc0" if bull else "#f0c0b8"
+            arrow   = "▲" if bull else "▼"
+            rr_col  = "#2d7a3a" if s["rr1"] >= 2 else ("#b8860b" if s["rr1"] >= 1.5 else "#c0392b")
+            str_w   = min(s["strength"], 100)
+            tf_c    = s["tf_color"]
+            return f"""
+    <div style="background:#ffffff;border:1px solid #dae0cb;border-radius:12px;
+                padding:1rem 1.1rem;border-top:4px solid {ac};
+                box-shadow:0 2px 10px rgba(50,70,20,0.07);
+                animation:slideIn 0.25s ease;font-family:DM Sans,sans-serif;">
+      <!-- Strategy name badge -->
+      <div style="font-family:DM Mono,monospace;font-size:0.68rem;font-weight:700;
+                  color:{ac};background:{bg};border:1px solid {bdr};
+                  border-radius:6px;padding:3px 8px;margin-bottom:7px;
+                  letter-spacing:0.03em;line-height:1.4;">
+        🎯 {s.get('strategy_name','—')}
+      </div>
+      <!-- Header row -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:1.1rem;font-weight:900;color:#1a1f0e;">{s['symbol']}</span>
+          <span style="background:{bg};color:{ac};border:1px solid {bdr};
+                       border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;">
+            {arrow} {s['side']}
+          </span>
+          <span style="background:{tf_c}18;color:{tf_c};border:1px solid {tf_c}44;
+                       border-radius:12px;padding:1px 7px;font-size:0.65rem;font-weight:700;">
+            {s['tf']}
+          </span>
+        </div>
+        <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
+          LTP ₹{s['ltp']:,.2f}
+        </span>
+      </div>
+      <!-- Strategy name banner -->
+      <div style="background:{'rgba(26,107,46,0.07)' if bull else 'rgba(158,32,24,0.07)'};
+                  border-left:3px solid {ac};border-radius:0 6px 6px 0;
+                  padding:4px 10px;margin-bottom:8px;
+                  font-family:DM Mono,monospace;font-size:0.68rem;
+                  color:{ac};font-weight:700;letter-spacing:0.02em;
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        🎯 {s.get('strategy_name','—')}
+      </div>
+      <!-- Level pills -->
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px;">
+        <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+          <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">Entry</div>
+          <div style="font-size:0.8rem;font-weight:700;color:#1a1f0e;font-family:DM Mono,monospace;">₹{s['entry']}</div>
+        </div>
+        <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+          <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T1</div>
+          <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t1']}</div>
+        </div>
+        <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+          <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">T2</div>
+          <div style="font-size:0.8rem;font-weight:700;color:#2d7a3a;font-family:DM Mono,monospace;">₹{s['t2']}</div>
+        </div>
+        <div style="background:#f7f9f2;border-radius:7px;padding:5px 3px;text-align:center;">
+          <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">SL</div>
+          <div style="font-size:0.8rem;font-weight:700;color:#c0392b;font-family:DM Mono,monospace;">₹{s['sl']}</div>
+        </div>
+        <div style="background:{rr_col}15;border-radius:7px;padding:5px 3px;text-align:center;border:1px solid {rr_col}33;">
+          <div style="font-size:0.58rem;color:#8a9a78;font-family:DM Mono,monospace;text-transform:uppercase;">R:R</div>
+          <div style="font-size:0.8rem;font-weight:700;color:{rr_col};font-family:DM Mono,monospace;">{s['rr1']}x</div>
+        </div>
+      </div>
+      <!-- Strategy rationale -->
+      <div style="font-family:DM Mono,monospace;font-size:0.68rem;color:#4a5e32;
+                  background:#f5f8ed;border-radius:5px;padding:4px 7px;
+                  margin-bottom:6px;border-left:3px solid {ac};">
+        {s.get('rationale','') or (s['candle'] + ' · RSI ' + str(s['rsi']) + ' · HMA ' + str(s['hma']))}
+      </div>
+      <!-- Strength bar -->
+      <div style="margin-bottom:6px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="font-family:DM Mono,monospace;font-size:0.65rem;color:#8a9a78;">
+            Vol {s['vol']} &nbsp;·&nbsp; Stoch {s.get('stoch','—')} &nbsp;·&nbsp;
+            {('⭐ Virgin CPR' if s.get('virgin_cpr') else 'CPR ' + s.get('cpr_type',''))}
+          </span>
+          <span style="font-family:DM Mono,monospace;font-size:0.72rem;font-weight:800;color:{ac};">
+            {s['strength']}%
+          </span>
+        </div>
+        <div style="background:#e8eddf;border-radius:4px;height:6px;overflow:hidden;">
+          <div style="background:{ac};width:{str_w}%;height:100%;border-radius:4px;
+                      transition:width 0.5s;"></div>
+        </div>
+      </div>
+    </div>"""
+
+        # Render in 2-column grid (bull left, bear right on desktop)
+        if bull_sigs and bear_sigs:
+            col_bull, col_bear = st.columns(2)
+            with col_bull:
+                st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                            f"color:#2d7a3a;font-weight:700;margin-bottom:0.5rem;'>▲ BULLISH ({len(bull_sigs)})</div>",
+                            unsafe_allow_html=True)
+                for s in bull_sigs:
+                    st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                    _trade_buttons(s)
+            with col_bear:
+                st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                            f"color:#c0392b;font-weight:700;margin-bottom:0.5rem;'>▼ BEARISH ({len(bear_sigs)})</div>",
+                            unsafe_allow_html=True)
+                for s in bear_sigs:
+                    st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                    _trade_buttons(s)
+        else:
+            for s in filtered:
+                st.markdown(_signal_card_html(s), unsafe_allow_html=True)
+                _trade_buttons(s)
+
+        # Desktop notifications for new signals
+        if filtered:
+            notif_js = json.dumps([{
+                "symbol":s["symbol"],"side":s["side"],
+                "entry":s["entry"],"t1":s["t1"],"sl":s["sl"],
+                "rr":s["rr1"],"strength":s["strength"],"candle":s["candle"]
+            } for s in filtered[:6]])
+            st.markdown(f"""
+            <script>
+            (function(){{
+                var sigs = {notif_js};
+                var w = window.parent || window;
+                if (w._pvNotifEnabled || (w.Notification && w.Notification.permission === "granted")) {{
+                    sigs.forEach(function(s){{
+                        if (w._pvNotify) {{
+                            w._pvNotify(
+                                (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                                "Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                                "pv-"+s.symbol
+                            );
+                        }} else {{
+                            var n = new w.Notification(
+                                (s.side==="BUY"?"🟢 BUY":"🔴 SELL")+" — "+s.symbol+" ("+s.strength+"%)",
+                                {{body:"Entry ₹"+s.entry+"  T1 ₹"+s.t1+"  SL ₹"+s.sl+"  R:R "+s.rr+"x",
+                                  icon:"/static/icon-192.png",tag:"pv-"+s.symbol,requireInteraction:false}}
+                            );
+                        }}
+                    }});
+                }}
+            }})();
+            </script>
+            """, unsafe_allow_html=True)
+
+        st.caption("⚠️ Signals from CPR Scanner (15Min + 1Hour). Frank Ochoa Pivot methodology. Not financial advice.")
+
 
 
 def _trade_buttons(s: dict):
@@ -6379,15 +6712,15 @@ def _trade_buttons(s: dict):
     _auto_ok = is_auto_trade_open()
 
     if mkt_open and _auto_ok:
-        status_html = ("<span style='color:#1a6b2e;font-weight:700;'>â— NSE Open</span>"
-                       " Â· Auto-trade ACTIVE (9:30â€“15:15)")
+        status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
+                       " · 🇮🇳 9:45–14:45 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
     elif mkt_open and not _auto_ok:
-        status_html = ("<span style='color:#b8860b;font-weight:700;'>â— Pre-open phase</span>"
-                       " Â· Auto-trade starts 9:30 AM IST")
+        status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
+                       " · 🇮🇳 Auto trades from 9:45 AM IST | 🇺🇸 Opens 9:45 AM EST")
     elif up_live:
-        status_html = f"<span style='color:#7c3aed;font-weight:700;'>â— Upstox Live</span> Â· {next_open}"
+        status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
-        status_html = f"<span style='color:#b8860b;font-weight:700;'>â— Market Closed</span> Â· {next_open}"
+        status_html = f"<span style='color:#b8860b;font-weight:700;'>● Market Closed</span> · {next_open}"
     st.markdown(
         f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
         f"color:#2e3d1a;margin-bottom:5px;'>{status_html}</div>",
@@ -6431,7 +6764,7 @@ def _trade_buttons(s: dict):
             qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
             cost = round(ltp * qty, 2)
         if cost > bal:
-            st.toast(f"âš ï¸ Insufficient Forward Test balance for {sym}", icon="âš ï¸")
+            st.toast(f"⚠️ Insufficient Forward Test balance for {sym}", icon="⚠️")
             return
 
         trade = {
@@ -6450,7 +6783,7 @@ def _trade_buttons(s: dict):
             "ltp":        ltp,
             "exit_px":    None,
             "exit_time":  None,
-            "source":     f"{broker_name} Â· {s.get('tf','â€”')}",
+            "source":     f"{broker_name} · {s.get('tf','—')}",
             "strategy":   s.get("rationale", s.get("strategy","CPR Signal"))[:50],
             "opened_at":  datetime.now().strftime("%d %b %H:%M:%S"),
         }
@@ -6461,9 +6794,9 @@ def _trade_buttons(s: dict):
         st.session_state["ft_balance"] = round(bal, 2)
         _ft_save({"trades": trades, "balance": round(bal, 2),
                   "starting": st.session_state.get("ft_start", 100000.0)})
-        st.toast(f"ðŸ“‹ {broker_name} trade logged in Forward Test â€” {sym} {s['side']} {qty}Ã— @ â‚¹{ltp}", icon="âœ…")
+        st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
 
-    # â”€â”€ 4 columns: Groww | Zerodha | Upstox Live | Fwd Test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -6472,67 +6805,75 @@ def _trade_buttons(s: dict):
             st.markdown(
                 f"<a href='{groww_url}' target='_blank' "
                 f"style='{btn_style}background:{ac};color:#fff;'>"
-                f"{'ðŸŸ¢' if bull else 'ðŸ”´'} Groww</a>",
+                f"{'🟢' if bull else '🔴'} Groww</a>",
                 unsafe_allow_html=True,
             )
         else:
-            st.markdown(f"<div style='{lock_style}' title='{next_open}'>ðŸ”’ Groww</div>",
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Groww</div>",
                         unsafe_allow_html=True)
 
     with c2:
         if mkt_open:
             st.markdown(
                 f"<a href='{kite_url}' target='_blank' "
-                f"style='{btn_style}background:#387ed1;color:#fff;'>âš¡ Zerodha</a>",
+                f"style='{btn_style}background:#387ed1;color:#fff;'>⚡ Zerodha</a>",
                 unsafe_allow_html=True,
             )
         else:
-            st.markdown(f"<div style='{lock_style}' title='{next_open}'>ðŸ”’ Zerodha</div>",
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Zerodha</div>",
                         unsafe_allow_html=True)
 
     with c3:
         if up_live and mkt_open:
             if st.button(
-                f"{'ðŸŸ¢' if bull else 'ðŸ”´'} Upstox Order",
+                f"{'🟢' if bull else '🔴'} Upstox Order",
                 key=f"upstox_order_{sym}_{s['side']}_{s['tf']}",
                 use_container_width=True,
             ):
                 st.session_state["upstox_order_preview"] = {
                     "symbol": sym, "side": s["side"],
                     "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
-                    "rr": s.get("rr1",2.0), "tf": s.get("tf","â€”"),
+                    "rr": s.get("rr1",2.0), "tf": s.get("tf","—"),
                     "strategy": s.get("rationale","CPR Signal")[:50],
                     "strength": s.get("strength",0),
                 }
                 st.rerun()
         elif up_live and not mkt_open:
-            st.markdown(f"<div style='{lock_style}' title='{next_open}'>ðŸ”’ Upstox</div>",
+            st.markdown(f"<div style='{lock_style}' title='{next_open}'>🔒 Upstox</div>",
                         unsafe_allow_html=True)
         else:
             st.markdown(
-                f"<div title='Connect Upstox in âš™ï¸ Broker Settings' "
-                f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>ðŸ’œ Upstox</div>",
+                f"<div title='Connect Upstox in ⚙️ Broker Settings' "
+                f"style='{lock_style}border-color:#c8a0f0;color:#9a6cc8;'>💜 Upstox</div>",
                 unsafe_allow_html=True,
             )
 
     with c4:
-        if st.button("ðŸ§ª Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
+        if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
                      use_container_width=True):
             try:
                 live = _ft_get_ltp(sym) or s.get("entry", 0)
             except Exception:
                 live = s.get("entry", 0)
             st.session_state["ft_pending_signal"] = {
-                "symbol": sym, "side": s["side"], "entry": live,
-                "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
-                "rr": s.get("rr1",2.0),
-                "source": f"Signal {s.get('tf','â€”')}",
-                "strategy": s.get("rationale","CPR Signal")[:50],
+                "symbol":   sym,
+                "side":     s["side"],
+                "entry":    live,
+                "sl":       s.get("sl",    0),
+                "t1":       s.get("t1",    0),
+                "t2":       s.get("t2",    0),
+                "rr1":      s.get("rr1",   2.0),
+                "tf":       s.get("tf",    "—"),
+                "strength": s.get("strength", 0),
+                "candle":   s.get("candle",   "—"),
+                "rationale":s.get("rationale","CPR Signal"),
+                "strategy": s.get("strategy", s.get("rationale","CPR Signal"))[:50],
+                "source":   f"🖐 Manual · {s.get('tf','—')}",
             }
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
-    # â”€â”€ Upstox order confirmation panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Upstox order confirmation panel ──────────────────────────────────
     preview = st.session_state.get("upstox_order_preview")
     if preview and preview.get("symbol") == sym:
         try:    ltp = _ft_get_ltp(sym) or s.get("entry",0)
@@ -6552,56 +6893,56 @@ def _trade_buttons(s: dict):
             f"padding:1rem 1.25rem;margin:0.5rem 0;border:2px solid #7c3aed;'>"
             f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
             f"color:#c8a0f0;letter-spacing:0.1em;text-transform:uppercase;"
-            f"margin-bottom:0.6rem;'>âš¡ Order Preview â€” Human Confirmation Required</div>"
+            f"margin-bottom:0.6rem;'>⚡ Order Preview — Human Confirmation Required</div>"
             f"<div style='display:grid;grid-template-columns:repeat(3,1fr);"
             f"gap:8px;font-family:DM Mono,monospace;font-size:0.78rem;"
             f"color:#f8faf0;margin-bottom:0.75rem;'>"
             f"<div><div style='color:#7da048;font-size:0.62rem;'>SYMBOL</div><b style='font-size:1rem;'>{sym}</b></div>"
             f"<div><div style='color:#7da048;font-size:0.62rem;'>SIDE</div><b style='color:{'#4dbb6a' if bull else '#f08080'};font-size:1rem;'>{preview['side']}</b></div>"
             f"<div><div style='color:#7da048;font-size:0.62rem;'>QTY</div><b style='font-size:1rem;'>{qty}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>ENTRY (MARKET)</div><b>â‚¹{ltp:,.2f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>COST</div><b>â‚¹{cost:,.0f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>AVAIL MARGIN</div><b style='color:{'#4dbb6a' if avail>cost else '#f08080'}'>â‚¹{avail:,.0f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>SL GTT</div><b style='color:#f08080;'>â‚¹{sl:,.2f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>T1 GTT</div><b style='color:#4dbb6a;'>â‚¹{t1:,.2f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>T2</div><b style='color:#4dbb6a;'>â‚¹{t2:,.2f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>MAX RISK</div><b style='color:#f08080;'>â‚¹{risk:,.0f}</b></div>"
-            f"<div><div style='color:#7da048;font-size:0.62rem;'>REWARD T1</div><b style='color:#4dbb6a;'>â‚¹{rew:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>ENTRY (MARKET)</div><b>₹{ltp:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>COST</div><b>₹{cost:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>AVAIL MARGIN</div><b style='color:{'#4dbb6a' if avail>cost else '#f08080'}'>₹{avail:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>SL GTT</div><b style='color:#f08080;'>₹{sl:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>T1 GTT</div><b style='color:#4dbb6a;'>₹{t1:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>T2</div><b style='color:#4dbb6a;'>₹{t2:,.2f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>MAX RISK</div><b style='color:#f08080;'>₹{risk:,.0f}</b></div>"
+            f"<div><div style='color:#7da048;font-size:0.62rem;'>REWARD T1</div><b style='color:#4dbb6a;'>₹{rew:,.0f}</b></div>"
             f"<div><div style='color:#7da048;font-size:0.62rem;'>R:R</div><b>{preview.get('rr',0)}x</b></div>"
             f"</div>"
             f"<div style='font-family:DM Mono,monospace;font-size:0.6rem;color:#7da048;"
             f"border-top:1px solid #2e3d1a;padding-top:0.4rem;'>"
-            f"âš ï¸ Clicking CONFIRM places a real order on your Upstox account. "
+            f"⚠️ Clicking CONFIRM places a real order on your Upstox account. "
             f"SL + T1 GTT set automatically. Not investment advice. You are responsible."
             f"</div></div>",
             unsafe_allow_html=True,
         )
         cf1, cf2 = st.columns(2)
         with cf1:
-            if st.button("âœ… CONFIRM â€” Place Real Order", key=f"confirm_{sym}",
+            if st.button("✅ CONFIRM — Place Real Order", key=f"confirm_{sym}",
                          use_container_width=True):
                 if avail < cost:
-                    st.error(f"Insufficient margin. Need â‚¹{cost:,.0f}, have â‚¹{avail:,.0f}")
+                    st.error(f"Insufficient margin. Need ₹{cost:,.0f}, have ₹{avail:,.0f}")
                 else:
                     with st.spinner("Placing market order..."):
                         res = upstox_place_order(sym, preview["side"], qty, "MARKET")
                     if res["success"]:
-                        st.success(f"âœ… Order placed: {res['order_id']}")
+                        st.success(f"✅ Order placed: {res['order_id']}")
                         with st.spinner("Setting SL + Target GTT..."):
                             gtt = upstox_place_gtt(sym, preview["side"], qty, sl, t1, t2)
                         if gtt["success"]:
-                            st.success(f"âœ… GTT set: {gtt['message']}")
+                            st.success(f"✅ GTT set: {gtt['message']}")
                         else:
-                            st.warning(f"âš ï¸ GTT partial: {gtt['message']}")
+                            st.warning(f"⚠️ GTT partial: {gtt['message']}")
                         # Also log in Forward Testing for P&L tracking
                         ft_add_signal({
                             "symbol": sym, "side": preview["side"],
                             "entry": ltp, "sl": sl, "t1": t1, "t2": t2,
-                            "rr1": preview.get("rr",2.0), "tf": preview.get("tf","â€”"),
+                            "rr1": preview.get("rr",2.0), "tf": preview.get("tf","—"),
                             "rationale": preview.get("strategy","Upstox Live Order"),
                             "strategy": preview.get("strategy","Upstox Live Order"),
                             "strength": preview.get("strength",0),
-                        }, source=f"Upstox Live Â· {preview.get('tf','â€”')}")
+                        }, source=f"Upstox Live · {preview.get('tf','—')}")
                         # Track live order
                         lo = st.session_state.get("upstox_live_orders", [])
                         lo.append({"order_id": res["order_id"],
@@ -6614,9 +6955,9 @@ def _trade_buttons(s: dict):
                         st.session_state.pop("upstox_order_preview", None)
                         st.rerun()
                     else:
-                        st.error(f"âŒ Order failed: {res['message']}")
+                        st.error(f"❌ Order failed: {res['message']}")
         with cf2:
-            if st.button("âŒ Cancel", key=f"cancel_{sym}", use_container_width=True):
+            if st.button("❌ Cancel", key=f"cancel_{sym}", use_container_width=True):
                 st.session_state.pop("upstox_order_preview", None)
                 st.rerun()
 
@@ -6624,16 +6965,16 @@ def _trade_buttons(s: dict):
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════════════
 #  UPSTOX ORDER EXECUTION ENGINE
 #  SEBI-Compliant Design:
-#  â€¢ All orders are USER-INITIATED (you click Place Order)
-#  â€¢ No fully automated unattended execution
-#  â€¢ Every order logged with timestamp, order_id, status
-#  â€¢ SL and Target placed as GTT (Good Till Trigger) orders after entry
-#  â€¢ 2FA token (access token) required â€” rotated daily by user
-#  â€¢ Intended for PERSONAL account trading only
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+#  • All orders are USER-INITIATED (you click Place Order)
+#  • No fully automated unattended execution
+#  • Every order logged with timestamp, order_id, status
+#  • SL and Target placed as GTT (Good Till Trigger) orders after entry
+#  • 2FA token (access token) required — rotated daily by user
+#  • Intended for PERSONAL account trading only
+# ══════════════════════════════════════════════════════════════════════════════
 
 UPSTOX_HFT_BASE = "https://api-hft.upstox.com/v2"   # Order placement endpoint
 UPSTOX_GTT_BASE = "https://api.upstox.com/v2"        # GTT orders endpoint
@@ -6642,7 +6983,7 @@ UPSTOX_GTT_BASE = "https://api.upstox.com/v2"        # GTT orders endpoint
 
 def upstox_place_gtt_sl_target(
     symbol:  str,
-    side:    str,    # original trade side (BUY/SELL) â€” GTT is reverse
+    side:    str,    # original trade side (BUY/SELL) — GTT is reverse
     qty:     int,
     sl:      float,
     target:  float,
@@ -6661,7 +7002,7 @@ def upstox_place_gtt_sl_target(
 
     # GTT OCO (One-Cancels-Other): SL leg + Target leg
     payload = {
-        "type": "MULTI",           # OCO â€” one cancels other
+        "type": "MULTI",           # OCO — one cancels other
         "quantity": qty,
         "product":  "I",           # Intraday
         "instrument_token": instrument_key,
@@ -6753,7 +7094,7 @@ def upstox_exit_all_positions() -> dict:
         return {"success": False, "message": str(e)}
 
 
-# â”€â”€ Order log in session state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Order log in session state ─────────────────────────────────────────────
 
 def _order_log_add(entry: dict):
     """Add an order event to session-based order log."""
@@ -6767,48 +7108,44 @@ def _order_log_add(entry: dict):
 
 def page_order_execution():
     """
-    Upstox Live Order Execution â€” SEBI-compliant, user-initiated.
+    Upstox Live Order Execution — SEBI-compliant, user-initiated.
     You review the signal, set params, click Place Order.
     SL + Target auto-placed as GTT after fill confirmation.
     """
-    # â”€â”€ Auto-refresh P&L every 30s during market hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if _HAS_AUTOREFRESH and is_market_open():
-        st_autorefresh(interval=30_000, limit=None, key="oe_autorefresh")
-
     st.markdown("""
     <div class="title-bar">
-        <span style="font-size:1.4rem;">âš¡</span>
+        <span style="font-size:1.4rem;">⚡</span>
         <h1>Live Order Execution</h1>
         <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
                      color:#3c3489;padding:3px 12px;border-radius:20px;
                      font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
-            UPSTOX Â· SEBI COMPLIANT Â· USER-INITIATED
+            UPSTOX · SEBI COMPLIANT · USER-INITIATED
         </span>
     </div>""", unsafe_allow_html=True)
 
-    # SEBI disclaimer â€” mandatory display
+    # SEBI disclaimer — mandatory display
     st.markdown("""
     <div style="background:#fdf3d4;border:2px solid #e0c060;border-radius:10px;
                 padding:0.85rem 1.1rem;margin-bottom:1rem;
                 font-family:DM Mono,monospace;font-size:0.75rem;color:#5a3e00;">
-    <b>âš–ï¸ SEBI Compliance Notice</b><br>
+    <b>⚖️ SEBI Compliance Notice</b><br>
     This tool places orders on your <b>personal Upstox account only</b> via their official API.<br>
-    â€¢ All orders are <b>user-initiated</b> â€” you review and click Place Order manually.<br>
-    â€¢ This is a <b>white-box strategy tool</b> for your own account. Do not share access with others.<br>
-    â€¢ Algo trading for others requires SEBI Research Analyst registration + exchange empanelment.<br>
-    â€¢ Ensure your static IP is registered with Upstox per SEBI Feb 2025 circular.<br>
-    â€¢ PivotVault AI is not a SEBI-registered entity. Use at your own discretion.
+    • All orders are <b>user-initiated</b> — you review and click Place Order manually.<br>
+    • This is a <b>white-box strategy tool</b> for your own account. Do not share access with others.<br>
+    • Algo trading for others requires SEBI Research Analyst registration + exchange empanelment.<br>
+    • Ensure your static IP is registered with Upstox per SEBI Feb 2025 circular.<br>
+    • PivotVault AI is not a SEBI-registered entity. Use at your own discretion.
     </div>""", unsafe_allow_html=True)
 
     # Connection check
     if not _upstox_connected():
-        st.error("âš ï¸ Upstox not connected. Go to âš™ï¸ Broker Settings and add your daily access token.")
-        if st.button("â†’ Go to Broker Settings", key="oe_goto_broker"):
+        st.error("⚠️ Upstox not connected. Go to ⚙️ Broker Settings and add your daily access token.")
+        if st.button("→ Go to Broker Settings", key="oe_goto_broker"):
             st.session_state["current_page"] = "Broker Settings"
             st.rerun()
         return
 
-    st.success("âœ… Upstox connected â€” orders will execute on your live account.")
+    st.success("✅ Upstox connected — orders will execute on your live account.")
 
     mkt_open = is_market_open()
     from datetime import timezone as _tzoe
@@ -6818,14 +7155,14 @@ def page_order_execution():
     if not mkt_open:
         wday = now_oe.weekday()
         if now_oe.hour >= 15 and now_oe.minute >= 30:
-            st.warning("ðŸ”´ Market closed for today. AMO (After Market Orders) can be placed for next session.")
+            st.warning("🔴 Market closed for today. AMO (After Market Orders) can be placed for next session.")
         else:
-            st.warning("ðŸŸ¡ Market not open yet. AMO orders can be placed â€” will execute at market open.")
+            st.warning("🟡 Market not open yet. AMO orders can be placed — will execute at market open.")
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 1 â€” PLACE NEW ORDER
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.markdown("### ðŸ“‹ Place Order")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 1 — PLACE NEW ORDER
+    # ══════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Place Order")
 
     # Pre-fill from pending signal if available
     pending = st.session_state.pop("oe_pending_signal", None)
@@ -6839,9 +7176,9 @@ def page_order_execution():
                 f"<div style='background:#e4f5e8;border:1px solid #8dcc9a;"
                 f"border-radius:7px;padding:6px 14px;margin-bottom:0.75rem;"
                 f"font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>"
-                f"ðŸ’° Available Margin: <b>â‚¹{avail:,.2f}</b> Â· "
-                f"Used: â‚¹{funds.get('used',0):,.2f} Â· "
-                f"Total: â‚¹{funds.get('total',0):,.2f}</div>",
+                f"💰 Available Margin: <b>₹{avail:,.2f}</b> · "
+                f"Used: ₹{funds.get('used',0):,.2f} · "
+                f"Total: ₹{funds.get('total',0):,.2f}</div>",
                 unsafe_allow_html=True,
             )
 
@@ -6853,29 +7190,29 @@ def page_order_execution():
         side = st.radio("Direction", ["BUY","SELL"], horizontal=True,
                         index=0 if (not pending or pending.get("side")=="BUY") else 1,
                         key="oe_side")
-        product = st.radio("Product", ["I â€” Intraday (MIS)","D â€” Delivery (CNC)"],
+        product = st.radio("Product", ["I — Intraday (MIS)","D — Delivery (CNC)"],
                            horizontal=True, key="oe_product")
         prod_code = "I" if product.startswith("I") else "D"
 
     with oc2:
         try:   live_px = _ft_get_ltp(sym)
         except: live_px = 0.0
-        entry_px = st.number_input("Entry Price â‚¹",
+        entry_px = st.number_input("Entry Price ₹",
                                     value=float(pending["entry"] if pending else live_px or 100.0),
                                     step=0.25, key="oe_entry")
         order_type = st.radio("Order Type", ["MARKET","LIMIT"], horizontal=True, key="oe_otype")
         qty = st.number_input("Quantity", value=100, min_value=1, step=1, key="oe_qty")
 
     with oc3:
-        sl     = st.number_input("Stop Loss â‚¹",
+        sl     = st.number_input("Stop Loss ₹",
                                   value=float(pending["sl"] if pending else
                                               round(entry_px*(0.98 if side=="BUY" else 1.02),2)),
                                   step=0.25, key="oe_sl")
-        target = st.number_input("Target 1 â‚¹ (GTT)",
+        target = st.number_input("Target 1 ₹ (GTT)",
                                   value=float(pending["t1"] if pending else
                                               round(entry_px*(1.03 if side=="BUY" else 0.97),2)),
                                   step=0.25, key="oe_t1")
-        t2     = st.number_input("Target 2 â‚¹ (GTT T2)",
+        t2     = st.number_input("Target 2 ₹ (GTT T2)",
                                   value=float(pending.get("t2",
                                               round(entry_px*(1.06 if side=="BUY" else 0.94),2))
                                               if pending else
@@ -6895,19 +7232,19 @@ def page_order_execution():
         f"padding:0.65rem 1rem;font-family:DM Mono,monospace;font-size:0.8rem;"
         f"display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center;'>"
         f"<span>Qty: <b>{qty}</b></span>"
-        f"<span>Value: <b>â‚¹{entry_px*qty:,.0f}</b></span>"
-        f"<span>Max Loss: <b style='color:#9e2018;'>â‚¹{max_loss:,.2f}</b></span>"
-        f"<span>Max Gain T1: <b style='color:#1a6b2e;'>â‚¹{max_gain:,.2f}</b></span>"
+        f"<span>Value: <b>₹{entry_px*qty:,.0f}</b></span>"
+        f"<span>Max Loss: <b style='color:#9e2018;'>₹{max_loss:,.2f}</b></span>"
+        f"<span>Max Gain T1: <b style='color:#1a6b2e;'>₹{max_gain:,.2f}</b></span>"
         f"<span>R:R: <b style='color:{rr_color};'>{rr}:1</b></span>"
         f"<span style='margin-left:auto;font-size:0.72rem;color:#4a5e32;'>"
-        f"LTP: â‚¹{live_px:,.2f}</span>"
+        f"LTP: ₹{live_px:,.2f}</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
     # Send this signal to Live Order Execution
     if _upstox_connected():
-        if st.button(f"âš¡ Place Order â€” {sym}",
+        if st.button(f"⚡ Place Order — {sym}",
                      key=f"oe_place_{sym}_{side}",
                      use_container_width=True):
             pass  # handled by PLACE ORDER button below
@@ -6916,24 +7253,24 @@ def page_order_execution():
 
     # GTT option
     place_gtt = st.checkbox(
-        "ðŸ”’ Auto-place GTT (SL + Target) after order fill",
+        "🔒 Auto-place GTT (SL + Target) after order fill",
         value=True, key="oe_gtt",
         help="Recommended: Places SL and Target as exchange-resident GTT orders automatically after your entry fills."
     )
 
-    # PLACE ORDER BUTTON â€” explicit user action
+    # PLACE ORDER BUTTON — explicit user action
     st.markdown("---")
     col_btn1, col_btn2, col_btn3 = st.columns([2,1,1])
     with col_btn1:
         place_clicked = st.button(
-            f"âš¡ PLACE {'MARKET' if order_type=='MARKET' else 'LIMIT'} ORDER â€” "
-            f"{side} {qty}Ã— {sym}",
+            f"⚡ PLACE {'MARKET' if order_type=='MARKET' else 'LIMIT'} ORDER — "
+            f"{side} {qty}× {sym}",
             key="oe_place_btn",
             use_container_width=True,
             type="primary",
         )
     with col_btn2:
-        if st.button("ðŸ”„ Refresh LTP", key="oe_refresh_ltp", use_container_width=True):
+        if st.button("🔄 Refresh LTP", key="oe_refresh_ltp", use_container_width=True):
             st.rerun()
     with col_btn3:
         is_amo = not mkt_open
@@ -6944,7 +7281,7 @@ def page_order_execution():
         elif qty < 1:
             st.error("Quantity must be at least 1.")
         else:
-            with st.spinner(f"Placing {order_type} {side} order for {qty}Ã— {sym}..."):
+            with st.spinner(f"Placing {order_type} {side} order for {qty}× {sym}..."):
                 result = upstox_place_order(
                     symbol=sym, side=side, qty=qty,
                     order_type=order_type,
@@ -6955,7 +7292,7 @@ def page_order_execution():
 
             if result["success"]:
                 order_id = result["order_id"]
-                st.success(f"âœ… Order placed! Order ID: {order_id}")
+                st.success(f"✅ Order placed! Order ID: {order_id}")
 
                 # Log to order log
                 _order_log_add({
@@ -6988,39 +7325,39 @@ def page_order_execution():
                         if log:
                             log[0]["gtt_id"] = gtt_result["gtt_id"]
                             log[0]["status"] = "PLACED + GTT SET"
-                        st.success(f"ðŸ”’ GTT SL+Target set. GTT ID: {gtt_result['gtt_id']}")
+                        st.success(f"🔒 GTT SL+Target set. GTT ID: {gtt_result['gtt_id']}")
                     else:
-                        st.warning(f"âš ï¸ Order placed but GTT failed: {gtt_result['message']}")
+                        st.warning(f"⚠️ Order placed but GTT failed: {gtt_result['message']}")
             else:
-                st.error(f"âŒ Order failed: {result['message']}")
+                st.error(f"❌ Order failed: {result['message']}")
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 2 â€” TODAY'S ORDERS FROM UPSTOX
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.markdown("### ðŸ“‹ Today's Orders (from Upstox)")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 2 — TODAY'S ORDERS FROM UPSTOX
+    # ══════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Today's Orders (from Upstox)")
     c_fetch, c_exit = st.columns([2,1])
     with c_fetch:
-        if st.button("ðŸ”„ Fetch Live Orders", key="oe_fetch_orders", use_container_width=True):
+        if st.button("🔄 Fetch Live Orders", key="oe_fetch_orders", use_container_width=True):
             with st.spinner("Fetching orders..."):
                 orders = upstox_get_orders_today()
             st.session_state["oe_live_orders"] = orders
 
     with c_exit:
-        if st.button("ðŸš¨ Exit ALL Positions", key="oe_exit_all", use_container_width=True,
-                     help="Emergency exit â€” closes all open intraday positions"):
+        if st.button("🚨 Exit ALL Positions", key="oe_exit_all", use_container_width=True,
+                     help="Emergency exit — closes all open intraday positions"):
             if st.session_state.get("oe_confirm_exit"):
                 with st.spinner("Exiting all positions..."):
                     res = upstox_exit_all_positions()
                 st.session_state["oe_confirm_exit"] = False
                 if res["success"]:
-                    st.success("âœ… Exit all triggered successfully.")
+                    st.success("✅ Exit all triggered successfully.")
                 else:
-                    st.error(f"âŒ {res['message']}")
+                    st.error(f"❌ {res['message']}")
             else:
                 st.session_state["oe_confirm_exit"] = True
-                st.warning("âš ï¸ Click again to confirm EXIT ALL positions.")
+                st.warning("⚠️ Click again to confirm EXIT ALL positions.")
 
     live_orders = st.session_state.get("oe_live_orders", [])
     if live_orders:
@@ -7032,8 +7369,8 @@ def page_order_execution():
                 "Side":         o.get("transaction_type",""),
                 "Qty":          o.get("quantity",0),
                 "Type":         o.get("order_type",""),
-                "Price":        f"â‚¹{o.get('price',0):,.2f}",
-                "Avg Price":    f"â‚¹{o.get('average_price',0):,.2f}",
+                "Price":        f"₹{o.get('price',0):,.2f}",
+                "Avg Price":    f"₹{o.get('average_price',0):,.2f}",
                 "Status":       o.get("status",""),
                 "Time":         o.get("order_timestamp",""),
             })
@@ -7044,7 +7381,7 @@ def page_order_execution():
         st.markdown("**Cancel a pending order:**")
         cancel_id = st.text_input("Order ID to cancel", key="oe_cancel_id",
                                    placeholder="Enter Order ID from table above")
-        if st.button("âŒ Cancel Order", key="oe_cancel_btn") and cancel_id:
+        if st.button("❌ Cancel Order", key="oe_cancel_btn") and cancel_id:
             res = upstox_cancel_order(cancel_id.strip())
             if res["success"]:
                 st.success(res["message"])
@@ -7055,11 +7392,11 @@ def page_order_execution():
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 3 â€” ORDER LOG (this session)
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 3 — ORDER LOG (this session)
+    # ══════════════════════════════════════════════════════════════
     order_log = st.session_state.get("upstox_order_log", [])
-    st.markdown(f"### ðŸ“ Session Order Log ({len(order_log)})")
+    st.markdown(f"### 📝 Session Order Log ({len(order_log)})")
 
     if not order_log:
         st.info("Orders placed this session will appear here with Order ID, GTT ID, and status.")
@@ -7075,23 +7412,23 @@ def page_order_execution():
                 f"<span style='background:{s_color};color:#fff;border-radius:4px;"
                 f"padding:1px 8px;font-weight:700;font-size:0.7rem;'>{o['side']}</span>"
                 f"<b style='color:#0e1308;'>{o['symbol']}</b>"
-                f"<span>{o['qty']}Ã— @ â‚¹{o['price']:,.2f} ({o['order_type']})</span>"
-                f"<span style='color:#4a5e32;'>SL â‚¹{o['sl']:,.2f} Â· T1 â‚¹{o['target']:,.2f}</span>"
+                f"<span>{o['qty']}× @ ₹{o['price']:,.2f} ({o['order_type']})</span>"
+                f"<span style='color:#4a5e32;'>SL ₹{o['sl']:,.2f} · T1 ₹{o['target']:,.2f}</span>"
                 f"<span style='background:#e4f0d0;color:#1e5c0a;border-radius:4px;"
                 f"padding:1px 7px;font-size:0.68rem;'>{o['status']}</span>"
                 f"<span style='margin-left:auto;color:#8a9a78;font-size:0.68rem;'>{o['logged_at']}</span>"
                 f"</div>"
                 f"<div style='color:#6a7a58;font-size:0.68rem;margin-top:3px;'>"
                 f"Order ID: {o['order_id']} "
-                f"{'Â· GTT: ' + o['gtt_id'] if o.get('gtt_id') else ''} "
-                f"{'Â· ' + o['strategy'][:35] if o.get('strategy') else ''}"
+                f"{'· GTT: ' + o['gtt_id'] if o.get('gtt_id') else ''} "
+                f"{'· ' + o['strategy'][:35] if o.get('strategy') else ''}"
                 f"</div></div>",
                 unsafe_allow_html=True,
             )
 
     st.divider()
     st.caption(
-        "âš–ï¸ SEBI Note: This tool is for personal account use only. "
+        "⚖️ SEBI Note: This tool is for personal account use only. "
         "Automated unattended trading requires exchange-registered algo ID. "
         "All orders are user-initiated via explicit button click. "
         "Static IP must be registered with Upstox. See SEBI Circular Feb 2025."
@@ -7101,57 +7438,57 @@ def page_order_execution():
 def page_broker_settings():
     st.markdown("""
     <div class="title-bar">
-        <span style="font-size:1.5rem;">âš™ï¸</span>
+        <span style="font-size:1.5rem;">⚙️</span>
         <h1>Broker & Data Feed Settings</h1>
     </div>
     """, unsafe_allow_html=True)
 
-    # â”€â”€ DATA FEED STATUS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── DATA FEED STATUS ──────────────────────────────────────────────────
     upstox_ok = _upstox_connected()
     st.markdown(
         f"<div style='background:{'#e4f5e8' if upstox_ok else '#fdf3d4'};"
         f"border:1.5px solid {'#8dcc9a' if upstox_ok else '#e0c060'};"
         f"border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:1.25rem;"
         f"font-family:DM Mono,monospace;font-size:0.82rem;'>"
-        f"<b>{'âœ… Upstox Live Data Feed ACTIVE' if upstox_ok else 'âšª Live Data Feed: Not connected (using yfinance)'}</b><br>"
+        f"<b>{'✅ Upstox Live Data Feed ACTIVE' if upstox_ok else '⚪ Live Data Feed: Not connected (using yfinance)'}</b><br>"
         f"<span style='color:#4a5e32;font-size:0.75rem;'>"
         f"{'All market data (indices, charts, scanner) now uses Upstox real-time feed' if upstox_ok else 'Connect Upstox below for free NSE real-time data'}"
         f"</span></div>",
         unsafe_allow_html=True,
     )
 
-    tab_upstox, tab_zerodha, tab_groww, tab_telegram = st.tabs(["ðŸ“¡ Upstox (Data + Trading)", "âš¡ Zerodha Kite", "ðŸŸ¢ Groww", "ðŸ“± Telegram"])
+    tab_upstox, tab_zerodha, tab_groww, tab_telegram = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww", "📨 Telegram"])
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  UPSTOX â€” Data Feed + Trading
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════
+    #  UPSTOX — Data Feed + Trading
+    # ══════════════════════════════
     with tab_upstox:
-        st.markdown("### ðŸ“¡ Upstox â€” Live Data + Order Execution")
+        st.markdown("### 📡 Upstox — Live Data + Order Execution")
 
-        # â”€â”€ Overall status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Overall status ────────────────────────────────────────────────
         has_creds     = _upstox_has_credentials()
         token_ok      = _upstox_connected()
         token_expired = _upstox_token_expired()
 
         if token_ok and not token_expired:
-            st.success("âœ… Upstox ACTIVE â€” live data feed and order execution enabled.")
+            st.success("✅ Upstox ACTIVE — live data feed and order execution enabled.")
         elif has_creds:
-            st.warning("âš ï¸ Credentials saved. Daily access token needs refresh â€” paste below.")
+            st.warning("⚠️ Credentials saved. Daily access token needs refresh — paste below.")
         else:
-            st.info("ðŸ“¡ Set up Upstox once to enable live NSE data. Only the access token needs daily refresh.")
+            st.info("📡 Set up Upstox once to enable live NSE data. Only the access token needs daily refresh.")
 
         st.divider()
 
-        # â”€â”€ STEP 1: API Key + Secret (permanent) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        st.markdown("#### Step 1 â€” API Credentials *(save once, permanent)*")
-        st.caption("Get from upstox.com/developer â†’ My Apps. These never expire.")
+        # ── STEP 1: API Key + Secret (permanent) ─────────────────────────
+        st.markdown("#### Step 1 — API Credentials *(save once, permanent)*")
+        st.caption("Get from upstox.com/developer → My Apps. These never expire.")
 
         if has_creds:
             st.markdown(
                 "<div style='background:#e4f5e8;border:1px solid #8dcc9a;"
                 "border-radius:7px;padding:6px 12px;margin-bottom:0.5rem;"
                 "font-family:DM Mono,monospace;font-size:0.75rem;color:#1a6b2e;'>"
-                "ðŸ” API Key & Secret are saved permanently</div>",
+                "🔐 API Key & Secret are saved permanently</div>",
                 unsafe_allow_html=True,
             )
 
@@ -7165,7 +7502,7 @@ def page_broker_settings():
                 value=st.session_state.get("upstox_api_secret",""),
                 key="up_aks", type="password", placeholder="your-api-secret")
 
-        if st.button("ðŸ’¾ Save API Key & Secret Permanently",
+        if st.button("💾 Save API Key & Secret Permanently",
                      key="save_up_creds", use_container_width=True):
             k = uak.strip(); s = uaks.strip()
             if not k or not s:
@@ -7175,13 +7512,13 @@ def page_broker_settings():
                 st.session_state["upstox_api_secret"] = s
                 st.session_state["broker"]            = "upstox"
                 _save_credentials()
-                st.success("âœ… API Key & Secret saved permanently.")
+                st.success("✅ API Key & Secret saved permanently.")
                 st.rerun()
 
         st.divider()
 
-        # â”€â”€ STEP 2: Daily Access Token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        st.markdown("#### Step 2 â€” Daily Access Token *(refresh every morning)*")
+        # ── STEP 2: Daily Access Token ────────────────────────────────────
+        st.markdown("#### Step 2 — Daily Access Token *(refresh every morning)*")
         st.caption("Upstox tokens expire daily. Paste fresh token here each morning.")
 
         uat = st.text_input(
@@ -7194,13 +7531,13 @@ def page_broker_settings():
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("âš¡ Activate Token", key="save_up_token",
+            if st.button("⚡ Activate Token", key="save_up_token",
                          use_container_width=True):
                 t = uat.strip()
                 if not t:
                     st.warning("Paste your access token first.")
                 elif len(t) < 50 or not t.startswith("eyJ"):
-                    st.error("âŒ Invalid token â€” must start with 'eyJ' and be 500+ chars.")
+                    st.error("❌ Invalid token — must start with 'eyJ' and be 500+ chars.")
                 else:
                     st.session_state.update({
                         "upstox_access_token":  t,
@@ -7213,11 +7550,11 @@ def page_broker_settings():
                     _save_session()
                     _save_credentials()
                     st.cache_data.clear()
-                    st.success(f"âœ… Token activated ({len(t)} chars) â€” Upstox live feed is ON.")
+                    st.success(f"✅ Token activated ({len(t)} chars) — Upstox live feed is ON.")
                     st.rerun()
         with col2:
             if token_ok:
-                if st.button("ðŸ”Œ Revoke Token", key="btn_disconnect_up",
+                if st.button("🔌 Revoke Token", key="btn_disconnect_up",
                              use_container_width=True):
                     st.session_state.update({
                         "upstox_access_token": "",
@@ -7230,8 +7567,8 @@ def page_broker_settings():
 
         st.divider()
 
-        # â”€â”€ STEP 3: Generate Token via OAuth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        st.markdown("#### Step 3 â€” Generate Token via OAuth *(each morning)*")
+        # ── STEP 3: Generate Token via OAuth ─────────────────────────────
+        st.markdown("#### Step 3 — Generate Token via OAuth *(each morning)*")
         st.caption("Use this each morning to get a fresh access token. Takes 30 seconds.")
 
         api_key_for_oauth = uak.strip() or st.session_state.get("upstox_api_key","")
@@ -7248,13 +7585,13 @@ def page_broker_settings():
             auth_url = (f"https://api.upstox.com/v2/login/authorization/dialog"
                         f"?response_type=code&client_id={_up.quote(api_key_for_oauth)}"
                         f"&redirect_uri={_up.quote(redir_uri)}")
-            st.markdown(f"**Step A:** [Click to authorise on Upstox â†—]({auth_url})")
+            st.markdown(f"**Step A:** [Click to authorise on Upstox ↗]({auth_url})")
             st.caption("After authorizing, Upstox redirects to your URI with a `code=` parameter in the URL.")
 
-            auth_code = st.text_input("Step B â€” Paste code from redirect URL",
+            auth_code = st.text_input("Step B — Paste code from redirect URL",
                 key="up_auth_code", placeholder="abc123xyz...")
 
-            if st.button("ðŸ”‘ Step C â€” Generate Access Token", key="gen_token_btn",
+            if st.button("🔑 Step C — Generate Access Token", key="gen_token_btn",
                          use_container_width=True):
                 code = auth_code.strip()
                 if not code:
@@ -7283,7 +7620,7 @@ def page_broker_settings():
                                 _save_session()
                                 _save_credentials()
                                 st.cache_data.clear()
-                                st.success(f"âœ… Access token generated! ({len(tok)} chars) â€” Live feed ACTIVE.")
+                                st.success(f"✅ Access token generated! ({len(tok)} chars) — Live feed ACTIVE.")
                                 st.rerun()
                             else:
                                 st.error("Token generation succeeded but token was empty.")
@@ -7293,132 +7630,97 @@ def page_broker_settings():
                         st.error(f"Error: {str(e)[:150]}")
 
     with tab_zerodha:
-        st.markdown("### âš¡ Zerodha Kite")
-        st.info("ðŸ“‹ Go to kite.zerodha.com/apps â†’ Create app â†’ Copy API Key & Secret. Access token regenerates daily after login.")
+        st.markdown("### ⚡ Zerodha Kite")
+        st.info("📋 Go to kite.zerodha.com/apps → Create app → Copy API Key & Secret. Access token regenerates daily after login.")
         c1, c2 = st.columns(2)
         with c1:
             zak  = st.text_input("API Key",    value=st.session_state.get("zerodha_api_key",""),    key="zk_ak",  type="password")
         with c2:
             zaks = st.text_input("API Secret", value=st.session_state.get("zerodha_api_secret",""), key="zk_aks", type="password")
         zat  = st.text_input("Access Token",   value=st.session_state.get("zerodha_access_token",""), key="zk_at", type="password")
-        if st.button("ðŸ’¾ Save Zerodha Config", use_container_width=True, key="save_zk"):
+        if st.button("💾 Save Zerodha Config", use_container_width=True, key="save_zk"):
             st.session_state.update({"zerodha_api_key":zak,"zerodha_api_secret":zaks,
                                      "zerodha_access_token":zat,"broker":"zerodha",
                                      "broker_connected": bool(zak and zat)})
-            st.success("âœ… Zerodha saved!" if zak and zat else "âš ï¸ Enter API key and access token.")
+            st.success("✅ Zerodha saved!" if zak and zat else "⚠️ Enter API key and access token.")
         st.markdown("""
         ```
         pip install kiteconnect
         ```
         """)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════
     #  GROWW
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════
     with tab_groww:
-        st.markdown("### ðŸŸ¢ Groww")
-        st.info("â„¹ï¸ Groww does not have a public trading API. Signal cards open Groww web/app â€” you place the order manually (one tap).")
-        if st.button("âœ… Use Groww (web links)", use_container_width=True, key="set_groww"):
+        st.markdown("### 🟢 Groww")
+        st.info("ℹ️ Groww does not have a public trading API. Signal cards open Groww web/app — you place the order manually (one tap).")
+        if st.button("✅ Use Groww (web links)", use_container_width=True, key="set_groww"):
             st.session_state["broker"] = "groww"
             st.session_state["broker_connected"] = True
             st.success("Groww selected. Signal cards will link to Groww stock pages.")
 
-    # â”€â”€ Status summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Status summary ────────────────────────────────────────────────────
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  TELEGRAM NOTIFICATIONS
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     with tab_telegram:
-        st.markdown("### ðŸ“± Telegram Notifications")
-        st.markdown(
-            "<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-            "color:#2e3d1a;margin-bottom:1rem;'>"
-            "Instant alerts: New signals &nbsp;&nbsp; Trade entry &nbsp;&nbsp; "
-            "T1/T2 hit &nbsp;&nbsp; SL hit</div>",
-            unsafe_allow_html=True,
-        )
-        tgs = st.session_state.get("telegram_cfg", {})
-
-        with st.expander("ðŸ“– Setup Instructions", expanded=not tgs.get("bot_token")):
-            st.markdown(
-                "**Step 1** â€” Open Telegram â†’ search **@BotFather** â†’ `/newbot` â†’ copy **Bot Token**\n\n"
-                "**Step 2** â€” Send any message to your bot â†’ open "
-                "`https://api.telegram.org/bot<TOKEN>/getUpdates` â†’ find your **Chat ID**\n\n"
-                "**Step 3** â€” Paste below â†’ Save â†’ Test"
-            )
-
+        st.markdown("### 📨 Telegram Notifications")
+        st.markdown("<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
+            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#2e3d1a;margin-bottom:1rem;'>"
+            "Instant alerts: ⚡ New signals &nbsp;·&nbsp; 🟢 Trade entry &nbsp;·&nbsp; 🎯 T1/T2 hit &nbsp;·&nbsp; 🛑 SL hit</div>",
+            unsafe_allow_html=True)
+        _tgs = st.session_state.get("telegram_cfg", {})
+        with st.expander("📖 Setup Instructions", expanded=not _tgs.get("bot_token")):
+            st.markdown("""
+**Step 1** — Open Telegram → search **@BotFather** → `/newbot` → copy **Bot Token**
+**Step 2** — Send any message to your bot → open `https://api.telegram.org/bot<TOKEN>/getUpdates` → find your **Chat ID**
+**Step 3** — Paste below → Save → Test ✅""")
         st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            bt = st.text_input("Bot Token", value=tgs.get("bot_token", ""),
-                               type="password", placeholder="123456789:ABCdef...", key="tg_bt")
-        with c2:
-            ci = st.text_input("Chat ID", value=tgs.get("chat_id", ""),
-                               placeholder="-123456789", key="tg_ci")
-
-        st.markdown("**Notification Toggles**")
-        tc1, tc2, tc3, tc4 = st.columns(4)
-        with tc1: ns = st.checkbox("New Signals",  value=tgs.get("notify_signals", True), key="tg_ns")
-        with tc2: ne = st.checkbox("Trade Entry",  value=tgs.get("notify_entry",   True), key="tg_ne")
-        with tc3: nt = st.checkbox("T1/T2 Hit",    value=tgs.get("notify_t1",      True), key="tg_nt")
-        with tc4: nl = st.checkbox("SL Hit",        value=tgs.get("notify_sl",      True), key="tg_nl")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        b1, b2, b3 = st.columns([2, 2, 1])
-        with b1:
-            if st.button("ðŸ’¾ Save Settings", use_container_width=True, key="tg_save"):
-                st.session_state["telegram_cfg"] = {
-                    "bot_token": bt.strip(), "chat_id": ci.strip(),
-                    "notify_signals": ns, "notify_entry": ne,
-                    "notify_t1": nt, "notify_t2": nt, "notify_sl": nl,
-                }
-                _save_credentials()
-                st.success("âœ… Telegram settings saved & persisted!")
-        with b2:
-            if st.button("ðŸ“¨ Send Test Message", use_container_width=True, key="tg_test"):
+        _c1,_c2 = st.columns(2)
+        with _c1: _bt=st.text_input("🤖 Bot Token",value=_tgs.get("bot_token",""),type="password",placeholder="123456789:ABCdef...",key="tg_bt")
+        with _c2: _ci=st.text_input("💬 Chat ID",value=_tgs.get("chat_id",""),placeholder="123456789",key="tg_ci")
+        st.markdown("#### 🔔 Notification Toggles")
+        _tc1,_tc2,_tc3,_tc4=st.columns(4)
+        with _tc1: _ns=st.checkbox("📡 New Signals",value=_tgs.get("notify_signals",True),key="tg_ns")
+        with _tc2: _ne=st.checkbox("⚡ Trade Entry",value=_tgs.get("notify_entry",True),key="tg_ne")
+        with _tc3: _nt=st.checkbox("🎯 T1/T2 Hit",value=_tgs.get("notify_t1",True),key="tg_nt")
+        with _tc4: _nl=st.checkbox("🛑 SL Hit",value=_tgs.get("notify_sl",True),key="tg_nl")
+        st.markdown("")
+        _b1,_b2,_b3=st.columns([2,2,1])
+        with _b1:
+            if st.button("💾 Save Settings",use_container_width=True,key="tg_save"):
+                st.session_state["telegram_cfg"]={"bot_token":_bt.strip(),"chat_id":_ci.strip(),
+                    "notify_signals":_ns,"notify_entry":_ne,"notify_t1":_nt,"notify_t2":_nt,"notify_sl":_nl}
+                _save_credentials()  # persist to disk — survives refresh
+                st.success("✅ Telegram settings saved & persisted! ✅")
+        with _b2:
+            if st.button("🧪 Send Test Message",use_container_width=True,key="tg_test"):
+                # Use LIVE widget values (_bt/_ci) so test works without saving first
                 import requests as _treq
-                test_ok = False
-                if bt.strip() and ci.strip():
+                _test_ok = False
+                if _bt.strip() and _ci.strip():
                     try:
-                        tr = _treq.post(
-                            f"https://api.telegram.org/bot{bt.strip()}/sendMessage",
-                            json={"chat_id": ci.strip(),
-                                  "text": "<b>PivotVault AI Test</b>\n<b>BUY RELIANCE</b> 15m\n"
-                                          "Entry 2,850 Â· T1 2,920 Â· SL 2,800\nTelegram is working!",
-                                  "parse_mode": "HTML"},
-                            timeout=5,
-                        )
-                        test_ok = tr.status_code == 200
+                        _tr = _treq.post(
+                            f"https://api.telegram.org/bot{_bt.strip()}/sendMessage",
+                            json={"chat_id": _ci.strip(),
+                                  "text": "🧪 <b>PivotVault AI — Test</b>\n━━━━━━━━━━━━━━━━━━━━\n🟢 <b>BUY RELIANCE</b> [15m]\n📌 Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800\n✅ Telegram is working!",
+                                  "parse_mode": "HTML"}, timeout=5)
+                        _test_ok = _tr.status_code == 200
                     except Exception:
-                        test_ok = False
-                if test_ok:
-                    st.success("âœ… Sent! Check Telegram.")
-                elif bt.strip() and ci.strip():
-                    st.error("âŒ Failed â€” check your Bot Token and Chat ID.")
+                        _test_ok = False
+                if _test_ok:
+                    st.success("✅ Sent! Check Telegram.")
+                elif _bt.strip() and _ci.strip():
+                    st.error("❌ Failed — check your Bot Token and Chat ID.")
                 else:
-                    st.error("Enter Bot Token and Chat ID above first.")
-        with b3:
-            if st.button("ðŸ—‘ Clear", use_container_width=True, key="tg_clr"):
-                st.session_state["telegram_cfg"] = {}
-                _save_credentials()
-                st.rerun()
-
+                    st.error("❌ Enter Bot Token and Chat ID above first.")
+        with _b3:
+            if st.button("🗑 Clear",use_container_width=True,key="tg_clr"):
+                st.session_state["telegram_cfg"]={};_save_credentials();st.rerun()
         st.divider()
-        if tgs.get("bot_token") and tgs.get("chat_id"):
-            st.markdown(
-                "<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-                "color:#1a6b2e;'><b>âœ… Telegram ACTIVE</b></div>",
-                unsafe_allow_html=True,
-            )
+        if _tgs.get("bot_token") and _tgs.get("chat_id"):
+            st.markdown("<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#1a6b2e;'>📨 <b>Telegram ACTIVE</b></div>",unsafe_allow_html=True)
         else:
-            st.markdown(
-                "<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-                "color:#7a5800;'><b>âš ï¸ Telegram not configured</b> â€” add credentials above.</div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown("<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;color:#7a5800;'>⚪ <b>Telegram not configured</b> — add credentials above.</div>",unsafe_allow_html=True)
 
     st.divider()
     connected = st.session_state.get("broker_connected", False)
@@ -7429,118 +7731,189 @@ def page_broker_settings():
         f"background:{'#e4f5e8' if up_active else ('#fdf3d4' if connected else '#f5f8ed')};"
         f"border:1.5px solid {'#8dcc9a' if up_active else ('#e0c060' if connected else '#b8c89a')};"
         f"border-radius:10px;font-family:DM Mono,monospace;font-size:0.82rem;'>"
-        f"{'ðŸ“¡ Data Feed: Upstox LIVE  Â·  Trading: ' + bname if up_active else ('âš™ï¸ Broker: ' + bname + ' (no live data feed)' if connected else 'âšª No broker connected')}"
+        f"{'📡 Data Feed: Upstox LIVE  ·  Trading: ' + bname if up_active else ('⚙️ Broker: ' + bname + ' (no live data feed)' if connected else '⚪ No broker connected')}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════════════
 #  FORWARD TESTING ENGINE
-#  â€¢ Every CPR scanner signal auto-creates a FT position
-#  â€¢ SL + Target checked live every 15s (Upstox) or on refresh (yfinance)
-#  â€¢ All events logged: Entry, SL Hit, Target Hit, Manual Exit
-#  â€¢ Full P&L statement strategy-wise at day end
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+#  • Every CPR scanner signal auto-creates a FT position
+#  • SL + Target checked live every 15s (Upstox) or on refresh (yfinance)
+#  • All events logged: Entry, SL Hit, Target Hit, Manual Exit
+#  • Full P&L statement strategy-wise at day end
+# ══════════════════════════════════════════════════════════════════════════════
 
 import json as _json, os as _os
 
-_FT_FILE = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
+# FT persistent storage — triple backup locations
+_FT_FILE = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "data", "pivotvault_ft.json"
+)
+_FT_FILE_HOME = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
+_FT_FILE_TMP  = "/tmp/pivotvault_ft.json"
 
-# â”€â”€ Persistence helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _all_ft_paths():
+    return [_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP]
+
+# ── Persistence helpers ───────────────────────────────────────────────────
 
 def _ft_load():
-    try:
-        if _os.path.exists(_FT_FILE):
-            with open(_FT_FILE) as f:
-                d = json.load(f)
-                if "positions" not in d: d["positions"] = []
-                if "events"    not in d: d["events"]    = []
-                if "balance"   not in d: d["balance"]   = 10000000.0
-                if "starting"  not in d: d["starting"]  = 10000000.0
-                return d
-    except Exception:
-        pass
-    return {"positions": [], "events": [], "balance": 10000000.0, "starting": 10000000.0}
+    """Load FT state — tries all 3 storage locations, returns freshest data."""
+    best = None
+    best_time = None
+    for path in _all_ft_paths():
+        try:
+            if _os.path.exists(path):
+                mtime = _os.path.getmtime(path)
+                with open(path) as f:
+                    d = _json.load(f)
+                if d and isinstance(d, dict):
+                    if best_time is None or mtime > best_time:
+                        best = d
+                        best_time = mtime
+        except Exception:
+            continue
+    if best:
+        if "positions" not in best: best["positions"] = []
+        if "events"    not in best: best["events"]    = []
+        if "balance"   not in best: best["balance"]   = 10000000.0
+        if "starting"  not in best: best["starting"]  = 10000000.0
+        return best
+    _def_bal = st.session_state.get("_ft_default_balance", 10000000.0)
+    return {"positions": [], "events": [], "balance": _def_bal, "starting": _def_bal}
 
 def _ft_save(state: dict):
-    try:
-        with open(_FT_FILE, "w") as f:
-            json.dump(state, f, indent=2, default=str)
-    except Exception:
-        pass
+    """Save FT state to ALL 3 storage locations simultaneously."""
+    payload = _json.dumps(state, indent=2, default=str)
+    for path in _all_ft_paths():
+        try:
+            _os.makedirs(_os.path.dirname(_os.path.abspath(path)), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(payload)
+        except Exception:
+            pass
 
 def _ft_state():
-    """Get FT state from session, loading from disk on first call."""
-    if not st.session_state.get("_ft_loaded"):
+    """Get FT state — reloads from disk if session was lost (e.g. server restart)."""
+    if (not st.session_state.get("_ft_loaded") or
+            not st.session_state.get("_ft") or
+            not isinstance(st.session_state.get("_ft"), dict)):
         d = _ft_load()
-        st.session_state["_ft"] = d
+        st.session_state["_ft"]        = d
         st.session_state["_ft_loaded"] = True
     return st.session_state["_ft"]
 
 def _ft_flush():
-    """Persist current FT state to disk."""
-    _ft_save(st.session_state["_ft"])
+    """Persist current FT state to disk — safe even if session key missing."""
+    try:
+        state = st.session_state.get("_ft")
+        if state and isinstance(state, dict):
+            _ft_save(state)
+    except Exception:
+        pass
 
-# â”€â”€ LTP fetch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── LTP fetch ────────────────────────────────────────────────────────────
 
 def _ft_get_ltp(symbol: str) -> float:
-    """Get LTP for forward testing â€” tries Upstox then yfinance automatically."""
-    # upstox_get_ltp already has yfinance fallback built in
-    ltp = upstox_get_ltp(symbol)
-    return ltp if ltp > 0 else 0.0
-
-# â”€â”€ Signal auto-entry (called from scanner + signal tab) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-def ft_add_signal(s: dict, source: str = "Scanner"):
     """
-    Auto-add a scanner signal as a Forward Test position.
+    Get LTP for forward testing.
+    - Indian stocks : Upstox → yfinance (.NS suffix)
+    - US stocks     : yfinance directly (no .NS suffix)
+    """
+    if is_us_symbol(symbol):
+        try:
+            fi = yf.Ticker(symbol).fast_info
+            p  = float(getattr(fi, "last_price", 0) or 0)
+            if p > 0: return round(p, 4)
+            hist = yf.Ticker(symbol).history(period="1d", interval="1m")
+            if not hist.empty:
+                return round(float(hist["Close"].iloc[-1]), 4)
+        except Exception:
+            pass
+        return 0.0
+    # Try Upstox first
+    ltp = upstox_get_ltp(symbol)
+    if ltp > 0:
+        return ltp
+
+    # yfinance fallback for Indian stocks (.NS suffix)
+    try:
+        fi = yf.Ticker(symbol + ".NS").fast_info
+        p  = float(getattr(fi, "last_price", 0) or 0)
+        if p > 0: return round(p, 2)
+        hist = yf.Ticker(symbol + ".NS").history(period="1d", interval="1m")
+        if not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    return 0.0
+
+# ── Signal auto-entry (called from scanner + signal tab) ─────────────────
+
+def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
+    """
+    Add a signal as a Forward Test position.
 
     Rules:
-    - ONLY enters during live market hours (9:15â€“15:30 IST Mon-Fri)
-    - Entry price = FIRST live tick from Upstox/yfinance at moment of signal
-    - Never re-enters same symbol+side that already traded today
-    - Never re-enters same symbol+side already OPEN
-    - All positions auto-close at 15:30 IST at live price
+    - manual=False (auto): only enters during 9:45–14:45 IST auto-trade window
+    - manual=True:         enters during any market hours (9:15–15:30 IST)
+    - Entry price = FIRST live tick from data feed at moment of signal
+    - Never re-enters same symbol+side already OPEN or traded today
+    - India EOD auto-close at 15:30 IST | US EOD at 16:00 EST/EDT
     """
     from datetime import timezone as _tz, time as _time
 
-    # â”€â”€ Only enter during live market hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    IST     = _tz(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(IST)
-    # Auto-trade starts 9:30 (not 9:15) â€” first 15 min is volatile price discovery
-    mkt_open_time  = now_ist.replace(hour=9,  minute=30, second=0, microsecond=0)
-    mkt_close_time = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)  # stop 15 min before close
-    in_market_hours = (now_ist.weekday() < 5 and
-                       mkt_open_time <= now_ist <= mkt_close_time)
-    if not in_market_hours:
-        return   # Only auto-trade 9:30â€“15:15 IST on weekdays
+    # ── Detect market from signal symbol ─────────────────────────────────
+    sym     = s.get("symbol", "")
+    _us     = is_us_symbol(sym)
+    _mkt    = "us" if _us else "india"
+
+    # ── Market hours gate ─────────────────────────────────────────────────
+    if manual:
+        # Manual entries allowed any time market is open (9:15–15:30 IST)
+        if not is_market_open(_mkt):
+            return   # Market fully closed — skip
+    else:
+        # Auto entries: respect strict auto-trade window (9:45–14:45 IST)
+        if not is_auto_trade_open(_mkt):
+            return   # Outside auto-trade window — skip
+
+    if _us:
+        now_ref = _est_now()
+    else:
+        from datetime import timezone as _tz2
+        now_ref = datetime.now(_tz2(timedelta(hours=5, minutes=30)))
 
     ft    = _ft_state()
-    sym   = s.get("symbol","")
     side  = s.get("side","BUY")
-    today = now_ist.strftime("%Y-%m-%d")
+    today = now_ref.strftime("%Y-%m-%d")
 
-    # â”€â”€ Skip if already OPEN for this symbol+side â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Skip if already OPEN for this symbol+side ────────────────────────
     for p in ft["positions"]:
-        if p["status"] in ("OPEN","T1 HIT â€” TRAILING") and            p["symbol"] == sym and p["side"] == side:
+        if p["status"] in ("OPEN","T1 HIT — TRAILING") and            p["symbol"] == sym and p["side"] == side:
             return
 
-    # â”€â”€ Skip if already TRADED today for this symbol+side â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Skip if already TRADED today for this symbol+side ────────────────
     # Prevents re-entering after SL hit or exit in same session
     traded_today = ft.get("traded_today", {})
     traded_key   = f"{today}:{sym}:{side}"
     if traded_key in traded_today:
         return
 
-    # â”€â”€ Get LIVE first tick from data feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Get LIVE first tick from data feed ───────────────────────────────
     ltp = _ft_get_ltp(sym)
     if not ltp or ltp <= 0:
-        return  # No live price â€” skip
+        return  # No live price — skip
 
     bal  = ft["balance"]
-    qty  = 100                         # Fixed 100 units per trade
+    # Dynamic position sizing: 5% of balance per trade (max 2% if 5% too large)
+    qty  = max(1, int(bal * 0.05 / max(ltp, 1)))
     cost = round(ltp * qty, 2)
+    if cost > bal:
+        qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+        cost = round(ltp * qty, 2)
     if cost > bal:
         st.session_state["ft_low_bal_alert"] = True
         return
@@ -7565,13 +7938,15 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "exit_px":    None,
         "exit_type":  None,
         "source":     source,
-        "tf":         s.get("tf","â€”"),
+        "tf":         s.get("tf","—"),
         "strategy":   s.get("rationale", s.get("strategy","CPR"))[:60],
-        "candle":     s.get("candle","â€”"),
+        "candle":     s.get("candle","—"),
         "strength":   s.get("strength", 0),
-        "opened_at":  now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+        "opened_at":  now_ref.strftime("%Y-%m-%d %H:%M:%S"),
         "closed_at":  None,
         "date":       today,
+        "market":     _mkt,
+        "currency":   "$" if _us else "₹",
     }
     ft["positions"].append(pos)
     ft["balance"] = round(bal - cost, 2)
@@ -7579,7 +7954,7 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     # Mark this symbol+side as traded today
     if "traded_today" not in ft:
         ft["traded_today"] = {}
-    ft["traded_today"][traded_key] = now_ist.strftime("%H:%M:%S")
+    ft["traded_today"][traded_key] = now_ref.strftime("%H:%M:%S")
 
     # Log ENTRY event
     ft["events"].append({
@@ -7595,30 +7970,97 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         "rr":       pos["rr"],
         "source":   source,
         "strategy": pos["strategy"],
-        "tf":       pos.get("tf","â€”"),
+        "tf":       pos.get("tf","—"),
         "pnl":      0.0,
-        "note":     f"First live tick entry @ â‚¹{ltp}",
+        "note":     f"First live tick entry @ {'$' if _us else '₹'}{ltp}",
     })
     _ft_flush()
+    if st.session_state.get("telegram_cfg",{}).get("notify_entry",True):
+        _send_telegram(_tg_trade_msg(pos,"ENTRY"))
 
-# â”€â”€ Trigger checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Trigger checker ───────────────────────────────────────────────────────
 
 def _ft_auto_close_eod() -> list:
     """
-    Auto-close ALL open positions at 15:30 IST at live price.
-    Called every trigger cycle â€” fires only once per day.
+    Auto-close ALL open positions at EOD:
+    - India (NSE) : 15:30 IST
+    - US (NYSE)   : 16:00 EST/EDT
+    Called every trigger cycle — fires only once per day per market.
     Returns list of fired close events.
     """
+    fired_all = []
+
+    # ── India EOD @ 15:30 IST ────────────────────────────────────────────
     from datetime import timezone as _tz
     IST      = _tz(timedelta(hours=5, minutes=30))
     now_ist  = datetime.now(IST)
-    today    = now_ist.strftime("%Y-%m-%d")
+    today_in = now_ist.strftime("%Y-%m-%d")
+    _ist_eod_due = (now_ist.weekday() < 5 and
+                    (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 30)))
 
-    # Only fire after 15:30
-    if now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 30):
+    # ── US EOD @ 16:00 EST/EDT ───────────────────────────────────────────
+    now_est   = _est_now()
+    today_us  = now_est.strftime("%Y-%m-%d")
+    _us_eod_due = (now_est.weekday() < 5 and
+                   (now_est.hour >= 16))
+
+    if not _ist_eod_due and not _us_eod_due:
         return []
-    # Only on weekdays
-    if now_ist.weekday() >= 5:
+
+    ft = _ft_state()
+
+    # ── Helper: close one position ────────────────────────────────────────
+    def _close_pos(pos, close_time, label, today_key):
+        eod_key = f"eod_closed_{today_key}_{pos['id']}"
+        if ft.get(eod_key): return None
+        ltp = _ft_get_ltp(pos["symbol"])
+        if not ltp or ltp <= 0: ltp = pos.get("ltp", pos["entry"])
+        bull      = pos["side"] == "BUY"
+        rem_qty   = pos.get("qty_remaining", pos["qty"])
+        pnl       = round((ltp-pos["entry"])*rem_qty if bull else (pos["entry"]-ltp)*rem_qty, 2)
+        total_pnl = round(pnl + pos.get("t1_pnl",0.0), 2)
+        pnl_pct   = round(total_pnl / max(pos["cost"],1)*100, 2)
+        rem_cost  = round(pos["cost"]*rem_qty / max(pos["qty"],1), 2)
+        cur = pos.get("currency","₹")
+        pos.update({"status":"EOD CLOSE","exit_px":ltp,"pnl":total_pnl,
+                    "pnl_pct":pnl_pct,"upnl":0.0,"closed_at":close_time,
+                    "exit_type":f"EOD {label} Auto-Close","qty_remaining":0})
+        ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
+        ft["events"].append({"time":close_time,"type":"EOD AUTO-CLOSE",
+            "id":pos["id"],"symbol":pos["symbol"],"side":pos["side"],
+            "price":ltp,"entry":pos["entry"],"qty":rem_qty,"pnl":total_pnl,
+            "pnl_pct":pnl_pct,"source":pos["source"],"strategy":pos["strategy"],
+            "tf":pos.get("tf","—"),
+            "note":f"Auto-closed at {label} @ {cur}{ltp}. T1 booked: {cur}{pos.get('t1_pnl',0)}"})
+        ft[eod_key] = True
+        return {"symbol":pos["symbol"],"hit":f"EOD AUTO-CLOSE @ {label}",
+                "pnl":total_pnl,"strategy":pos["strategy"],"note":f"Closed @ {cur}{ltp}"}
+
+    open_pos = [p for p in ft["positions"] if p["status"] in ("OPEN","T1 HIT — TRAILING")]
+
+    if _ist_eod_due:
+        close_time = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+        for pos in open_pos:
+            if not is_us_symbol(pos["symbol"]):
+                r = _close_pos(pos, close_time, "15:30 IST", today_in)
+                if r: fired_all.append(r)
+
+    if _us_eod_due:
+        close_time = now_est.strftime("%Y-%m-%d %H:%M:%S")
+        for pos in open_pos:
+            if is_us_symbol(pos["symbol"]):
+                r = _close_pos(pos, close_time, "16:00 EST", today_us)
+                if r: fired_all.append(r)
+
+    if fired_all:
+        ft["traded_today"] = {}
+        _ft_flush()
+
+    # Legacy support — keep old today variable for callers
+    today    = today_in
+    now_ist  = now_ist  # keep in scope for callers
+
+    if False:  # pragma: no cover — old pattern kept for reference
         return []
 
     ft       = _ft_state()
@@ -7630,7 +8072,7 @@ def _ft_auto_close_eod() -> list:
         return []
 
     open_positions = [p for p in ft["positions"]
-                      if p["status"] in ("OPEN","T1 HIT â€” TRAILING")]
+                      if p["status"] in ("OPEN","T1 HIT — TRAILING")]
     if not open_positions:
         ft[eod_key] = True
         # Reset traded_today for tomorrow
@@ -7679,16 +8121,16 @@ def _ft_auto_close_eod() -> list:
             "pnl_pct":  pnl_pct,
             "source":   pos["source"],
             "strategy": pos["strategy"],
-            "tf":       pos.get("tf","â€”"),
-            "note":     f"Auto-closed at 15:30 IST @ â‚¹{ltp}. "
-                        f"T1 booked: â‚¹{pos.get('t1_pnl',0)}",
+            "tf":       pos.get("tf","—"),
+            "note":     f"Auto-closed at 15:30 IST @ ₹{ltp}. "
+                        f"T1 booked: ₹{pos.get('t1_pnl',0)}",
         })
         fired.append({
             "symbol":   pos["symbol"],
             "hit":      "EOD AUTO-CLOSE @ 15:30",
             "pnl":      total_pnl,
             "strategy": pos["strategy"],
-            "note":     f"Closed @ â‚¹{ltp}",
+            "note":     f"Closed @ ₹{ltp}",
         })
 
     # Mark EOD done + reset daily tracking for tomorrow
@@ -7700,24 +8142,24 @@ def _ft_auto_close_eod() -> list:
 
 def _ft_run_triggers() -> list:
     """
-    Live trigger engine â€” checks every OPEN position against LTP.
+    Live trigger engine — checks every OPEN position against LTP.
 
     Flow each 15s cycle:
     1. Check 15:30 EOD auto-close first
-    2. Stage 1 â€” T1 hit â†’ partial exit + SL moves to entry (trailing breakeven)
-    3. Stage 2 â€” T2 hit â†’ remaining qty exits (full close)
-    4. SL hit â†’ full position closes
+    2. Stage 1 — T1 hit → partial exit + SL moves to entry (trailing breakeven)
+    3. Stage 2 — T2 hit → remaining qty exits (full close)
+    4. SL hit → full position closes
 
     Entry only from FIRST live tick during market hours (handled in ft_add_signal).
     """
-    # â”€â”€ EOD auto-close at 15:30 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── EOD auto-close at 15:30 ──────────────────────────────────────────
     eod_fired = _ft_auto_close_eod()
 
     ft    = _ft_state()
     fired = list(eod_fired)
 
     for pos in ft["positions"]:
-        if pos["status"] not in ("OPEN", "T1 HIT â€” TRAILING"): continue
+        if pos["status"] not in ("OPEN", "T1 HIT — TRAILING"): continue
         ltp = _ft_get_ltp(pos["symbol"])
         if not ltp: continue
 
@@ -7725,13 +8167,13 @@ def _ft_run_triggers() -> list:
         bull = pos["side"] == "BUY"
         now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # â”€â”€ Update unrealised P&L â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Update unrealised P&L ─────────────────────────────────────────
         if bull:
             pos["upnl"] = round((ltp - pos["entry"]) * pos.get("qty_remaining", pos["qty"]), 2)
         else:
             pos["upnl"] = round((pos["entry"] - ltp) * pos.get("qty_remaining", pos["qty"]), 2)
 
-        # â”€â”€ Stage 1: T1 hit (only if not already trailing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Stage 1: T1 hit (only if not already trailing) ────────────────
         if pos["status"] == "OPEN":
             t1_hit = (bull and ltp >= pos["target"]) or (not bull and ltp <= pos["target"])
             sl_hit = (bull and ltp <= pos["sl"])     or (not bull and ltp >= pos["sl"])
@@ -7748,7 +8190,7 @@ def _ft_run_triggers() -> list:
                 # Move SL to entry (trailing = breakeven)
                 pos["sl_original"]   = pos["sl"]
                 pos["sl"]            = pos["entry"]          # trailing SL = entry
-                pos["status"]        = "T1 HIT â€” TRAILING"
+                pos["status"]        = "T1 HIT — TRAILING"
                 pos["qty_remaining"] = remaining_qty
                 pos["t1_exit_qty"]   = exit_qty
                 pos["t1_pnl"]        = t1_pnl
@@ -7761,7 +8203,7 @@ def _ft_run_triggers() -> list:
                 # Log T1 event
                 ft["events"].append({
                     "time":     now,
-                    "type":     "T1 HIT â€” PARTIAL EXIT",
+                    "type":     "T1 HIT — PARTIAL EXIT",
                     "id":       pos["id"],
                     "symbol":   pos["symbol"],
                     "side":     pos["side"],
@@ -7772,21 +8214,21 @@ def _ft_run_triggers() -> list:
                     "pnl_pct":  t1_pnl_pct,
                     "source":   pos["source"],
                     "strategy": pos["strategy"],
-                    "tf":       pos.get("tf","â€”"),
-                    "note":     f"T1 partial. SL moved to entry â‚¹{pos['entry']}. Trailing to T2 â‚¹{pos.get('t2',0)}"
+                    "tf":       pos.get("tf","—"),
+                    "note":     f"T1 partial. SL moved to entry ₹{pos['entry']}. Trailing to T2 ₹{pos.get('t2',0)}"
                 })
                 fired.append({
                     "symbol": pos["symbol"],
-                    "hit":    "T1 HIT â€” Trailing to T2",
+                    "hit":    "T1 HIT — Trailing to T2",
                     "pnl":    t1_pnl,
                     "strategy": pos["strategy"],
-                    "note":   f"SL â†’ â‚¹{pos['entry']} (entry). T2 target: â‚¹{pos.get('t2',0)}"
+                    "note":   f"SL → ₹{pos['entry']} (entry). T2 target: ₹{pos.get('t2',0)}"
                 })
                 _ft_flush()
                 continue  # Don't check SL this cycle
 
             elif sl_hit:
-                # Full SL hit â€” close entire position
+                # Full SL hit — close entire position
                 exit_px = pos["sl"]
                 pnl     = round((exit_px-pos["entry"])*pos["qty"] if bull
                                 else (pos["entry"]-exit_px)*pos["qty"], 2)
@@ -7800,14 +8242,14 @@ def _ft_run_triggers() -> list:
                     "time":pos["closed_at"],"type":"SL HIT","id":pos["id"],
                     "symbol":pos["symbol"],"side":pos["side"],"price":exit_px,
                     "entry":pos["entry"],"qty":pos["qty"],"pnl":pnl,"pnl_pct":pnl_pct,
-                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","â€”"),
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
                     "note":"Full position SL hit"
                 })
                 fired.append({"symbol":pos["symbol"],"hit":"SL HIT","pnl":pnl,
-                              "strategy":pos["strategy"],"note":f"Closed @ â‚¹{exit_px}"})
+                              "strategy":pos["strategy"],"note":f"Closed @ ₹{exit_px}"})
 
-        # â”€â”€ Stage 2: Trailing to T2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        elif pos["status"] == "T1 HIT â€” TRAILING":
+        # ── Stage 2: Trailing to T2 ───────────────────────────────────────
+        elif pos["status"] == "T1 HIT — TRAILING":
             t2     = pos.get("t2", pos.get("target", 0))
             rem_qty= pos.get("qty_remaining", 1)
             t2_hit = (bull and ltp >= t2)      or (not bull and ltp <= t2)
@@ -7820,21 +8262,21 @@ def _ft_run_triggers() -> list:
                 pnl_pct = round(pnl / max(pos["cost"],1) * 100, 2)
                 total_pnl = round(pnl + pos.get("t1_pnl",0), 2)
                 rem_cost  = round(pos["cost"] * rem_qty / pos["qty"], 2)
-                pos.update({"status":"T2 HIT â€” FULL EXIT","exit_px":t2,
+                pos.update({"status":"T2 HIT — FULL EXIT","exit_px":t2,
                             "pnl":total_pnl,"pnl_pct":round(total_pnl/max(pos["cost"],1)*100,2),
                             "upnl":0.0,"closed_at":now,"exit_type":"T2 HIT",
                             "qty_remaining":0})
                 ft["balance"] = round(ft["balance"] + rem_cost + pnl, 2)
                 ft["events"].append({
-                    "time":now,"type":"T2 HIT â€” FULL EXIT","id":pos["id"],
+                    "time":now,"type":"T2 HIT — FULL EXIT","id":pos["id"],
                     "symbol":pos["symbol"],"side":pos["side"],"price":t2,
                     "entry":pos["entry"],"qty":rem_qty,"pnl":pnl,"pnl_pct":pnl_pct,
-                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","â€”"),
-                    "note":f"T2 exit. Total trade P&L â‚¹{total_pnl} (T1 â‚¹{pos.get('t1_pnl',0)} + T2 â‚¹{pnl})"
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
+                    "note":f"T2 exit. Total trade P&L ₹{total_pnl} (T1 ₹{pos.get('t1_pnl',0)} + T2 ₹{pnl})"
                 })
-                fired.append({"symbol":pos["symbol"],"hit":"T2 HIT ðŸŽ¯ðŸŽ¯",
+                fired.append({"symbol":pos["symbol"],"hit":"T2 HIT 🎯🎯",
                               "pnl":total_pnl,"strategy":pos["strategy"],
-                              "note":f"Full exit @ â‚¹{t2}. Total P&L â‚¹{total_pnl}"})
+                              "note":f"Full exit @ ₹{t2}. Total P&L ₹{total_pnl}"})
 
             elif sl_hit:
                 # Trailing SL hit (at entry = breakeven or better)
@@ -7852,35 +8294,66 @@ def _ft_run_triggers() -> list:
                     "time":now,"type":"TRAILING SL HIT","id":pos["id"],
                     "symbol":pos["symbol"],"side":pos["side"],"price":exit_px,
                     "entry":pos["entry"],"qty":rem_qty,"pnl":pnl,"pnl_pct":pnl_pct,
-                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","â€”"),
-                    "note":f"Trailing SL at entry. Total P&L â‚¹{total_pnl} (T1 â‚¹{pos.get('t1_pnl',0)} locked in)"
+                    "source":pos["source"],"strategy":pos["strategy"],"tf":pos.get("tf","—"),
+                    "note":f"Trailing SL at entry. Total P&L ₹{total_pnl} (T1 ₹{pos.get('t1_pnl',0)} locked in)"
                 })
                 fired.append({"symbol":pos["symbol"],"hit":"TRAILING SL (breakeven)",
                               "pnl":total_pnl,"strategy":pos["strategy"],
-                              "note":f"T1 profit â‚¹{pos.get('t1_pnl',0)} locked. Remaining at breakeven."})
+                              "note":f"T1 profit ₹{pos.get('t1_pnl',0)} locked. Remaining at breakeven."})
 
     if fired:
         _ft_flush()
+        _tg=st.session_state.get("telegram_cfg",{})
+        for _ev in fired:
+            _h=_ev.get("hit","");_s=_ev.get("symbol","");_p=_ev.get("pnl",0)
+            _pe="✅" if _p>=0 else "❌";_st=_ev.get("strategy","");_nt=_ev.get("note","")
+            if "T2 HIT" in _h and _tg.get("notify_t2",True): _send_telegram(f"🎯🎯 <b>T2 HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "T1 HIT" in _h and _tg.get("notify_t1",True): _send_telegram(f"🎯 <b>T1 HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "TRAILING" in _h and _tg.get("notify_sl",True): _send_telegram(f"🔒 <b>TRAILING SL — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
+            elif "SL HIT" in _h and _tg.get("notify_sl",True): _send_telegram(f"🛑 <b>SL HIT — {_s}</b>\nP&L: {_pe} ₹{_p:,.2f}\n<i>{_st}</i>")
     return fired
 
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════════════
 #  FORWARD TESTING PAGE
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════════════
 
 def page_forward_test():
-    """Forward Testing â€” auto-signal entry, live SL/Target, full P&L by strategy."""
+    """Forward Testing — auto-signal entry, live SL/Target, full P&L by strategy."""
 
     # Auto-refresh 15s during market hours
     if _HAS_AUTOREFRESH and is_market_open():
         st_autorefresh(interval=15_000, limit=None, key="ft_ar")
 
+    # ── BUG FIX: Consume manual Fwd Test signal from Trade Signals / Scanner ──
+    _pending = st.session_state.pop("ft_pending_signal", None)
+    if _pending and _pending.get("symbol"):
+        _sym = _pending.get("symbol","")
+        # Try to get fresh live price
+        try:
+            _live = _ft_get_ltp(_sym)
+            if _live and _live > 0:
+                _pending["entry"] = _live
+        except Exception:
+            pass
+        if _pending.get("entry", 0) > 0:
+            ft_add_signal(
+                _pending,
+                source=f"🖐 Manual · {_pending.get('tf', _pending.get('source','—'))}",
+                manual=True,   # bypass auto-trade window — user clicked manually
+            )
+            st.toast(f"🖐 Manual trade added: {_sym} {_pending.get('side','BUY')} "
+                     f"@ ₹{_pending.get('entry',0):,.2f}", icon="✅")
+        else:
+            st.warning(f"⚠️ Could not get live price for {_sym}. "
+                       f"Check Upstox connection or market hours.", icon="⚠️")
+
     # Run triggers on every render
     fired = _ft_run_triggers()
     for f in fired:
-        icon = "ðŸŽ¯" if f["hit"] == "TARGET HIT" else "ðŸ›‘"
-        st.toast(f"{icon} {f['symbol']} â€” {f['hit']} | P&L â‚¹{f['pnl']:+,.2f}", icon=icon)
+        icon = "🎯" if "T2" in f["hit"] else ("🎯" if "T1" in f["hit"] else "🛑")
+        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon=icon)
 
     ft       = _ft_state()
     positions= ft["positions"]
@@ -7902,17 +8375,17 @@ def page_forward_test():
 
     # Low balance alert from auto-signal skip
     if st.session_state.pop("ft_low_bal_alert", False):
-        st.warning("âš ï¸ Insufficient virtual balance â€” new signals were skipped. "
+        st.warning("⚠️ Insufficient virtual balance — new signals were skipped. "
                    "Add virtual funds below to continue forward testing.",
-                   icon="ðŸ’°")
+                   icon="💰")
 
     mkt_open = is_market_open()
-    data_src = "ðŸ“¡ Upstox Live" if _upstox_connected() else "ðŸ“Š yfinance (delayed)"
+    data_src = "📡 Upstox Live" if _upstox_connected() else "📊 yfinance (delayed)"
 
-    # â”€â”€ PAGE HEADER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── PAGE HEADER ───────────────────────────────────────────────────────
     st.markdown("""
     <div class="title-bar">
-        <span style="font-size:1.4rem;">ðŸ§ª</span>
+        <span style="font-size:1.4rem;">🧪</span>
         <h1>Forward Testing Simulator</h1>
     </div>""", unsafe_allow_html=True)
 
@@ -7925,14 +8398,14 @@ def page_forward_test():
     _traded  = len(_ft_data.get("traded_today", {}))
 
     if _eod_done:
-        _status_msg = "ðŸ”´ 15:30 EOD CLOSE executed â€” all positions closed at live price"
+        _status_msg = "🔴 EOD CLOSE executed — India 15:30 IST / US 16:00 EST · all positions closed"
         _status_bg  = "#fbe8e6"; _status_bdr = "#dc9090"; _status_col = "#9e2018"
     elif mkt_open:
-        _status_msg = f"ðŸŸ¢ Market OPEN Â· {data_src} Â· Triggers every 15s Â· {_traded} symbol(s) traded today"
+        _status_msg = f"🟢 Market OPEN · {data_src} · Triggers every 15s · {_traded} symbol(s) traded today"
         _status_bg  = "#e4f5e8"; _status_bdr = "#8dcc9a"; _status_col = "#1a6b2e"
     else:
         _nxt = "Opens Monday 9:15 AM" if _now_ist.weekday()>=4 else "Opens tomorrow 9:15 AM"
-        _status_msg = f"ðŸŸ¡ Market Closed Â· {_nxt} Â· Entry only on live market tick"
+        _status_msg = f"🟡 Market Closed · {_nxt} · Entry only on live market tick"
         _status_bg  = "#fdf3d4"; _status_bdr = "#e0c060"; _status_col = "#7a5800"
 
     st.markdown(
@@ -7944,40 +8417,40 @@ def page_forward_test():
         unsafe_allow_html=True,
     )
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 1 â€” P&L REPORT (always at top)
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 1 — P&L REPORT (always at top)
+    # ══════════════════════════════════════════════════════════════
     pnl_color = "#1a6b2e" if total_pnl >= 0 else "#9e2018"
     st.markdown(
         f"<div style='background:#1a1f0e;border-radius:12px;"
         f"padding:1rem 1.25rem;margin-bottom:1rem;'>"
         f"<div style='font-family:DM Mono,monospace;font-size:0.65rem;"
         f"color:#7da048;letter-spacing:0.1em;text-transform:uppercase;"
-        f"margin-bottom:0.5rem;'>ðŸ“Š Live P&L Statement</div>"
+        f"margin-bottom:0.5rem;'>📊 Live P&L Statement</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("ðŸ’° Balance",      f"â‚¹{bal:,.0f}",
-              f"{'+'if(bal-starting)>=0 else ''}â‚¹{(bal-starting):,.0f}")
-    c2.metric("ðŸ“ˆ Total P&L",    f"â‚¹{total_pnl:+,.0f}",
+    c1.metric("💰 Balance",      f"₹{bal:,.0f}",
+              f"{'+'if(bal-starting)>=0 else ''}₹{(bal-starting):,.0f}")
+    c2.metric("📈 Total P&L",    f"₹{total_pnl:+,.0f}",
               f"{round(total_pnl/max(starting,1)*100,1):+.1f}%")
-    c3.metric("ðŸ“… Today P&L",    f"â‚¹{today_pnl:+,.0f}",
+    c3.metric("📅 Today P&L",    f"₹{today_pnl:+,.0f}",
               f"{len(today_cl)} trades today")
-    c4.metric("âœ… Win Rate",      f"{win_rate}%",
+    c4.metric("✅ Win Rate",      f"{win_rate}%",
               f"{len(wins)}W / {len(losses)}L")
-    c5.metric("ðŸ”„ Open",         len(open_pos),
-              f"uPnL â‚¹{live_upnl:+,.0f}")
-    c6.metric("ðŸ“Š Total Trades", len(positions),
+    c5.metric("🔄 Open",         len(open_pos),
+              f"uPnL ₹{live_upnl:+,.0f}")
+    c6.metric("📊 Total Trades", len(positions),
               f"{len(closed_pos)} closed")
 
     # Strategy P&L statement
     if closed_pos:
-        st.markdown("#### ðŸ“‹ P&L by Strategy")
+        st.markdown("#### 📋 P&L by Strategy")
         strat_map: dict = {}
         for p in closed_pos:
-            key = f"{p.get('strategy','Unknown')[:35]} [{p.get('tf','â€”')}]"
+            key = f"{p.get('strategy','Unknown')[:35]} [{p.get('tf','—')}]"
             if key not in strat_map:
                 strat_map[key] = {"trades":0,"wins":0,"pnl":0.0,
                                    "sl_hits":0,"tgt_hits":0,"max_win":0.0,"max_loss":0.0}
@@ -8000,11 +8473,11 @@ def page_forward_test():
                 "Strategy":      strat,
                 "Trades":        sm["trades"],
                 "Win %":         f"{wr}%",
-                "ðŸŽ¯ Tgt Hits":   sm["tgt_hits"],
-                "ðŸ›‘ SL Hits":    sm["sl_hits"],
-                "Net P&L":       f"â‚¹{sm['pnl']:+,.2f}",
-                "Best Trade":    f"â‚¹{sm['max_win']:+,.2f}",
-                "Worst Trade":   f"â‚¹{sm['max_loss']:+,.2f}",
+                "🎯 Tgt Hits":   sm["tgt_hits"],
+                "🛑 SL Hits":    sm["sl_hits"],
+                "Net P&L":       f"₹{sm['pnl']:+,.2f}",
+                "Best Trade":    f"₹{sm['max_win']:+,.2f}",
+                "Worst Trade":   f"₹{sm['max_loss']:+,.2f}",
                 "Profit Factor": f"{pf}x",
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True,
@@ -8012,10 +8485,10 @@ def page_forward_test():
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 2 â€” OPEN POSITIONS (live SL/Target monitor)
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.markdown(f"#### âš¡ Open Positions ({len(open_pos)})")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 2 — OPEN POSITIONS (live SL/Target monitor)
+    # ══════════════════════════════════════════════════════════════
+    st.markdown(f"#### ⚡ Open Positions ({len(open_pos)})")
 
     if not open_pos:
         st.info("No open positions. Signals from the CPR Scanner auto-appear here. "
@@ -8043,22 +8516,22 @@ def page_forward_test():
                 f"<span style='background:{ac};color:#fff;border-radius:4px;"
                 f"padding:1px 8px;font-size:0.72rem;font-weight:700;'>{pos['side']}</span>"
                 f"<span style='font-family:DM Mono,monospace;font-size:0.73rem;color:#4a5e32;'>"
-                f"{pos['qty']}Ã— Â· Entry â‚¹{pos['entry']:,.2f} Â· LTP â‚¹{ltp:,.2f}</span>"
+                f"{pos['qty']}× · Entry ₹{pos['entry']:,.2f} · LTP ₹{ltp:,.2f}</span>"
                 f"<span style='font-family:DM Mono,monospace;font-size:0.82rem;"
                 f"font-weight:700;color:{pnl_c};margin-left:auto;'>"
-                f"uPnL â‚¹{upnl:+,.2f}</span></div>"
+                f"uPnL ₹{upnl:+,.2f}</span></div>"
                 f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
                 f"gap:6px;margin-bottom:7px;font-family:DM Mono,monospace;"
                 f"font-size:0.7rem;text-align:center;'>"
                 f"<div style='background:#fbe8e6;border-radius:5px;padding:3px;'>"
-                f"<div style='color:#9e2018;'>ðŸ›‘ SL</div>"
-                f"<b style='color:#9e2018;'>â‚¹{pos['sl']:,.2f}</b></div>"
+                f"<div style='color:#9e2018;'>🛑 SL</div>"
+                f"<b style='color:#9e2018;'>₹{pos['sl']:,.2f}</b></div>"
                 f"<div style='background:#e4f5e8;border-radius:5px;padding:3px;'>"
-                f"<div style='color:#1a6b2e;'>ðŸŽ¯ T1</div>"
-                f"<b style='color:#1a6b2e;'>â‚¹{pos['target']:,.2f}</b></div>"
+                f"<div style='color:#1a6b2e;'>🎯 T1</div>"
+                f"<b style='color:#1a6b2e;'>₹{pos['target']:,.2f}</b></div>"
                 f"<div style='background:#f0f4e8;border-radius:5px;padding:3px;'>"
-                f"<div style='color:#4a5e32;'>ðŸ“ˆ T2</div>"
-                f"<b>â‚¹{pos.get('t2',pos['target']):,.2f}</b></div>"
+                f"<div style='color:#4a5e32;'>📈 T2</div>"
+                f"<b>₹{pos.get('t2',pos['target']):,.2f}</b></div>"
                 f"<div style='background:#f0f4e8;border-radius:5px;padding:3px;'>"
                 f"<div style='color:#4a5e32;'>R:R</div>"
                 f"<b>{pos.get('rr',0)}x</b></div></div>"
@@ -8068,20 +8541,20 @@ def page_forward_test():
                 f"border-radius:4px;'></div></div>"
                 f"<div style='font-family:DM Mono,monospace;font-size:0.63rem;"
                 f"color:#8a9a78;'>"
-                f"ðŸ“Œ {pos.get('source','â€”')} Â· {pos.get('tf','â€”')} Â· "
-                f"Opened {pos.get('opened_at','â€”')}</div>"
+                f"📌 {pos.get('source','—')} · {pos.get('tf','—')} · "
+                f"Opened {pos.get('opened_at','—')}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
             # Manual exit
             mc1, mc2, mc3 = st.columns([2,1,1])
             with mc1:
-                ex_px = st.number_input("Manual exit â‚¹", value=float(ltp),
+                ex_px = st.number_input("Manual exit ₹", value=float(ltp),
                                         step=0.25,
                                         key=f"ft_ex_{pos['id']}",
                                         label_visibility="collapsed")
             with mc2:
-                if st.button("Exit @ T1 ðŸŽ¯", key=f"ft_t1_{pos['id']}",
+                if st.button("Exit @ T1 🎯", key=f"ft_t1_{pos['id']}",
                              use_container_width=True):
                     ex_px = pos["target"]
                     pnl   = round((ex_px-pos["entry"])*pos["qty"] if bull
@@ -8098,7 +8571,7 @@ def page_forward_test():
                         "source":pos["source"],"strategy":pos["strategy"],"tf":pos["tf"]})
                     _ft_flush(); st.rerun()
             with mc3:
-                if st.button("Exit â‚¹ â†—", key=f"ft_mex_{pos['id']}",
+                if st.button("Exit ₹ ↗", key=f"ft_mex_{pos['id']}",
                              use_container_width=True):
                     pnl = round((ex_px-pos["entry"])*pos["qty"] if bull
                                 else (pos["entry"]-ex_px)*pos["qty"], 2)
@@ -8116,54 +8589,54 @@ def page_forward_test():
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 3 â€” EVENT LOG (every entry/exit/trigger)
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.markdown(f"#### âš¡ Event Log â€” All Triggers ({len(events)})")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 3 — EVENT LOG (every entry/exit/trigger)
+    # ══════════════════════════════════════════════════════════════
+    st.markdown(f"#### ⚡ Event Log — All Triggers ({len(events)})")
 
     if not events:
-        st.info("Events appear here automatically: ENTRY â†’ SL HIT / TARGET HIT / MANUAL EXIT")
+        st.info("Events appear here automatically: ENTRY → SL HIT / TARGET HIT / MANUAL EXIT")
     else:
         # Quick stats
         ev_ent  = [e for e in events if e["type"] == "ENTRY"]
-        ev_t1   = [e for e in events if e["type"] == "T1 HIT â€” PARTIAL EXIT"]
-        ev_t2   = [e for e in events if e["type"] == "T2 HIT â€” FULL EXIT"]
+        ev_t1   = [e for e in events if e["type"] == "T1 HIT — PARTIAL EXIT"]
+        ev_t2   = [e for e in events if e["type"] == "T2 HIT — FULL EXIT"]
         ev_sl   = [e for e in events if e["type"] in ("SL HIT","TRAILING SL HIT")]
         ev_eod  = [e for e in events if e["type"] == "EOD AUTO-CLOSE"]
         ev_men  = [e for e in events if e["type"] == "MANUAL EXIT"]
         s1,s2,s3,s4,s5,s6 = st.columns(6)
-        s1.metric("ðŸ“¥ Entries",       len(ev_ent))
-        s2.metric("ðŸŽ¯ T1 Hits",       len(ev_t1),
-                  f"â‚¹{sum(e.get('pnl',0) for e in ev_t1):+,.0f}")
-        s3.metric("ðŸŽ¯ðŸŽ¯ T2 Hits",      len(ev_t2),
-                  f"â‚¹{sum(e.get('pnl',0) for e in ev_t2):+,.0f}")
-        s4.metric("ðŸ›‘ SL Hits",       len(ev_sl),
-                  f"â‚¹{sum(e.get('pnl',0) for e in ev_sl):+,.0f}")
-        s5.metric("ðŸ•ž EOD Closes",    len(ev_eod),
-                  f"â‚¹{sum(e.get('pnl',0) for e in ev_eod):+,.0f}")
-        s6.metric("âœ‹ Manual Exits",  len(ev_men),
-                  f"â‚¹{sum(e.get('pnl',0) for e in ev_men):+,.0f}")
+        s1.metric("📥 Entries",       len(ev_ent))
+        s2.metric("🎯 T1 Hits",       len(ev_t1),
+                  f"₹{sum(e.get('pnl',0) for e in ev_t1):+,.0f}")
+        s3.metric("🎯🎯 T2 Hits",      len(ev_t2),
+                  f"₹{sum(e.get('pnl',0) for e in ev_t2):+,.0f}")
+        s4.metric("🛑 SL Hits",       len(ev_sl),
+                  f"₹{sum(e.get('pnl',0) for e in ev_sl):+,.0f}")
+        s5.metric("🕞 EOD Closes",    len(ev_eod),
+                  f"₹{sum(e.get('pnl',0) for e in ev_eod):+,.0f}")
+        s6.metric("✋ Manual Exits",  len(ev_men),
+                  f"₹{sum(e.get('pnl',0) for e in ev_men):+,.0f}")
 
         for e in reversed(events[-50:]):  # show last 50
             etype  = e["type"]
             pnl    = e.get("pnl", 0)
-            icon   = {"ENTRY":"ðŸ“¥","TARGET HIT":"ðŸŽ¯","SL HIT":"ðŸ›‘",
-                      "T1 HIT â€” PARTIAL EXIT":"ðŸŽ¯Â½","T2 HIT â€” FULL EXIT":"ðŸŽ¯ðŸŽ¯",
-                      "TRAILING SL HIT":"ðŸ”’","MANUAL EXIT":"âœ‹",
-                      "EOD AUTO-CLOSE":"ðŸ•ž","FUND TOP-UP":"ðŸ’°"}.get(etype,"â—")
+            icon   = {"ENTRY":"📥","TARGET HIT":"🎯","SL HIT":"🛑",
+                      "T1 HIT — PARTIAL EXIT":"🎯½","T2 HIT — FULL EXIT":"🎯🎯",
+                      "TRAILING SL HIT":"🔒","MANUAL EXIT":"✋",
+                      "EOD AUTO-CLOSE":"🕞","FUND TOP-UP":"💰"}.get(etype,"●")
             bg     = {"ENTRY":"#f0f4e8","TARGET HIT":"#e4f5e8",
-                      "T1 HIT â€” PARTIAL EXIT":"#e4f5e8","T2 HIT â€” FULL EXIT":"#d4f0dc",
+                      "T1 HIT — PARTIAL EXIT":"#e4f5e8","T2 HIT — FULL EXIT":"#d4f0dc",
                       "SL HIT":"#fbe8e6","TRAILING SL HIT":"#fff7e6",
                       "MANUAL EXIT":"#f5f0e8","EOD AUTO-CLOSE":"#e8f0ff",
                       "FUND TOP-UP":"#eeedfe"}.get(etype,"#fff")
             bdr    = {"ENTRY":"#b8c89a","TARGET HIT":"#8dcc9a",
-                      "T1 HIT â€” PARTIAL EXIT":"#8dcc9a","T2 HIT â€” FULL EXIT":"#4dbb6a",
+                      "T1 HIT — PARTIAL EXIT":"#8dcc9a","T2 HIT — FULL EXIT":"#4dbb6a",
                       "SL HIT":"#dc9090","TRAILING SL HIT":"#e0c060",
                       "MANUAL EXIT":"#e0b870","EOD AUTO-CLOSE":"#90a8dc",
                       "FUND TOP-UP":"#afa9ec"}.get(etype,"#b8c89a")
             pnl_c  = "#1a6b2e" if pnl>0 else ("#9e2018" if pnl<0 else "#4a5e32")
             side_c = "#1a6b2e" if e.get("side","")=="BUY" else "#9e2018"
-            pnl_str= f" Â· P&L <b style='color:{pnl_c};'>â‚¹{pnl:+,.2f}</b>" if etype!="ENTRY" else ""
+            pnl_str= f" · P&L <b style='color:{pnl_c};'>₹{pnl:+,.2f}</b>" if etype!="ENTRY" else ""
             st.markdown(
                 f"<div style='background:{bg};border:1px solid {bdr};"
                 f"border-left:4px solid {bdr};border-radius:8px;"
@@ -8175,40 +8648,40 @@ def page_forward_test():
                 f"padding:0px 6px;font-size:0.68rem;font-weight:700;'>"
                 f"{e.get('side','')}</span> "
                 f"<b style='color:#2e3d1a;'>{etype}</b> "
-                f"@ â‚¹{e.get('price',e.get('entry',0)):,.2f}"
+                f"@ ₹{e.get('price',e.get('entry',0)):,.2f}"
                 f"{pnl_str} "
                 f"<span style='color:#8a9a78;float:right;'>{e.get('time','')}</span>"
                 f"<br><span style='color:#6a7a58;font-size:0.68rem;'>"
-                f"ðŸ“Œ {e.get('source','â€”')} Â· {e.get('tf','â€”')} Â· "
-                f"{e.get('strategy','â€”')[:45]}</span>"
+                f"📌 {e.get('source','—')} · {e.get('tf','—')} · "
+                f"{e.get('strategy','—')[:45]}</span>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
         ecol1, ecol2 = st.columns(2)
         with ecol1:
-            if st.button("ðŸ“¥ Export Events JSON", key="ft_ev_export"):
-                st.download_button("â¬‡ï¸ Download",
+            if st.button("📥 Export Events JSON", key="ft_ev_export"):
+                st.download_button("⬇️ Download",
                     data=json.dumps(events, indent=2, default=str),
                     file_name=f"ft_events_{datetime.now().strftime('%Y%m%d')}.json",
                     mime="application/json", key="ft_ev_dl")
         with ecol2:
-            if st.button("ðŸ“‹ Export CSV", key="ft_csv_exp"):
+            if st.button("📋 Export CSV", key="ft_csv_exp"):
                 rows = [{k:v for k,v in e.items()} for e in events]
                 csv  = pd.DataFrame(rows).to_csv(index=False)
-                st.download_button("â¬‡ï¸ CSV", data=csv,
+                st.download_button("⬇️ CSV", data=csv,
                     file_name=f"ft_events_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv", key="ft_ev_csv_dl")
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 4 â€” CLOSED TRADE HISTORY + P&L FILTERS
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 4 — CLOSED TRADE HISTORY + P&L FILTERS
+    # ══════════════════════════════════════════════════════════════
     if closed_pos:
-        st.markdown(f"#### ðŸ“‹ Closed Trades ({len(closed_pos)})")
+        st.markdown(f"#### 📋 Closed Trades ({len(closed_pos)})")
 
-        # â”€â”€ P&L Filter controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── P&L Filter controls ───────────────────────────────────
         pnl_values = [p.get("pnl",0) for p in closed_pos]
         min_pnl_all = min(pnl_values) if pnl_values else -10000
         max_pnl_all = max(pnl_values) if pnl_values else 10000
@@ -8226,7 +8699,7 @@ def page_forward_test():
             side_filter = st.selectbox("Side",["All","BUY only","SELL only"],
                                         key="ft_side_filter", label_visibility="collapsed")
         with fc4:
-            strat_list = sorted(set(p.get("strategy","â€”")[:25] for p in closed_pos))
+            strat_list = sorted(set(p.get("strategy","—")[:25] for p in closed_pos))
             strat_filter = st.selectbox("Strategy",["All"]+strat_list,
                                          key="ft_strat_filter", label_visibility="collapsed")
 
@@ -8235,7 +8708,7 @@ def page_forward_test():
         if pnl_filter == "Wins only":     filtered_pos = [p for p in filtered_pos if p.get("pnl",0) > 0]
         elif pnl_filter == "Losses only": filtered_pos = [p for p in filtered_pos if p.get("pnl",0) < 0]
         elif pnl_filter == "Break-even":  filtered_pos = [p for p in filtered_pos if p.get("pnl",0) == 0]
-        if tf_filter_cl:  filtered_pos = [p for p in filtered_pos if p.get("tf","â€”") in tf_filter_cl]
+        if tf_filter_cl:  filtered_pos = [p for p in filtered_pos if p.get("tf","—") in tf_filter_cl]
         if side_filter == "BUY only":     filtered_pos = [p for p in filtered_pos if p.get("side") == "BUY"]
         elif side_filter == "SELL only":  filtered_pos = [p for p in filtered_pos if p.get("side") == "SELL"]
         if strat_filter != "All":
@@ -8249,30 +8722,30 @@ def page_forward_test():
                 f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
                 f"background:#f5f8ed;border:1px solid #b8c89a;border-radius:7px;"
                 f"padding:5px 12px;margin-bottom:0.5rem;'>"
-                f"Filtered: <b>{len(filtered_pos)}</b> trades Â· "
-                f"Wins: <b>{len(f_wins)}</b> ({round(len(f_wins)/max(len(filtered_pos),1)*100)}%) Â· "
+                f"Filtered: <b>{len(filtered_pos)}</b> trades · "
+                f"Wins: <b>{len(f_wins)}</b> ({round(len(f_wins)/max(len(filtered_pos),1)*100)}%) · "
                 f"P&L: <b style='color:{'#1a6b2e' if f_pnl>=0 else '#9e2018'};"
-                f"'>â‚¹{f_pnl:+,.2f}</b></div>",
+                f"'>₹{f_pnl:+,.2f}</b></div>",
                 unsafe_allow_html=True,
             )
 
         rows = []
         for p in reversed(filtered_pos):
             pnl   = p.get("pnl",0)
-            pnl_c = "ðŸŸ¢" if pnl > 0 else ("ðŸ”´" if pnl < 0 else "âšª")
+            pnl_c = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
             rows.append({
                 "":           pnl_c,
                 "Symbol":     p["symbol"],
                 "Side":       p["side"],
-                "Entry â‚¹":   f"â‚¹{p['entry']:,.2f}",
-                "Exit â‚¹":    f"â‚¹{p.get('exit_px',0):,.2f}",
-                "Qty":        p["qty"],
-                "P&L":        f"â‚¹{pnl:+,.2f}",
-                "P&L %":      f"{p.get('pnl_pct',0):+.2f}%",
-                "Exit Type":  p.get("exit_type","â€”"),
-                "Strategy":   p.get("strategy","â€”")[:28],
-                "TF":         p.get("tf","â€”"),
-                "Closed":     p.get("closed_at","â€”"),
+                "Entry ₹":   f"₹{float(p.get('entry') or 0):,.2f}",
+                "Exit ₹":    f"₹{float(p.get('exit_px') or 0):,.2f}",
+                "Qty":        p.get("qty", 0),
+                "P&L":        f"₹{float(pnl or 0):+,.2f}",
+                "P&L %":      f"{float(p.get('pnl_pct') or 0):+.2f}%",
+                "Exit Type":  p.get("exit_type","—"),
+                "Strategy":   p.get("strategy","—")[:28],
+                "TF":         p.get("tf","—"),
+                "Closed":     p.get("closed_at","—"),
             })
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True,
@@ -8281,94 +8754,22 @@ def page_forward_test():
             st.info("No trades match the current filter.")
 
         if rows:
-            if st.button("ðŸ“¥ Export Filtered CSV", key="ft_trades_csv"):
-                st.download_button("â¬‡ï¸ Download",
+            if st.button("📥 Export Filtered CSV", key="ft_trades_csv"):
+                st.download_button("⬇️ Download",
                     data=pd.DataFrame(rows).to_csv(index=False),
                     file_name=f"ft_trades_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv", key="ft_tr_dl")
 
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 5 â€” MANUAL SIGNAL ENTRY
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    with st.expander("âž• Add Manual Forward Test Entry", expanded=False):
-        # Also check for pending signal from signal tab
-        pending = st.session_state.pop("ft_pending_signal", None)
-
-        ns1, ns2, ns3 = st.columns(3)
-        with ns1:
-            n_sym  = st.selectbox("Symbol",
-                ["RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","SBIN",
-                 "HINDUNILVR","BAJFINANCE","BHARTIARTL","KOTAKBANK",
-                 "LT","AXISBANK","MARUTI","TITAN","SUNPHARMA",
-                 "WIPRO","HCLTECH","ADANIENT","NTPC","BAJAJHFL"],
-                index=0, key="ft_nsym")
-            n_side = st.radio("Side", ["BUY","SELL"], horizontal=True,
-                              key="ft_nside",
-                              index=0 if (not pending or pending.get("side")=="BUY") else 1)
-        with ns2:
-            try:    _ltp = _ft_get_ltp(n_sym)
-            except: _ltp = 0.0
-            n_entry  = st.number_input("Entry â‚¹",
-                value=float(pending["entry"] if pending else _ltp or 100.0),
-                step=0.25, key="ft_nentry")
-            n_sl     = st.number_input("Stop Loss â‚¹",
-                value=float(pending["sl"] if pending else
-                            round(n_entry*(0.98 if n_side=="BUY" else 1.02),2)),
-                step=0.25, key="ft_nsl")
-        with ns3:
-            n_t1     = st.number_input("Target â‚¹",
-                value=float(pending["t1"] if pending else
-                            round(n_entry*(1.03 if n_side=="BUY" else 0.97),2)),
-                step=0.25, key="ft_nt1")
-            n_strat  = st.text_input("Strategy label",
-                value=pending.get("strategy","Manual") if pending else "Manual",
-                key="ft_nstrat")
-
-        n_risk = max(abs(n_entry-n_sl), 0.01)
-        n_rr   = round(abs(n_t1-n_entry)/n_risk, 2)
-        n_qty  = 100                         # Fixed 100 units per trade
-        n_cost = round(n_entry*n_qty, 2)
-        st.markdown(
-            f"<div style='background:#f5f8ed;border:1px solid #b8c89a;"
-            f"border-radius:7px;padding:0.5rem 1rem;"
-            f"font-family:DM Mono,monospace;font-size:0.78rem;"
-            f"display:flex;gap:1.5rem;flex-wrap:wrap;'>"
-            f"<span>Qty: <b>{n_qty}</b></span>"
-            f"<span>Cost: <b>â‚¹{n_cost:,.0f}</b></span>"
-            f"<span>Risk: <b>â‚¹{round(n_risk*n_qty):,.0f}</b></span>"
-            f"<span>R:R: <b style='color:{'#1a6b2e' if n_rr>=2 else '#b8860b'};'>{n_rr}x</b></span>"
-            f"</div>", unsafe_allow_html=True)
-
-        if st.button("ðŸ§ª Start Forward Test", use_container_width=True, key="ft_add_manual"):
-            if n_cost > bal:
-                st.error(f"Insufficient balance. Need â‚¹{n_cost:,.0f}, have â‚¹{bal:,.0f}")
-            else:
-                fake_sig = {
-                    "symbol":    n_sym,
-                    "side":      n_side,
-                    "entry":     n_entry,
-                    "sl":        n_sl,
-                    "t1":        n_t1,
-                    "t2":        round(n_t1+(n_t1-n_entry)*0.5, 2),
-                    "rr1":       n_rr,
-                    "tf":        "Manual",
-                    "rationale": n_strat,
-                    "strategy":  n_strat,
-                }
-                ft_add_signal(fake_sig, source="Manual Entry")
-                st.success(f"âœ… Forward test started: {n_side} {n_qty}Ã—{n_sym} @ â‚¹{n_entry}")
-                st.rerun()
-
     st.divider()
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  SECTION 6 â€” VIRTUAL FUND MANAGEMENT
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    st.markdown("#### ðŸ’° Virtual Fund Management")
+    # ══════════════════════════════════════════════════════════════
+    #  SECTION 6 — VIRTUAL FUND MANAGEMENT
+    # ══════════════════════════════════════════════════════════════
+    st.markdown("#### 💰 Virtual Fund Management")
 
-    # Low balance warning (< â‚¹10,000)
+    # Low balance warning (< ₹10,000)
     LOW_BAL_THRESHOLD = 500000.0
     if bal < LOW_BAL_THRESHOLD:
         st.markdown(
@@ -8376,9 +8777,9 @@ def page_forward_test():
             f"border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:0.75rem;"
             f"font-family:DM Mono,monospace;'>"
             f"<div style='font-weight:700;color:#7a5800;font-size:0.9rem;'>"
-            f"âš ï¸ Low Virtual Balance Alert</div>"
+            f"⚠️ Low Virtual Balance Alert</div>"
             f"<div style='color:#5a4000;font-size:0.8rem;margin-top:4px;'>"
-            f"Balance â‚¹{bal:,.0f} is below â‚¹{LOW_BAL_THRESHOLD:,.0f} (5% of starting capital). "
+            f"Balance ₹{bal:,.0f} is below ₹{LOW_BAL_THRESHOLD:,.0f} (5% of starting capital). "
             f"New signals may not enter. Add virtual funds below to continue testing."
             f"</div></div>",
             unsafe_allow_html=True,
@@ -8386,11 +8787,11 @@ def page_forward_test():
 
     fc1, fc2, fc3, fc4 = st.columns(4)
     with fc1:
-        topup_amt = st.selectbox("Add funds", ["â‚¹50,000","â‚¹1,00,000","â‚¹5,00,000","â‚¹10,00,000"],
+        topup_amt = st.selectbox("Add funds", ["₹50,000","₹1,00,000","₹5,00,000","₹10,00,000"],
                                   key="ft_topup_sel", label_visibility="collapsed")
     with fc2:
-        if st.button("âž• Add Virtual Funds", key="ft_topup", use_container_width=True):
-            amt_map = {"â‚¹50,000":50000,"â‚¹1,00,000":100000,"â‚¹5,00,000":500000,"â‚¹10,00,000":1000000}
+        if st.button("➕ Add Virtual Funds", key="ft_topup", use_container_width=True):
+            amt_map = {"₹50,000":50000,"₹1,00,000":100000,"₹5,00,000":500000,"₹10,00,000":1000000}
             add_amt = amt_map.get(topup_amt, 500000)
             ft["balance"]  = round(ft["balance"] + add_amt, 2)
             ft["starting"] = round(ft.get("starting",10000000) + add_amt, 2)
@@ -8398,79 +8799,79 @@ def page_forward_test():
                 "time":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "type":     "FUND TOP-UP",
                 "id":       0,
-                "symbol":   "â€”",
-                "side":     "â€”",
+                "symbol":   "—",
+                "side":     "—",
                 "price":    0,
                 "entry":    0,
                 "qty":      0,
                 "pnl":      add_amt,
                 "pnl_pct":  0,
                 "source":   "Manual",
-                "strategy": "â€”",
-                "tf":       "â€”",
-                "note":     f"Virtual funds added: â‚¹{add_amt:,.0f}"
+                "strategy": "—",
+                "tf":       "—",
+                "note":     f"Virtual funds added: ₹{add_amt:,.0f}"
             })
             _ft_flush()
-            st.success(f"âœ… Added â‚¹{add_amt:,.0f} virtual funds. New balance â‚¹{ft['balance']:,.0f}")
+            st.success(f"✅ Added ₹{add_amt:,.0f} virtual funds. New balance ₹{ft['balance']:,.0f}")
             st.rerun()
     with fc3:
-        if st.button("ðŸ”„ Refresh Prices", key="ft_refresh", use_container_width=True):
+        if st.button("🔄 Refresh Prices", key="ft_refresh", use_container_width=True):
             st.rerun()
     with fc4:
-        if st.button("ðŸ—‘ï¸ Reset Account", key="ft_reset_all", use_container_width=True):
+        if st.button("🗑️ Reset Account", key="ft_reset_all", use_container_width=True):
             if st.session_state.get("ft_confirm_reset"):
                 st.session_state["_ft"] = {"positions":[],"events":[],
                                             "balance":10000000.0,"starting":10000000.0}
                 st.session_state["ft_confirm_reset"] = False
                 st.session_state["_ft_loaded"] = False
                 _ft_flush()
-                st.success("âœ… Reset to â‚¹1,00,00,000 (1 Crore)"); st.rerun()
+                st.success("✅ Reset to ₹1,00,00,000 (1 Crore)"); st.rerun()
             else:
                 st.session_state["ft_confirm_reset"] = True
-                st.warning("âš ï¸ Click Reset again to confirm â€” all trades & events will be deleted.")
+                st.warning("⚠️ Click Reset again to confirm — all trades & events will be deleted.")
 
-    st.caption("âš ï¸ Forward Testing uses virtual capital only. Not connected to real broker orders.")
+    st.caption("⚠️ Forward Testing uses virtual capital only. Not connected to real broker orders.")
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════
 #  STRATEGY LIBRARY
 #  Shows all strategies used by the CPR scanner with their live
 #  forward-test performance pulled directly from the event log.
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ══════════════════════════════════════════════════════════════════════
 
 STRATEGY_DEFINITIONS = [
     {
         "name":     "CPR Narrow Breakout",
-        "icon":     "âš¡",
+        "icon":     "⚡",
         "tf":       "15 Min / 30 Min",
         "type":     "Intraday Scalp",
-        "author":   "Frank Ochoa â€” Pivot Boss",
+        "author":   "Frank Ochoa — Pivot Boss",
         "color":    "#1a6b2e",
         "bg":       "#e4f5e8",
         "border":   "#8dcc9a",
         "entry":    "Price closes above TC (Bull) or below BC (Bear) with volume surge",
         "sl":       "Below BC for Bull / Above TC for Bear",
         "t1":       "R1 (Bull) / S1 (Bear)",
-        "t2":       "R2 (Bull) / S2 (Bear) â€” trailing after T1",
-        "filters":  ["CPR Width < 0.5%", "RSI 50â€“75 (Bull) or 25â€“50 (Bear)",
-                     "HMA trending in signal direction", "Volume â‰¥ 1.2Ã— avg"],
+        "t2":       "R2 (Bull) / S2 (Bear) — trailing after T1",
+        "filters":  ["CPR Width < 0.5%", "RSI 50–75 (Bull) or 25–50 (Bear)",
+                     "HMA trending in signal direction", "Volume ≥ 1.2× avg"],
         "strength_min": 70,
         "rr_min":   1.5,
         "best_for": ["RELIANCE","HDFCBANK","INFY","TCS","ICICIBANK"],
     },
     {
         "name":     "Virgin CPR Breakout",
-        "icon":     "â­",
+        "icon":     "⭐",
         "tf":       "1 Hour / 1 Day",
         "type":     "Swing",
-        "author":   "Frank Ochoa â€” Pivot Boss",
+        "author":   "Frank Ochoa — Pivot Boss",
         "color":    "#7c3aed",
         "bg":       "#f3effe",
         "border":   "#c8a0f0",
-        "entry":    "First touch of untested CPR zone â€” high probability reversal",
-        "sl":       "Beyond CPR range by ATRÃ—0.5",
+        "entry":    "First touch of untested CPR zone — high probability reversal",
+        "sl":       "Beyond CPR range by ATR×0.5",
         "t1":       "Previous session high/low or next pivot",
-        "t2":       "R2/S2 (Bull/Bear) â€” trailing after T1",
+        "t2":       "R2/S2 (Bull/Bear) — trailing after T1",
         "filters":  ["CPR never touched in last 10 bars", "RSI oversold/overbought near CPR",
                      "Reversal candle at CPR (Hammer, Engulfing, Doji)"],
         "strength_min": 65,
@@ -8479,7 +8880,7 @@ STRATEGY_DEFINITIONS = [
     },
     {
         "name":     "HMA Trend Follower",
-        "icon":     "ðŸ“ˆ",
+        "icon":     "📈",
         "tf":       "1 Hour / 1 Day",
         "type":     "Trend Follow",
         "author":   "PivotVault AI",
@@ -8487,9 +8888,9 @@ STRATEGY_DEFINITIONS = [
         "bg":       "#e0f2fe",
         "border":   "#7dd3fc",
         "entry":    "Price pulls back to HMA-20, bounce candle closes back above/below",
-        "sl":       "Below HMA by ATRÃ—0.5",
+        "sl":       "Below HMA by ATR×0.5",
         "t1":       "Previous swing high/low or R1/S1",
-        "t2":       "R2/S2 â€” trailing after T1",
+        "t2":       "R2/S2 — trailing after T1",
         "filters":  ["HMA clearly trending (3 consecutive H/L values)",
                      "CPR above price (Bull) or below (Bear)", "RSI recovering from extreme"],
         "strength_min": 65,
@@ -8498,7 +8899,7 @@ STRATEGY_DEFINITIONS = [
     },
     {
         "name":     "RSI + CPR Confluence",
-        "icon":     "ðŸ”„",
+        "icon":     "🔄",
         "tf":       "15 Min / 1 Hour",
         "type":     "Intraday",
         "author":   "PivotVault AI",
@@ -8508,7 +8909,7 @@ STRATEGY_DEFINITIONS = [
         "entry":    "RSI crosses 50 AND price on correct side of CPR",
         "sl":       "CPR midpoint (Pivot P)",
         "t1":       "R1 (Bull) / S1 (Bear)",
-        "t2":       "R2/S2 â€” trailing after T1",
+        "t2":       "R2/S2 — trailing after T1",
         "filters":  ["RSI cross above/below 50", "Price above TC (Bull) or below BC (Bear)",
                      "CPR width < 1%", "Volume at or above 20-bar avg"],
         "strength_min": 55,
@@ -8517,7 +8918,7 @@ STRATEGY_DEFINITIONS = [
     },
     {
         "name":     "Candlestick + CPR",
-        "icon":     "ðŸ•¯ï¸",
+        "icon":     "🕯️",
         "tf":       "15 Min / 1 Hour / 1 Day",
         "type":     "Intraday / Swing",
         "author":   "PivotVault AI",
@@ -8527,27 +8928,142 @@ STRATEGY_DEFINITIONS = [
         "entry":    "Reversal pattern exactly at CPR or pivot level",
         "sl":       "Below pattern low (Bull) / Above pattern high (Bear)",
         "t1":       "Next pivot/CPR level",
-        "t2":       "Second pivot level â€” trailing after T1",
+        "t2":       "Second pivot level — trailing after T1",
         "filters":  ["Hammer/Engulfing/Morning Star/Shooting Star/Evening Star at CPR",
-                     "Volume surge on pattern candle > 1.5Ã— avg",
+                     "Volume surge on pattern candle > 1.5× avg",
                      "RSI not at extreme", "HMA confirms direction"],
         "strength_min": 60,
         "rr_min":   1.5,
         "best_for": ["BAJFINANCE","KOTAKBANK","TITAN","MARUTI","LT"],
     },
     {
+        "name":     "Two-Day CPR Non-Overlap",
+        "icon":     "📅",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "tf":       "15 Min / 30 Min / 1 Hour",
+        "type":     "Trending Day Breakout",
+        "color":    "#1a6b2e",
+        "bg":       "#edf7ee",
+        "border":   "#b8dfc0",
+        "filters":  [
+            "Today's CPR entirely above OR below yesterday's CPR (Non-overlapping)",
+            "CPR Width < 0.5% (Narrow — confirms trending day)",
+            "Price on correct side of CPR at open",
+            "Strength ≥ 70%",
+        ],
+        "entry":    "TC breakout (Bull) or BC breakdown (Bear) with volume",
+        "sl":       "Below BC (Bull) or above TC (Bear) + 0.1×ATR buffer",
+        "t1":       "R1 (Bull) or S1 (Bear)",
+        "t2":       "R2 (Bull) or S2 (Bear)",
+        "strength_min": 70,
+        "rr_min":   2.0,
+        "best_for": ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK"],
+    },
+    {
+        "name":     "Wick Reversal at CPR",
+        "icon":     "🕯️",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "15 Min / 30 Min / 1 Hour",
+        "type":     "Reversal",
+        "color":    "#7c3aed",
+        "bg":       "#f5f0ff",
+        "border":   "#c4b5fd",
+        "filters":  [
+            "Hammer / Pin Bar / Engulfing forming within 0.5×ATR of BC (Bull) or TC (Bear)",
+            "Lower wick ≥ 2× body (Hammer) or upper wick ≥ 2× body (Shooting Star)",
+            "RSI oversold (<40) for Bull or overbought (>60) for Bear",
+            "Volume surge on reversal candle",
+        ],
+        "entry":    "Close of reversal candle + 0.05×ATR",
+        "sl":       "Low of wick candle − 0.1×ATR",
+        "t1":       "TC (Bull) or BC (Bear) — CPR midpoint",
+        "t2":       "R1/S1 pivot extension",
+        "strength_min": 65,
+        "rr_min":   1.5,
+        "best_for": ["INFY", "WIPRO", "AXISBANK", "MARUTI", "TITAN"],
+    },
+    {
+        "name":     "Extreme Reversal (Rubber Band)",
+        "icon":     "🔁",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "15 Min / 30 Min",
+        "type":     "Mean Reversion",
+        "color":    "#dc2626",
+        "bg":       "#fff0f0",
+        "border":   "#fca5a5",
+        "filters":  [
+            "Current bar range ≥ 2× average bar size (over-extended move)",
+            "Price at extreme — 3+ consecutive bars in one direction",
+            "Reversal candle forming at S2/R2 or CPR extreme",
+            "3/10 Oscillator showing exhaustion (histogram flattening)",
+        ],
+        "entry":    "Close of reversal bar after extreme move",
+        "sl":       "Extreme of the over-extended bar",
+        "t1":       "50% retracement back toward CPR value",
+        "t2":       "CPR Pivot (P) — full mean reversion",
+        "strength_min": 65,
+        "rr_min":   2.0,
+        "best_for": ["BAJFINANCE", "KOTAKBANK", "ADANIENT", "TATAMOTORS"],
+    },
+    {
+        "name":     "Outside Reversal (False Breakout Fade)",
+        "icon":     "🔄",
+        "author":   "Frank Ochoa — Pivot Boss SPB",
+        "tf":       "30 Min / 1 Hour",
+        "type":     "False Breakout Fade",
+        "color":    "#ea580c",
+        "bg":       "#fff7ed",
+        "border":   "#fdba74",
+        "filters":  [
+            "Bar sweeps beyond prior High/Low then closes back inside range",
+            "Bar range ≥ 1.25× average bar size",
+            "Previous bar was near key pivot level (R1/S1/TC/BC)",
+            "RSI shows divergence at the sweep extreme",
+        ],
+        "entry":    "Close of outside reversal bar",
+        "sl":       "Beyond the sweep extreme + 0.1×ATR",
+        "t1":       "Prior consolidation midpoint / CPR value",
+        "t2":       "Opposite pivot level (S1 for bull fade, R1 for bear fade)",
+        "strength_min": 60,
+        "rr_min":   1.5,
+        "best_for": ["SBIN", "ICICIBANK", "LT", "HINDUNILVR", "NTPC"],
+    },
+    {
+        "name":     "Virgin CPR Weekly Magnet",
+        "icon":     "🧲",
+        "author":   "Frank Ochoa — Pivot Boss",
+        "tf":       "1 Hour / 1 Day",
+        "type":     "Swing / Magnet Trade",
+        "color":    "#0369a1",
+        "bg":       "#f0f9ff",
+        "border":   "#7dd3fc",
+        "filters":  [
+            "Weekly CPR untouched for 5+ sessions (Virgin Weekly CPR)",
+            "Price approaching weekly CPR from below (Bull) or above (Bear)",
+            "Daily CPR aligned with weekly CPR direction",
+            "HMA trending toward CPR magnet",
+        ],
+        "entry":    "Price enters weekly CPR zone (BC to TC)",
+        "sl":       "Weekly BC − ATR (Bull) or weekly TC + ATR (Bear)",
+        "t1":       "Weekly CPR midpoint / Pivot P",
+        "t2":       "Opposite weekly CPR boundary",
+        "strength_min": 60,
+        "rr_min":   2.0,
+        "best_for": ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK"],
+    },
+    {
         "name":     "3/10 Oscillator Cross",
-        "icon":     "ã€°ï¸",
+        "icon":     "〰️",
         "tf":       "30 Min / 1 Hour",
         "type":     "Momentum",
-        "author":   "Frank Ochoa â€” Pivot Boss",
+        "author":   "Frank Ochoa — Pivot Boss",
         "color":    "#d97706",
         "bg":       "#fdf3d4",
         "border":   "#f0c060",
         "entry":    "Fresh 3MA/10MA bullish or bearish crossover with CPR confirmation",
         "sl":       "Below BC (Bull) / Above TC (Bear)",
         "t1":       "R1/S1",
-        "t2":       "R2/S2 â€” trailing after T1",
+        "t2":       "R2/S2 — trailing after T1",
         "filters":  ["Fresh crossover (not continuation)", "Price on correct CPR side",
                      "RSI in momentum zone (>50 Bull, <50 Bear)"],
         "strength_min": 60,
@@ -8558,20 +9074,20 @@ STRATEGY_DEFINITIONS = [
 
 
 def page_strategy_library():
-    """Strategy Library â€” all CPR strategies with live forward-test performance."""
+    """Strategy Library — all CPR strategies with live forward-test performance."""
 
     st.markdown("""
     <div class="title-bar">
-        <span style="font-size:1.4rem;">ðŸ“š</span>
+        <span style="font-size:1.4rem;">📚</span>
         <h1>Strategy Library</h1>
         <span style="margin-left:auto;background:#eeedfe;border:1px solid #afa9ec;
                      color:#3c3489;padding:3px 12px;border-radius:20px;
                      font-family:DM Mono,monospace;font-size:0.7rem;font-weight:700;">
-            FRANK OCHOA Â· CPR Â· PIVOT BOSS
+            FRANK OCHOA · CPR · PIVOT BOSS
         </span>
     </div>""", unsafe_allow_html=True)
 
-    # â”€â”€ Pull live P&L from Forward Testing events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pull live P&L from Forward Testing events ─────────────────────────
     try:
         ft_events = _ft_state().get("events", [])
     except Exception:
@@ -8597,7 +9113,7 @@ def page_strategy_library():
         if "SL HIT"       in e["type"]: sm["sl_hits"] += 1
         if "TRAILING SL"  in e["type"]: sm["trailing_sl"] += 1
 
-    # â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Filters ───────────────────────────────────────────────────────────
     fc1, fc2 = st.columns([2,1])
     with fc1:
         tf_filter = st.multiselect("Filter by timeframe",
@@ -8616,14 +9132,14 @@ def page_strategy_library():
     st.markdown(
         f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
         f"color:#4a5e32;margin-bottom:0.75rem;'>"
-        f"Showing <b>{len(filtered)}</b> of {len(STRATEGY_DEFINITIONS)} strategies Â· "
+        f"Showing <b>{len(filtered)}</b> of {len(STRATEGY_DEFINITIONS)} strategies · "
         f"<b>{len(strat_perf)}</b> have live forward-test data</div>",
         unsafe_allow_html=True,
     )
 
-    # â”€â”€ Overall Forward Test Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Overall Forward Test Summary ──────────────────────────────────────
     if strat_perf:
-        st.markdown("#### ðŸ“Š Live Forward-Test Performance â€” All Strategies")
+        st.markdown("#### 📊 Live Forward-Test Performance — All Strategies")
         rows = []
         for sk, sm in sorted(strat_perf.items(),
                               key=lambda x: (-x[1]["pnl"] if sort_by=="Net P&L"
@@ -8635,30 +9151,30 @@ def page_strategy_library():
                 "Strategy":   sk,
                 "Trades":     sm["trades"],
                 "Win %":      f"{wr}%",
-                "ðŸŽ¯ T1 Hits": sm["t1"],
-                "ðŸŽ¯ðŸŽ¯ T2 Hits": sm["t2"],
-                "ðŸ›‘ SL Hits": sm["sl_hits"],
-                "ðŸ”’ Trail SL":sm["trailing_sl"],
-                "Net P&L":    f"â‚¹{sm['pnl']:+,.2f}",
+                "🎯 T1 Hits": sm["t1"],
+                "🎯🎯 T2 Hits": sm["t2"],
+                "🛑 SL Hits": sm["sl_hits"],
+                "🔒 Trail SL":sm["trailing_sl"],
+                "Net P&L":    f"₹{sm['pnl']:+,.2f}",
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True,
                      hide_index=True, height=min(300,60+len(rows)*40))
         st.divider()
 
-    # â”€â”€ Strategy Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Strategy Cards ────────────────────────────────────────────────────
     for strat in filtered:
         col     = strat["color"]
         bg      = strat["bg"]
         bdr     = strat["border"]
 
-        # Look up live perf â€” match by partial strategy name
+        # Look up live perf — match by partial strategy name
         live = None
         for sk, sm in strat_perf.items():
             if strat["name"][:20].lower() in sk.lower():
                 live = sm; break
 
         with st.expander(
-            f"{strat['icon']} {strat['name']} Â· {strat['tf']} Â· {strat['type']}",
+            f"{strat['icon']} {strat['name']} · {strat['tf']} · {strat['type']}",
             expanded=False,
         ):
             cc1, cc2 = st.columns([3,2])
@@ -8675,15 +9191,15 @@ def page_strategy_library():
                     st.markdown(
                         f"<div style='font-family:DM Sans,sans-serif;font-size:0.82rem;"
                         f"color:#2e3d1a;margin-bottom:2px;'>"
-                        f"<span style='color:{col};font-weight:700;'>âœ“</span> {f}</div>",
+                        f"<span style='color:{col};font-weight:700;'>✓</span> {f}</div>",
                         unsafe_allow_html=True,
                     )
 
                 # Entry / SL / T1 / T2
-                for label, val in [("ðŸŽ¯ Entry",  strat["entry"]),
-                                   ("ðŸ›‘ SL",     strat["sl"]),
-                                   ("ðŸ“ T1",     strat["t1"]),
-                                   ("ðŸš€ T2",     strat["t2"])]:
+                for label, val in [("🎯 Entry",  strat["entry"]),
+                                   ("🛑 SL",     strat["sl"]),
+                                   ("📍 T1",     strat["t1"]),
+                                   ("🚀 T2",     strat["t2"])]:
                     st.markdown(
                         f"<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
                         f"margin-bottom:3px;'><b style='color:#0e1308;'>{label}:</b> "
@@ -8719,11 +9235,11 @@ def page_strategy_library():
                         f"padding:0.65rem;margin-top:0.5rem;"
                         f"font-family:DM Mono,monospace;font-size:0.72rem;"
                         f"color:#7da048;'>"
-                        f"ðŸ§ª LIVE FT RESULTS<br>"
+                        f"🧪 LIVE FT RESULTS<br>"
                         f"<span style='color:#f8faf0;'>"
-                        f"Trades: {live['trades']} Â· Win: {wr}%<br>"
-                        f"P&L: <b style='color:{pnl_c};'>â‚¹{live['pnl']:+,.2f}</b><br>"
-                        f"T1: {live['t1']} Â· T2: {live['t2']} Â· SL: {live['sl_hits']}"
+                        f"Trades: {live['trades']} · Win: {wr}%<br>"
+                        f"P&L: <b style='color:{pnl_c};'>₹{live['pnl']:+,.2f}</b><br>"
+                        f"T1: {live['t1']} · T2: {live['t2']} · SL: {live['sl_hits']}"
                         f"</span></div>",
                         unsafe_allow_html=True,
                     )
@@ -8738,7 +9254,7 @@ def page_strategy_library():
                     )
 
             # Launch FT button
-            if st.button(f"ðŸ§ª Forward Test this strategy",
+            if st.button(f"🧪 Forward Test this strategy",
                          key=f"ft_strat_{strat['name'][:20]}",
                          use_container_width=True):
                 st.session_state["current_page"] = "Forward Testing"
@@ -8747,20 +9263,19 @@ def page_strategy_library():
 
 def render_sidebar():
     """
-    Navigation â€” uses st.radio (guaranteed to work in all Streamlit environments).
+    Navigation — uses st.radio (guaranteed to work in all Streamlit environments).
     Styled as pills via CSS override on radio buttons.
     Zero hidden buttons. Zero JS tricks. Pure Streamlit.
     """
     PAGES = [
-        ("Market Snapshot",     "ðŸ“Š Market"),
-        ("Pivot Boss Analysis", "ðŸ“ˆ Pivot Boss"),
-        ("CPR Scanner",         "ðŸ“¡ Scanner"),
-        ("Trade Signals",       "ðŸ”” Signals"),
-        ("Forward Testing",     "ðŸ§ª Fwd Test"),
-        ("Order Execution",     "âš¡ Orders"),
-        ("Strategy Library",    "ðŸ“š Strategy"),
-        ("Broker Settings",     "âš™ï¸ Broker"),
-        ("Watchlist",           "â­ Watchlist"),
+        ("Market Snapshot",     "📊 Market"),
+        ("Pivot Boss Analysis", "📈 Pivot Boss"),
+        ("Scanner & Signals",   "📡 Scanner"),
+        ("Forward Testing",     "🧪 Fwd Test"),
+        ("Order Execution",     "⚡ Orders"),
+        ("Strategy Library",    "📚 Strategy"),
+        ("Broker Settings",     "⚙️ Broker"),
+        ("Watchlist",           "⭐ Watchlist"),
     ]
     PAGE_KEYS   = [p[0] for p in PAGES]
     PAGE_LABELS = [p[1] for p in PAGES]
@@ -8775,7 +9290,7 @@ def render_sidebar():
     wl      = len(st.session_state.get("watchlist", []))
     uname   = st.session_state.get("username", "")[:14]
 
-    # â”€â”€ Override radio to look like horizontal pills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Override radio to look like horizontal pills ──────────────────────
     st.markdown("""
 <style>
 /* Hide sidebar + collapse button */
@@ -8783,10 +9298,10 @@ section[data-testid="stSidebar"]        { display:none !important; }
 [data-testid="collapsedControl"]         { display:none !important; }
 button[data-testid="baseButton-header"]  { display:none !important; }
 
-/* Radio nav â€” hide the label */
+/* Radio nav — hide the label */
 div[data-testid="stRadio"] > label { display:none !important; }
 
-/* Radio container â€” wrap like pills */
+/* Radio container — wrap like pills */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
     display       : flex !important;
     flex-wrap     : wrap !important;
@@ -8831,7 +9346,7 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
     display : none !important;
 }
 
-/* SELECTED pill â€” dark green */
+/* SELECTED pill — dark green */
 div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-selected="true"],
 div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
     background   : #3d5a1c !important;
@@ -8845,24 +9360,24 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
 </style>
 """, unsafe_allow_html=True)
 
-    # â”€â”€ Logo + user â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Logo + user ───────────────────────────────────────────────────────
     lc, rc = st.columns([5, 1])
     with lc:
         st.markdown(
             "<div style='font-family:DM Sans,sans-serif;font-weight:900;font-size:1rem;"
             "color:#0e1308;padding:0.15rem 0 0.05rem;'>"
-            "ðŸ¦ PivotVault <span style=\"color:#3d5a1c;\">AI</span></div>",
+            "🏦 PivotVault <span style=\"color:#3d5a1c;\">AI</span></div>",
             unsafe_allow_html=True,
         )
     with rc:
         st.markdown(
             "<div style='font-family:DM Mono,monospace;font-size:0.63rem;"
             "color:#4a5e32;text-align:right;padding-top:0.25rem;'>"
-            "ðŸ‘¤ " + uname + " â­" + str(wl) + "</div>",
+            "👤 " + uname + " ⭐" + str(wl) + "</div>",
             unsafe_allow_html=True,
         )
 
-    # â”€â”€ Radio nav (renders as pills via CSS above) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Radio nav (renders as pills via CSS above) ────────────────────────
     nc, lc2 = st.columns([10, 1])
     with nc:
         selected = st.radio(
@@ -8874,9 +9389,14 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
             label_visibility="hidden",
         )
     with lc2:
-        if st.button("ðŸšª", key="logout_btn", help="Logout", use_container_width=True):
+        if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
+            _clear_session()                              # delete all session files
             st.session_state["logged_in"]    = False
+            st.session_state["username"]     = ""
+            st.session_state["user_email"]   = ""
+            st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
+            st.session_state["tg_otp_code"]  = ""       # clear any pending OTP
             st.rerun()
 
     # Update page on selection change
@@ -8892,6 +9412,13 @@ def main():
     # Load persisted session + credentials on every run (survives refresh)
     _load_session()      # loads auth + calls _load_credentials inside
 
+    # Validate restored session — if logged_in but name missing, re-ask login
+    if st.session_state.get("logged_in") and not st.session_state.get("username"):
+        # Partial restore — try to recover name from USERS dict
+        _uid = st.session_state.get("user_email", "")
+        if _uid and _uid in USERS:
+            st.session_state["username"] = USERS[_uid]["name"]
+
     if not st.session_state["logged_in"]:
         page_login()
         return
@@ -8899,15 +9426,30 @@ def main():
     page = render_sidebar()
     render_market_header()
     st.divider()
-    nse500 = get_nse100_df()  # NSE Top-100 â€” instant hardcoded, no HTTP
+    nse500 = fetch_nse500_list()
+
+    # Daily 9 AM Telegram token reminder (weekdays only, once per day)
+    _check_daily_token_reminder()
 
     # Show token refresh popup at top of every page if needed
     _show_token_refresh_popup()
 
+    # ── Run FT triggers on EVERY page (not just FT page) ───────────────────
+    # This ensures SL/T1/T2 are checked even when user is on Scanner/Snapshot
+    if is_market_open():
+        try:
+            _bg_fired = _ft_run_triggers()
+            for _bf in _bg_fired:
+                _icon = "🎯" if "T2" in _bf.get("hit","") else (
+                        "🎯" if "T1" in _bf.get("hit","") else "🛑")
+                st.toast(f"{_icon} {_bf['symbol']} — {_bf['hit']} | "
+                         f"₹{_bf.get('pnl',0):+,.2f}", icon=_icon)
+        except Exception:
+            pass
+
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
-    elif page == "CPR Scanner":          page_cpr_scanner(nse500)
-    elif page == "Trade Signals":        page_trade_signals(nse500)
+    elif page == "Scanner & Signals":    page_scanner_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
