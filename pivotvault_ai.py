@@ -1088,26 +1088,34 @@ def _load_credentials():
 
 
 def _load_session():
-    """Load persisted session + credentials from disk on every app startup."""
-    try:
-        if os.path.exists(_SESSION_FILE):
-            with open(_SESSION_FILE) as f:
-                data = json.load(f)
-            for k in ["logged_in","username","user_email","user_phone",
-                      "user_id","current_page"]:
-                if k in data and k not in st.session_state:
-                    st.session_state[k] = data[k]
-    except Exception:
-        pass
+    """
+    Load persisted session from disk on every app startup/refresh.
+    Force-restores auth state so browser refresh never logs the user out.
+    Reads from all 3 storage locations and picks the freshest valid session.
+    """
+    data = {}
+    # Try all session file locations — pick freshest valid one
+    for path in _all_session_paths():
+        try:
+            if os.path.exists(path):
+                mtime = os.path.getmtime(path)
+                with open(path) as f:
+                    d = json.load(f)
+                if d and d.get("logged_in"):  # only restore if it was a logged-in session
+                    data = d
+                    break
+        except Exception:
+            continue
+
+    if data:
+        # Force-overwrite auth keys — even if defaults already set logged_in=False
+        for k in ["logged_in", "username", "user_email", "user_phone",
+                  "user_id", "current_page"]:
+            if k in data:
+                st.session_state[k] = data[k]
+
     # Always load broker credentials (persisted permanently)
     _load_credentials()
-    # Always load broker credentials (API key/secret persist permanently)
-    _load_credentials()
-    # Always load broker credentials (they persist until user resets)
-    try:
-        _load_credentials()
-    except Exception:
-        pass
 
 
 def _save_credentials():
@@ -1157,25 +1165,31 @@ def _upstox_token_expired() -> bool:
     return False
 
 def _save_session():
-    """Persist auth state to disk so refresh keeps user logged in."""
+    """Persist auth state to all 3 storage locations — survives refresh/restart."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["logged_in","username","user_email","user_phone",
                  "user_id","current_page"]}
-        with open(_SESSION_FILE, "w") as f:
-            json.dump(data, f)
-        # Also save credentials separately
+        payload = json.dumps(data)
+        for path in _all_session_paths():
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(payload)
+            except Exception:
+                pass
         _save_credentials()
     except Exception:
         pass
 
 def _clear_session():
-    """Delete persisted session on logout."""
-    try:
-        if os.path.exists(_SESSION_FILE):
-            os.remove(_SESSION_FILE)
-    except Exception:
-        pass
+    """Delete persisted session from ALL 3 storage locations on logout."""
+    for path in _all_session_paths():
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
 defaults = {
     # Auth
@@ -2866,7 +2880,7 @@ def page_login():
                         st.session_state["user_id"]    = user["email"]
                         st.session_state["user_email"] = user["email"]
                         st.session_state["user_phone"] = user.get("phone","")
-                        _save_session()
+                        _save_session()   # persist — survives browser refresh
                         st.rerun()
                     else:
                         st.error("❌ Wrong email or PIN.")
@@ -6842,11 +6856,19 @@ def _trade_buttons(s: dict):
             except Exception:
                 live = s.get("entry", 0)
             st.session_state["ft_pending_signal"] = {
-                "symbol": sym, "side": s["side"], "entry": live,
-                "sl": s.get("sl",0), "t1": s.get("t1",0), "t2": s.get("t2",0),
-                "rr": s.get("rr1",2.0),
-                "source": f"Signal {s.get('tf','—')}",
-                "strategy": s.get("rationale","CPR Signal")[:50],
+                "symbol":   sym,
+                "side":     s["side"],
+                "entry":    live,
+                "sl":       s.get("sl",    0),
+                "t1":       s.get("t1",    0),
+                "t2":       s.get("t2",    0),
+                "rr1":      s.get("rr1",   2.0),
+                "tf":       s.get("tf",    "—"),
+                "strength": s.get("strength", 0),
+                "candle":   s.get("candle",   "—"),
+                "rationale":s.get("rationale","CPR Signal"),
+                "strategy": s.get("strategy", s.get("rationale","CPR Signal"))[:50],
+                "source":   f"🖐 Manual · {s.get('tf','—')}",
             }
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
@@ -7830,14 +7852,13 @@ def _ft_get_ltp(symbol: str) -> float:
 
 # ── Signal auto-entry (called from scanner + signal tab) ─────────────────
 
-def ft_add_signal(s: dict, source: str = "Scanner"):
+def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
     """
-    Auto-add a scanner signal as a Forward Test position.
+    Add a signal as a Forward Test position.
 
     Rules:
-    - Supports both India (NSE) and US (NYSE/NASDAQ) markets
-    - India : enters during 9:45–14:45 IST Mon-Fri
-    - US    : enters during 9:45–15:45 EST/EDT Mon-Fri
+    - manual=False (auto): only enters during 9:45–14:45 IST auto-trade window
+    - manual=True:         enters during any market hours (9:15–15:30 IST)
     - Entry price = FIRST live tick from data feed at moment of signal
     - Never re-enters same symbol+side already OPEN or traded today
     - India EOD auto-close at 15:30 IST | US EOD at 16:00 EST/EDT
@@ -7849,9 +7870,15 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
     _us     = is_us_symbol(sym)
     _mkt    = "us" if _us else "india"
 
-    # ── Only enter during live auto-trade window ──────────────────────────
-    if not is_auto_trade_open(_mkt):
-        return   # Outside market hours — skip
+    # ── Market hours gate ─────────────────────────────────────────────────
+    if manual:
+        # Manual entries allowed any time market is open (9:15–15:30 IST)
+        if not is_market_open(_mkt):
+            return   # Market fully closed — skip
+    else:
+        # Auto entries: respect strict auto-trade window (9:45–14:45 IST)
+        if not is_auto_trade_open(_mkt):
+            return   # Outside auto-trade window — skip
 
     if _us:
         now_ref = _est_now()
@@ -7881,8 +7908,12 @@ def ft_add_signal(s: dict, source: str = "Scanner"):
         return  # No live price — skip
 
     bal  = ft["balance"]
-    qty  = 100                         # Fixed 100 units per trade
+    # Dynamic position sizing: 5% of balance per trade (max 2% if 5% too large)
+    qty  = max(1, int(bal * 0.05 / max(ltp, 1)))
     cost = round(ltp * qty, 2)
+    if cost > bal:
+        qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+        cost = round(ltp * qty, 2)
     if cost > bal:
         st.session_state["ft_low_bal_alert"] = True
         return
@@ -8295,10 +8326,33 @@ def page_forward_test():
     if _HAS_AUTOREFRESH and is_market_open():
         st_autorefresh(interval=15_000, limit=None, key="ft_ar")
 
+    # ── BUG FIX: Consume manual Fwd Test signal from Trade Signals / Scanner ──
+    _pending = st.session_state.pop("ft_pending_signal", None)
+    if _pending and _pending.get("symbol"):
+        _sym = _pending.get("symbol","")
+        # Try to get fresh live price
+        try:
+            _live = _ft_get_ltp(_sym)
+            if _live and _live > 0:
+                _pending["entry"] = _live
+        except Exception:
+            pass
+        if _pending.get("entry", 0) > 0:
+            ft_add_signal(
+                _pending,
+                source=f"🖐 Manual · {_pending.get('tf', _pending.get('source','—'))}",
+                manual=True,   # bypass auto-trade window — user clicked manually
+            )
+            st.toast(f"🖐 Manual trade added: {_sym} {_pending.get('side','BUY')} "
+                     f"@ ₹{_pending.get('entry',0):,.2f}", icon="✅")
+        else:
+            st.warning(f"⚠️ Could not get live price for {_sym}. "
+                       f"Check Upstox connection or market hours.", icon="⚠️")
+
     # Run triggers on every render
     fired = _ft_run_triggers()
     for f in fired:
-        icon = "🎯" if f["hit"] == "TARGET HIT" else "🛑"
+        icon = "🎯" if "T2" in f["hit"] else ("🎯" if "T1" in f["hit"] else "🛑")
         st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon=icon)
 
     ft       = _ft_state()
@@ -9336,8 +9390,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
         )
     with lc2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
+            _clear_session()                              # delete all session files
             st.session_state["logged_in"]    = False
+            st.session_state["username"]     = ""
+            st.session_state["user_email"]   = ""
+            st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
+            st.session_state["tg_otp_code"]  = ""       # clear any pending OTP
             st.rerun()
 
     # Update page on selection change
@@ -9352,6 +9411,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
 def main():
     # Load persisted session + credentials on every run (survives refresh)
     _load_session()      # loads auth + calls _load_credentials inside
+
+    # Validate restored session — if logged_in but name missing, re-ask login
+    if st.session_state.get("logged_in") and not st.session_state.get("username"):
+        # Partial restore — try to recover name from USERS dict
+        _uid = st.session_state.get("user_email", "")
+        if _uid and _uid in USERS:
+            st.session_state["username"] = USERS[_uid]["name"]
 
     if not st.session_state["logged_in"]:
         page_login()
@@ -9368,10 +9434,22 @@ def main():
     # Show token refresh popup at top of every page if needed
     _show_token_refresh_popup()
 
+    # ── Run FT triggers on EVERY page (not just FT page) ───────────────────
+    # This ensures SL/T1/T2 are checked even when user is on Scanner/Snapshot
+    if is_market_open():
+        try:
+            _bg_fired = _ft_run_triggers()
+            for _bf in _bg_fired:
+                _icon = "🎯" if "T2" in _bf.get("hit","") else (
+                        "🎯" if "T1" in _bf.get("hit","") else "🛑")
+                st.toast(f"{_icon} {_bf['symbol']} — {_bf['hit']} | "
+                         f"₹{_bf.get('pnl',0):+,.2f}", icon=_icon)
+        except Exception:
+            pass
+
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
-    elif page == "Scanner & Signals":          page_scanner_signals(nse500)
-    elif page == "Scanner & Signals":        page_scanner_signals(nse500)
+    elif page == "Scanner & Signals":    page_scanner_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
