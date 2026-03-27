@@ -7120,7 +7120,7 @@ def page_broker_settings():
         unsafe_allow_html=True,
     )
 
-    tab_upstox, tab_zerodha, tab_groww, tab_telegram = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww", "📱 Telegram"])
+    tab_upstox, tab_zerodha, tab_groww = st.tabs(["📡 Upstox (Data + Trading)", "⚡ Zerodha Kite", "🟢 Groww"])
 
     # ══════════════════════════════
     #  UPSTOX — Data Feed + Trading
@@ -7324,102 +7324,6 @@ def page_broker_settings():
             st.success("Groww selected. Signal cards will link to Groww stock pages.")
 
     # ── Status summary ────────────────────────────────────────────────────
-
-    # ══════════════════════════════
-    #  TELEGRAM NOTIFICATIONS
-    # ══════════════════════════════
-    with tab_telegram:
-        st.markdown("### 📱 Telegram Notifications")
-        st.markdown(
-            "<div style='background:#f0f4e8;border:1px solid #b8c89a;border-radius:8px;"
-            "padding:0.8rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-            "color:#2e3d1a;margin-bottom:1rem;'>"
-            "Instant alerts: New signals &nbsp;&nbsp; Trade entry &nbsp;&nbsp; "
-            "T1/T2 hit &nbsp;&nbsp; SL hit</div>",
-            unsafe_allow_html=True,
-        )
-        tgs = st.session_state.get("telegram_cfg", {})
-
-        with st.expander("📖 Setup Instructions", expanded=not tgs.get("bot_token")):
-            st.markdown(
-                "**Step 1** — Open Telegram → search **@BotFather** → `/newbot` → copy **Bot Token**\n\n"
-                "**Step 2** — Send any message to your bot → open "
-                "`https://api.telegram.org/bot<TOKEN>/getUpdates` → find your **Chat ID**\n\n"
-                "**Step 3** — Paste below → Save → Test"
-            )
-
-        st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            bt = st.text_input("Bot Token", value=tgs.get("bot_token", ""),
-                               type="password", placeholder="123456789:ABCdef...", key="tg_bt")
-        with c2:
-            ci = st.text_input("Chat ID", value=tgs.get("chat_id", ""),
-                               placeholder="-123456789", key="tg_ci")
-
-        st.markdown("**Notification Toggles**")
-        tc1, tc2, tc3, tc4 = st.columns(4)
-        with tc1: ns = st.checkbox("New Signals",  value=tgs.get("notify_signals", True), key="tg_ns")
-        with tc2: ne = st.checkbox("Trade Entry",  value=tgs.get("notify_entry",   True), key="tg_ne")
-        with tc3: nt = st.checkbox("T1/T2 Hit",    value=tgs.get("notify_t1",      True), key="tg_nt")
-        with tc4: nl = st.checkbox("SL Hit",        value=tgs.get("notify_sl",      True), key="tg_nl")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        b1, b2, b3 = st.columns([2, 2, 1])
-        with b1:
-            if st.button("💾 Save Settings", use_container_width=True, key="tg_save"):
-                st.session_state["telegram_cfg"] = {
-                    "bot_token": bt.strip(), "chat_id": ci.strip(),
-                    "notify_signals": ns, "notify_entry": ne,
-                    "notify_t1": nt, "notify_t2": nt, "notify_sl": nl,
-                }
-                _save_credentials()
-                st.success("✅ Telegram settings saved & persisted!")
-        with b2:
-            if st.button("📨 Send Test Message", use_container_width=True, key="tg_test"):
-                import requests as _treq
-                test_ok = False
-                if bt.strip() and ci.strip():
-                    try:
-                        tr = _treq.post(
-                            f"https://api.telegram.org/bot{bt.strip()}/sendMessage",
-                            json={"chat_id": ci.strip(),
-                                  "text": "<b>PivotVault AI Test</b>\n<b>BUY RELIANCE</b> 15m\n"
-                                          "Entry 2,850 · T1 2,920 · SL 2,800\nTelegram is working!",
-                                  "parse_mode": "HTML"},
-                            timeout=5,
-                        )
-                        test_ok = tr.status_code == 200
-                    except Exception:
-                        test_ok = False
-                if test_ok:
-                    st.success("✅ Sent! Check Telegram.")
-                elif bt.strip() and ci.strip():
-                    st.error("❌ Failed — check your Bot Token and Chat ID.")
-                else:
-                    st.error("Enter Bot Token and Chat ID above first.")
-        with b3:
-            if st.button("🗑 Clear", use_container_width=True, key="tg_clr"):
-                st.session_state["telegram_cfg"] = {}
-                _save_credentials()
-                st.rerun()
-
-        st.divider()
-        if tgs.get("bot_token") and tgs.get("chat_id"):
-            st.markdown(
-                "<div style='background:#e4f5e8;border:1px solid #8dcc9a;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-                "color:#1a6b2e;'><b>✅ Telegram ACTIVE</b></div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                "<div style='background:#fdf3d4;border:1px solid #e0c060;border-radius:8px;"
-                "padding:0.6rem 1rem;font-family:DM Mono,monospace;font-size:0.78rem;"
-                "color:#7a5800;'><b>⚠️ Telegram not configured</b> — add credentials above.</div>",
-                unsafe_allow_html=True,
-            )
-
     st.divider()
     connected = st.session_state.get("broker_connected", False)
     bname     = st.session_state.get("broker","none").replace("upstox","Upstox").replace("zerodha","Zerodha").replace("groww","Groww").replace("none","None")
