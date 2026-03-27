@@ -2587,8 +2587,8 @@ def db_save_signals(user_id, signals): pass
 
 
 def page_login():
-    """Login page with 5 demo credentials."""
-
+    """Login page — PIN login + Telegram OTP login."""
+    import random as rnd
     st.markdown("""
     <div style="text-align:center;padding:2rem 1rem 1.5rem;">
         <div style="font-size:2.8rem;margin-bottom:0.4rem;">🏦</div>
@@ -2605,115 +2605,132 @@ def page_login():
 
     _, col, _ = st.columns([1, 2, 1])
     with col:
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-        tab_login, tab_accounts = st.tabs(["🔐 Sign In", "👥 Accounts"])
+        method = st.radio("Login Method", ["PIN Login", "Telegram OTP"],
+                          horizontal=True, label_visibility="collapsed",
+                          key="login_method")
 
-        # ── Sign In ───────────────────────────────────────────────
-        with tab_login:
-            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:0.6rem 0;border-color:#e0e8d0'>",
+                    unsafe_allow_html=True)
 
-            method = st.radio("Method", ["🔢 PIN", "📱 OTP"],
-                              horizontal=True, label_visibility="collapsed",
-                              key="login_method")
+        if "PIN" in method:
+            identifier = st.text_input("Email",
+                placeholder="umeshbhatia.ca@gmail.com", key="login_id")
+            pin = st.text_input("4-Digit PIN", type="password",
+                max_chars=4, placeholder="••••", key="login_pin")
 
-            if "PIN" in method:
-                identifier = st.text_input("Email or Phone",
-                    placeholder="email  or  phone number", key="login_id")
-                pin = st.text_input("4-Digit PIN", type="password",
-                    max_chars=4, placeholder="••••", key="login_pin")
-
-                if st.button("🔓 Sign In", use_container_width=True, key="btn_login"):
-                    if not identifier or not pin:
-                        st.error("Enter email/phone and PIN.")
-                    else:
-                        ok, user = verify_login(identifier, pin)
-                        if ok:
-                            st.session_state["logged_in"]  = True
-                            _save_session()  # persist so refresh keeps user logged in
-                            st.session_state["username"]   = user["name"]
-                            st.session_state["user_id"]    = user["email"]
-                            st.session_state["user_email"] = user["email"]
-                            st.session_state["user_phone"] = user.get("phone","")
-                            st.rerun()
-                        else:
-                            st.error("❌ Wrong email/phone or PIN. See Accounts tab.")
-
-            else:
-                # OTP flow
-                if not st.session_state.get("otp_code"):
-                    otp_id = st.text_input("Email or Phone",
-                        placeholder="email  or  phone number", key="otp_input")
-                    if st.button("📨 Send OTP", use_container_width=True, key="btn_otp"):
-                        idf = otp_id.strip().lower()
-                        if idf in _PHONE_MAP:
-                            idf = _PHONE_MAP[idf]
-                        if idf in USERS:
-                            otp = generate_otp()
-                            st.session_state["otp_code"]   = otp
-                            st.session_state["otp_target"] = otp_id.strip()
-                            st.session_state["otp_email"]  = idf
-                            st.success(f"OTP generated: **{otp}**  (demo — shown here)")
-                            st.rerun()
-                        else:
-                            st.error("Email/phone not found. See Accounts tab.")
+            if st.button("Sign In", use_container_width=True,
+                         key="btn_login", type="primary"):
+                if not identifier or not pin:
+                    st.error("Enter email and PIN.")
                 else:
-                    st.info(f"OTP sent to: {st.session_state.get('otp_target','')}")
-                    entered = st.text_input("Enter 6-digit OTP",
-                        max_chars=6, placeholder="______", key="otp_entered")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ Verify", use_container_width=True, key="btn_verify"):
-                            if entered.strip() == st.session_state.get("otp_code",""):
-                                em   = st.session_state["otp_email"]
-                                user = get_user_by_email(em)
-                                st.session_state.update({
-                                    "logged_in": True, "username": user["name"],
-                                    "user_id": em, "user_email": em,
-                                    "user_phone": user.get("phone",""),
-                                    "otp_code": "",
-                                })
-                                st.rerun()
-                            else:
-                                st.error("Wrong OTP.")
-                    with c2:
-                        if st.button("🔄 Resend", use_container_width=True, key="btn_resend"):
-                            st.session_state["otp_code"] = ""
+                    ok, user = verify_login(identifier, pin)
+                    if ok:
+                        st.session_state["logged_in"]  = True
+                        st.session_state["username"]   = user["name"]
+                        st.session_state["user_id"]    = user["email"]
+                        st.session_state["user_email"] = user["email"]
+                        st.session_state["user_phone"] = user.get("phone", "")
+                        _save_session()   # persist — survives browser refresh
+                        st.rerun()
+                    else:
+                        st.error("Wrong email or PIN.")
+
+        else:
+            # ── Telegram OTP flow ─────────────────────────────────────────────
+            if not st.session_state.get("tg_otp_code"):
+                st.markdown("""
+                <div style="background:#f0f9f0;border:1.5px solid #b8dfc0;border-radius:10px;
+                            padding:1rem;margin-bottom:1rem;font-family:'DM Sans',sans-serif;
+                            font-size:0.85rem;color:#1e3a1e;">
+                    <b>How it works:</b><br>
+                    1. Click <b>Send OTP to Telegram</b><br>
+                    2. A 6-digit code appears in your <b>Telegram bot chat</b><br>
+                    3. Enter the code here to login
+                </div>""", unsafe_allow_html=True)
+
+                tg_bt, tg_ci = _tg_creds()
+                tg_ready = bool(tg_bt and tg_ci)
+                if not tg_ready:
+                    st.warning("Telegram not configured. Please login with PIN first, "
+                               "then set up Telegram in Settings.")
+                else:
+                    st.markdown(
+                        f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
+                        f"color:#4a5e32;margin-bottom:0.75rem;text-align:center;'>"
+                        f"OTP will be sent to your Telegram bot</div>",
+                        unsafe_allow_html=True)
+                    if st.button("Send OTP to Telegram", use_container_width=True,
+                                 key="btn_tg_otp", type="primary"):
+                        otp = str(rnd.randint(100000, 999999))
+                        st.session_state["tg_otp_code"]    = otp
+                        st.session_state["tg_otp_expires"] = (
+                            datetime.now() + timedelta(minutes=5)).strftime("%H:%M:%S")
+                        msg = (f"🔐 <b>PivotVault AI - Login OTP</b>\n"
+                               f"--------------------\n"
+                               f"Your one-time login code\n<code>{otp}</code>\n"
+                               f"Valid for 5 minutes\n"
+                               f"Expires at {st.session_state.get('tg_otp_expires','')}\n"
+                               f"If you did not request this, ignore it.")
+                        ok = _send_telegram(msg)
+                        if ok:
+                            st.success("OTP sent to Telegram! Check your bot chat.")
                             st.rerun()
-
-        # ── Accounts tab ──────────────────────────────────────────
-        with tab_accounts:
-            st.markdown(
-                "<div style='font-family:DM Mono,monospace;font-size:0.75rem;"
-                "color:#5a6a48;margin:0.5rem 0 1rem;'>"
-                "Use any of these accounts to sign in:</div>",
-                unsafe_allow_html=True,
-            )
-            for email, u in USERS.items():
-                if st.button(
-                    f"👤 {u['name']}",
-                    key=f"quick_{email}",
-                    use_container_width=True,
-                ):
-                    st.session_state.update({
-                        "logged_in": True,
-                        "username":  u["name"],
-                        "user_id":   email,
-                        "user_email": email,
-                        "user_phone": u["phone"],
-                    })
-                    st.rerun()
+                        else:
+                            st.session_state["tg_otp_code"] = ""
+                            st.error("Failed to send OTP. Check Telegram settings.")
+            else:
+                expires = st.session_state.get("tg_otp_expires", "")
                 st.markdown(
-                    f"<div style='font-family:DM Mono,monospace;font-size:0.72rem;"
-                    f"color:#5a6a48;margin:-0.4rem 0 0.5rem;padding:0.5rem 0.75rem;"
-                    f"background:#f7f9f2;border:1px solid #dae0cb;border-radius:6px;'>"
-                    f"📧 {email}  &nbsp;&nbsp;"
-                    f"<span style='background:#4e6130;color:#f4f7ec;border-radius:4px;"
-                    f"padding:1px 7px;font-weight:700;'>PIN: {u['pin']}</span>"
-                    f"&nbsp;&nbsp; 📱 {u['phone']}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
+                    f"<div style='background:#fff8e1;border:1.5px solid #ffe082;"
+                    f"border-radius:10px;padding:0.75rem;margin-bottom:0.75rem;"
+                    f"font-family:DM Mono,monospace;font-size:0.78rem;color:#5a4000;"
+                    f"text-align:center;'>⏱ OTP sent to Telegram — Expires <b>{expires}</b></div>",
+                    unsafe_allow_html=True)
+                entered = st.text_input("Enter 6-digit OTP from Telegram",
+                                        max_chars=6, placeholder="······",
+                                        key="tg_otp_entered")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Verify Login", use_container_width=True,
+                                 key="btn_tg_verify", type="primary"):
+                        try:
+                            exp_t = datetime.strptime(expires, "%H:%M:%S").replace(
+                                year=datetime.now().year,
+                                month=datetime.now().month,
+                                day=datetime.now().day)
+                            expired = datetime.now() > exp_t
+                        except Exception:
+                            expired = False
+                        if expired:
+                            st.session_state["tg_otp_code"] = ""
+                            st.error("OTP expired. Please request a new one.")
+                            st.rerun()
+                        elif entered.strip() == st.session_state.get("tg_otp_code", ""):
+                            admin  = list(USERS.keys())[0]
+                            u_data = USERS[admin]
+                            st.session_state.update({
+                                "logged_in":  True,
+                                "username":   u_data["name"],
+                                "user_id":    admin,
+                                "user_email": admin,
+                                "user_phone": u_data.get("phone", ""),
+                                "tg_otp_code": "",
+                            })
+                            _save_session()
+                            _send_telegram(
+                                f"✅ Login Successful - PivotVault AI\n"
+                                f"--------------------\n"
+                                f"User: {u_data['name']} logged in via Telegram OTP\n"
+                                f"Time: {datetime.now().strftime('%d %b %Y %I:%M %p')}")
+                            st.rerun()
+                        else:
+                            st.error("Wrong OTP. Please check and try again.")
+                with c2:
+                    if st.button("New OTP", use_container_width=True, key="btn_tg_resend"):
+                        st.session_state["tg_otp_code"] = ""
+                        st.rerun()
 
 def page_market_snapshot(nse500: pd.DataFrame):
     st.markdown(
