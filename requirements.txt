@@ -6,3 +6,4 @@ plotly
 requests
 reportlab
 streamlit-autorefresh
+streamlit-autorefresh==1.0.1
