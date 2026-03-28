@@ -5859,6 +5859,16 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         # Strength >= 75%, RR >= 2.0, Non-sideways day
                         if not (_strength >= 75 and _rr >= 2.0):
                             continue
+
+                        # ── MIN SL DISTANCE FILTER (0.50%) ──────────────────
+                        # Prevents noise-triggered SL hits on tight stops
+                        # Based on forward test analysis: 17/18 SL hits had SL% < 0.50%
+                        _entry_px = float(sig.get("entry", 0))
+                        _sl_px    = float(sig.get("sl",    0))
+                        _sl_pct   = abs(_entry_px - _sl_px) / _entry_px * 100 if _entry_px > 0 else 0
+                        if _sl_pct < 0.50:
+                            continue   # SL too tight — skip, noise will hit it
+
                         if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
                             continue
 
@@ -5868,7 +5878,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
                             continue
 
                         if auto_traded < 3:
-                            # Auto-trade top 3 — 30M preferred, then 15M, then 1H
+                            # ── AUTO-TRADE GATE: Only 30m + 1h timeframes ──
+                            # 15m excluded — too noisy, tight SL, high false signals
+                            if tf_tag not in ("30m", "1h"):
+                                continue
                             ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
                             ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
                             _traded_today.add(sig["symbol"])
