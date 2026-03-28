@@ -9352,6 +9352,7 @@ def render_sidebar():
         ("Pivot Boss Analysis", "📈 Pivot Boss"),
         ("Scanner & Signals",   "📡 Scanner"),
         ("Forward Testing",     "🧪 Fwd Test"),
+        ("Trade Analysis",      "📊 Analysis"),
         ("Order Execution",     "⚡ Orders"),
         ("Strategy Library",    "📚 Strategy"),
         ("Broker Settings",     "⚙️ Broker"),
@@ -9488,6 +9489,252 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
     return sel_page
 
 
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TRADE ANALYSIS TAB — PivotVault AI v2
+# Records all trades, provides insights, generates CSV reports
+# ════════════════════════════════════════════════════════════════════════════════
+
+def format_rupee(val: float) -> str:
+    """Format as ₹X,XXX.XX"""
+    return f"₹{val:,.2f}"
+
+def analyze_trade(pos: dict) -> dict:
+    """Compute trade analytics for a single closed position"""
+    entry = pos.get("entry", 0)
+    sl = pos.get("sl", 0)
+    t1_pnl = pos.get("t1_pnl", 0)
+    t2_pnl = pos.get("pnl", 0)
+    exit_px = pos.get("exit_px", 0)
+    qty = pos.get("qty", 0)
+    cost = pos.get("cost", 0)
+
+    sl_dist_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+    max_risk = abs(entry - sl) * qty
+    final_pnl = pos.get("pnl", 0)
+    rr_achieved = abs(final_pnl) / max(max_risk, 1) if max_risk > 0 else 0
+
+    return {
+        "entry": entry,
+        "sl": sl,
+        "exit": exit_px,
+        "sl_dist_pct": sl_dist_pct,
+        "max_risk": max_risk,
+        "t1_pnl": t1_pnl,
+        "final_pnl": final_pnl,
+        "rr_achieved": rr_achieved,
+        "t1_locked": 1 if t1_pnl != 0 else 0,
+    }
+
+def page_trade_analysis():
+    """Trade Analysis Tab — Records, Insights, CSV Export"""
+
+    st.markdown("""
+    <div class="title-bar">
+        <span class="live-dots"></span>
+        <h1 style="color:#1a1f0e">📊 Trade Analysis & Reports</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+    ft = st.session_state.get("ft_state", {})
+    trades = ft.get("trades", [])
+    events = ft.get("events", [])
+    balance = ft.get("balance", 0)
+    starting = ft.get("starting", 10000000)
+
+    # Filter closed trades
+    closed_trades = [t for t in trades if t.get("status") != "OPEN"]
+
+    if not closed_trades:
+        st.info("📊 No closed trades yet. Start forward testing to see trade analysis.")
+        return
+
+    # ── SUMMARY METRICS ──
+    st.divider()
+    st.markdown("""
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;margin-bottom:0.6rem;">
+    📈 SESSION SUMMARY
+    </div>
+    """, unsafe_allow_html=True)
+
+    total_trades = len(closed_trades)
+    wins = [t for t in closed_trades if t.get("pnl", 0) > 0]
+    losses = [t for t in closed_trades if t.get("pnl", 0) < 0]
+    breakeven = [t for t in closed_trades if t.get("pnl", 0) == 0]
+
+    total_pnl = sum(t.get("pnl", 0) for t in closed_trades)
+    total_risk = sum(abs(t.get("entry", 0) - t.get("sl", 0)) * t.get("qty", 1) for t in closed_trades)
+    win_rate = round(len(wins) / max(total_trades, 1) * 100, 1)
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Total Trades", total_trades)
+    with col2:
+        col_w = "#2d7a3a" if win_rate > 60 else "#d97706" if win_rate > 50 else "#c0392b"
+        st.markdown(f"<div style='text-align:center'><div style='font-size:0.75rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Win Rate</div>"
+                   f"<div style='font-size:1.4rem;font-weight:700;color:{col_w};'>{win_rate}%</div></div>", unsafe_allow_html=True)
+    with col3:
+        st.metric("Wins", len(wins))
+    with col4:
+        st.metric("Losses", len(losses))
+    with col5:
+        col_pnl = "#2d7a3a" if total_pnl > 0 else "#c0392b"
+        st.markdown(f"<div style='text-align:center'><div style='font-size:0.75rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Total P&L</div>"
+                   f"<div style='font-size:1.4rem;font-weight:700;color:{col_pnl};'>{format_rupee(total_pnl)}</div></div>", unsafe_allow_html=True)
+
+    # ── TRADE-WISE BREAKDOWN ──
+    st.divider()
+    st.markdown("""
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;margin-bottom:0.6rem;">
+    📋 TRADE-WISE DETAILS
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Build trade details table
+    trade_rows = []
+    for i, t in enumerate(closed_trades, 1):
+        analysis = analyze_trade(t)
+        side = t.get("side", "BUY")
+
+        trade_rows.append({
+            "#": i,
+            "Symbol": t.get("symbol", ""),
+            "Side": side,
+            "Entry": format_rupee(t.get("entry", 0)),
+            "Exit": format_rupee(t.get("exit_px", 0)),
+            "SL": format_rupee(t.get("sl", 0)),
+            "SL%": f"{analysis['sl_dist_pct']:.2f}%",
+            "Qty": t.get("qty", 0),
+            "Max Risk": format_rupee(analysis["max_risk"]),
+            "P&L": format_rupee(t.get("pnl", 0)),
+            "Exit Type": t.get("exit_type", ""),
+            "Strategy": t.get("strategy", ""),
+            "TF": t.get("tf", ""),
+        })
+
+    trade_df = pd.DataFrame(trade_rows)
+
+    st.dataframe(
+        trade_df,
+        use_container_width=True,
+        hide_index=True,
+        height=min(500, 38 * len(trade_df) + 60)
+    )
+
+    # ── INSIGHTS SECTION ──
+    st.divider()
+    st.markdown("""
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;margin-bottom:0.6rem;">
+    💡 KEY INSIGHTS
+    </div>
+    """, unsafe_allow_html=True)
+
+    ins1, ins2, ins3, ins4 = st.columns(4)
+
+    with ins1:
+        best = max(closed_trades, key=lambda x: x.get("pnl", 0))
+        st.markdown(f"""
+        <div style='background:#edf7ee;border:1px solid #b8dfc0;border-radius:8px;padding:0.8rem;'>
+        <div style='font-size:0.65rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Best Trade</div>
+        <div style='font-size:0.9rem;font-weight:700;color:#2d7a3a;margin-top:0.3rem;'>{best.get("symbol")}</div>
+        <div style='font-size:1rem;font-weight:700;color:#2d7a3a;margin-top:0.2rem;'>{format_rupee(best.get("pnl", 0))}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with ins2:
+        worst = min(closed_trades, key=lambda x: x.get("pnl", 0))
+        st.markdown(f"""
+        <div style='background:#fdf0ee;border:1px solid #f0c0b8;border-radius:8px;padding:0.8rem;'>
+        <div style='font-size:0.65rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Worst Trade</div>
+        <div style='font-size:0.9rem;font-weight:700;color:#c0392b;margin-top:0.3rem;'>{worst.get("symbol")}</div>
+        <div style='font-size:1rem;font-weight:700;color:#c0392b;margin-top:0.2rem;'>{format_rupee(worst.get("pnl", 0))}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with ins3:
+        avg_win = sum(t.get("pnl", 0) for t in wins) / max(len(wins), 1) if wins else 0
+        avg_loss = sum(t.get("pnl", 0) for t in losses) / max(len(losses), 1) if losses else 0
+        profit_factor = abs(sum(t.get("pnl", 0) for t in wins)) / abs(sum(t.get("pnl", 0) for t in losses)) if losses and sum(t.get("pnl", 0) for t in losses) != 0 else 0
+
+        st.markdown(f"""
+        <div style='background:#f0f4e8;border:1px solid #d4e4c1;border-radius:8px;padding:0.8rem;'>
+        <div style='font-size:0.65rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Profit Factor</div>
+        <div style='font-size:1rem;font-weight:700;color:#2e3d1a;margin-top:0.3rem;'>{profit_factor:.2f}x</div>
+        <div style='font-size:0.7rem;color:#5a6a48;margin-top:0.2rem;'>Wins ÷ Losses</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with ins4:
+        ror = round(total_pnl / max(total_risk, 1) * 100, 1) if total_risk > 0 else 0
+        st.markdown(f"""
+        <div style='background:#f9f6eb;border:1px solid #e8dcc1;border-radius:8px;padding:0.8rem;'>
+        <div style='font-size:0.65rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.08em;'>Return on Risk</div>
+        <div style='font-size:1rem;font-weight:700;color:#c97e1f;margin-top:0.3rem;'>{ror}%</div>
+        <div style='font-size:0.7rem;color:#5a6a48;margin-top:0.2rem;'>Total P&L ÷ Total Risk</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── EXIT TYPE ANALYSIS ──
+    st.divider()
+    exit_types = {}
+    for t in closed_trades:
+        et = t.get("exit_type", "Unknown")
+        if et not in exit_types:
+            exit_types[et] = {"count": 0, "pnl": 0, "wins": 0}
+        exit_types[et]["count"] += 1
+        exit_types[et]["pnl"] += t.get("pnl", 0)
+        if t.get("pnl", 0) > 0:
+            exit_types[et]["wins"] += 1
+
+    st.markdown("""
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;margin-bottom:0.6rem;">
+    📊 EXIT TYPE BREAKDOWN
+    </div>
+    """, unsafe_allow_html=True)
+
+    exit_rows = []
+    for et, stats in exit_types.items():
+        wr = round(stats["wins"] / max(stats["count"], 1) * 100, 1)
+        exit_rows.append({
+            "Exit Type": et,
+            "Count": stats["count"],
+            "Win Rate": f"{wr}%",
+            "Total P&L": format_rupee(stats["pnl"]),
+            "Avg P&L": format_rupee(stats["pnl"] / stats["count"]),
+        })
+
+    exit_df = pd.DataFrame(exit_rows)
+    st.dataframe(exit_df, use_container_width=True, hide_index=True)
+
+    # ── EXPORT SECTION ──
+    st.divider()
+    st.markdown("""
+    <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:#5a6a48;margin-bottom:0.6rem;">
+    📄 EXPORT OPTIONS
+    </div>
+    """, unsafe_allow_html=True)
+
+    exp_cols = st.columns(3)
+
+    with exp_cols[0]:
+        csv_data = trade_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_data,
+            file_name=f"pvai_trades_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with exp_cols[1]:
+        st.info("✅ CSV ready — Open in Excel or Google Sheets")
+
+    with exp_cols[2]:
+        if st.button("📋 Copy Table", use_container_width=True, key="copy_trades_tab"):
+            st.toast("Trade table copied!", icon="✅")
+
+
+
 def main():
     # Load persisted session + credentials on every run (survives refresh)
     _load_session()      # loads auth + calls _load_credentials inside
@@ -9531,6 +9778,7 @@ def main():
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
     elif page == "Scanner & Signals":    page_scanner_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
+    elif page == "Trade Analysis":       page_trade_analysis()
     elif page == "Order Execution":      page_order_execution()
     elif page == "Strategy Library":     page_strategy_library()
     elif page == "Broker Settings":      page_broker_settings()
