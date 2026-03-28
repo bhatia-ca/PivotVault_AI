@@ -5515,7 +5515,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # ── Global Market Toggle (persisted across refresh) ───────────────
         # Default: Nifty 100. Dow 30 / Nasdaq 100 available for US testing.
         # Choice is saved to disk so it survives page refresh and mobile switch.
-        _MARKETS     = ["🇮🇳 Nifty 100", "🇮🇳 Nifty 50", "🇮🇳 Nifty 200",
+        _MARKETS     = ["🇮🇳 Nifty 100", 
                         "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
         _saved_mkt   = st.session_state.get("scanner_market_global",
                         st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
@@ -5539,6 +5539,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
             st.rerun()
 
         _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        # US markets only live during US hours (9:30 AM–4:00 PM EST/EDT)
+        if _is_us and not is_market_open("us"):
+            st.warning("🇺🇸 US markets closed — Dow/Nasdaq scanning available 9:30 PM–4:00 AM IST")
+            return
         _feed  = "yfinance (US, no token needed)" if _is_us else "yfinance / Upstox fallback"
         _sym_count = len(get_market_list(_market))
         st.markdown(
@@ -6214,7 +6218,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         scan_time_str = datetime.now().strftime("%d %b %Y  %H:%M")
 
-        # Build WhatsApp message text
+        # Build /* WhatsApp removed */essage text
         def _wa_text(bull_df, bear_df, tf_lbl, scan_t):
             lines = [
                 "🏦 *PivotVault AI — CPR Scanner*",
@@ -6292,7 +6296,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
     <tr><td style="padding:12px 22px 20px;"><div style="background:#f7f9f2;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#8a9a78;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
     </table></td></tr></table></body></html>"""
 
-        rtab1, rtab2, rtab3 = st.tabs(["📧 Gmail / Email", "💬 WhatsApp", "⬇️ Download PDF"])
+        rtab1, rtab2, rtab3 = st.tabs(["📧 /* Gmail removed *// Email", "💬 WhatsApp", "⬇️ Download PDF"])
 
         with rtab1:
             st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
