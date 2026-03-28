@@ -5800,92 +5800,93 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     # is_auto_trade_open() enforces 09:45–14:45 IST — guard here
                     # so signals never even reach ft_add_signal pre-open.
                     _mkt_key_scan = "us" if tf_tag == "us" else "india"
+                    _auto_window_open = is_auto_trade_open(_mkt_key_scan)
                     if not is_auto_trade_open(_mkt_key_scan):
                         ranked["🤖 Auto"] = "⏸ Outside window"
                         st.session_state[f"ranked_scan_{tf_tag}"] = ranked
-                        continue  # skip auto-trade block for this tf_tag
 
-                    # ── FIX 2: Market breadth filter ───────────────────────────
-                    # If ≥80% of ranked signals are Bearish, block BUY auto-entries.
-                    # If ≥80% are Bullish, block SELL auto-entries.
-                    # Prevents counter-trend entries on strong directional days.
-                    _total_sigs   = len(ranked)
-                    _bear_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bearish").sum())
-                    _bull_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bullish").sum())
-                    _bear_dominates = _total_sigs > 0 and (_bear_sigs / _total_sigs) >= 0.80
-                    _bull_dominates = _total_sigs > 0 and (_bull_sigs / _total_sigs) >= 0.80
+                    if _auto_window_open:
+                        # ── FIX 2: Market breadth filter ───────────────────────────
+                        # If ≥80% of ranked signals are Bearish, block BUY auto-entries.
+                        # If ≥80% are Bullish, block SELL auto-entries.
+                        # Prevents counter-trend entries on strong directional days.
+                        _total_sigs   = len(ranked)
+                        _bear_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bearish").sum())
+                        _bull_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bullish").sum())
+                        _bear_dominates = _total_sigs > 0 and (_bear_sigs / _total_sigs) >= 0.80
+                        _bull_dominates = _total_sigs > 0 and (_bull_sigs / _total_sigs) >= 0.80
 
-                    _today   = datetime.now().strftime("%Y-%m-%d")
-                    _ft_evts = _ft_state().get("events", [])
-                    _traded_today = set(
-                        e.get("symbol","") for e in _ft_evts
-                        if e.get("type","") == "ENTRY"
-                        and str(e.get("time","")).startswith(_today)
-                    )
-                    auto_traded = 0
-                    for _ri, row in ranked.iterrows():
-                        sig = {
-                            "symbol":     row.get("Symbol",""),
-                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
-                            "entry":      row.get("Entry",   row.get("LTP",0)),
-                            "sl":         row.get("SL",      0),
-                            "t1":         row.get("T1",      0),
-                            "t2":         row.get("T2",      0),
-                            "rr1":        row.get("RR1",     2.0),
-                            "tf":         tf_tag,
-                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
-                            "strategy":   row.get("Strategy","CPR"),
-                            "strength":   row.get("Strength%",0),
-                            "candle":     row.get("Candle","—"),
-                            "day_type":   row.get("Day Type",""),
-                            "cpr_overlap":row.get("CPR Overlap", False),
-                            "rsi":        row.get("RSI", 50),
-                            "hma":        row.get("HMA","—"),
-                            "vol":        row.get("Vol Surge","—"),
-                            "cprw":       row.get("CPR Width%", 1.0),
-                            "ltp":        row.get("LTP", 0),
-                            "rank_score": row.get("🏆 Rank Score", 0),
-                        }
-                        _strength = float(sig.get("strength", 0))
-                        _rr       = float(sig.get("rr1", 0))
-                        _overlap  = sig.get("cpr_overlap", False)
-                        _day_type = sig.get("day_type", "")
+                        _today   = datetime.now().strftime("%Y-%m-%d")
+                        _ft_evts = _ft_state().get("events", [])
+                        _traded_today = set(
+                            e.get("symbol","") for e in _ft_evts
+                            if e.get("type","") == "ENTRY"
+                            and str(e.get("time","")).startswith(_today)
+                        )
+                        auto_traded = 0
+                        for _ri, row in ranked.iterrows():
+                            sig = {
+                                "symbol":     row.get("Symbol",""),
+                                "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                                "entry":      row.get("Entry",   row.get("LTP",0)),
+                                "sl":         row.get("SL",      0),
+                                "t1":         row.get("T1",      0),
+                                "t2":         row.get("T2",      0),
+                                "rr1":        row.get("RR1",     2.0),
+                                "tf":         tf_tag,
+                                "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
+                                "strategy":   row.get("Strategy","CPR"),
+                                "strength":   row.get("Strength%",0),
+                                "candle":     row.get("Candle","—"),
+                                "day_type":   row.get("Day Type",""),
+                                "cpr_overlap":row.get("CPR Overlap", False),
+                                "rsi":        row.get("RSI", 50),
+                                "hma":        row.get("HMA","—"),
+                                "vol":        row.get("Vol Surge","—"),
+                                "cprw":       row.get("CPR Width%", 1.0),
+                                "ltp":        row.get("LTP", 0),
+                                "rank_score": row.get("🏆 Rank Score", 0),
+                            }
+                            _strength = float(sig.get("strength", 0))
+                            _rr       = float(sig.get("rr1", 0))
+                            _overlap  = sig.get("cpr_overlap", False)
+                            _day_type = sig.get("day_type", "")
 
-                        # Block sideways + enforce quality gate
-                        if _overlap and _day_type == "Sideways":
-                            continue
-                        # Frank Ochoa optimal params:
-                        # FIX 3: Strength raised 75% → 80%, RR >= 2.0, Non-sideways day
-                        if not (_strength >= 80 and _rr >= 2.0):
-                            continue
-                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
-                            continue
+                            # Block sideways + enforce quality gate
+                            if _overlap and _day_type == "Sideways":
+                                continue
+                            # Frank Ochoa optimal params:
+                            # FIX 3: Strength raised 75% → 80%, RR >= 2.0, Non-sideways day
+                            if not (_strength >= 80 and _rr >= 2.0):
+                                continue
+                            if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                                continue
 
-                        # FIX 4: Block counter-trend entries on strong directional days
-                        # If ≥80% signals are Bearish, skip any BUY auto-entry (and vice-versa)
-                        _sig_side = sig.get("side", "SELL")
-                        if _bear_dominates and _sig_side == "BUY":
-                            ranked.loc[_ri, "🤖 Auto"] = "⛔ Bear mkt"
-                            continue
-                        if _bull_dominates and _sig_side == "SELL":
-                            ranked.loc[_ri, "🤖 Auto"] = "⛔ Bull mkt"
-                            continue
+                            # FIX 4: Block counter-trend entries on strong directional days
+                            # If ≥80% signals are Bearish, skip any BUY auto-entry (and vice-versa)
+                            _sig_side = sig.get("side", "SELL")
+                            if _bear_dominates and _sig_side == "BUY":
+                                ranked.loc[_ri, "🤖 Auto"] = "⛔ Bear mkt"
+                                continue
+                            if _bull_dominates and _sig_side == "SELL":
+                                ranked.loc[_ri, "🤖 Auto"] = "⛔ Bull mkt"
+                                continue
 
-                        # Skip if this symbol already traded today
-                        if sig["symbol"] in _traded_today:
-                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
-                            continue
+                            # Skip if this symbol already traded today
+                            if sig["symbol"] in _traded_today:
+                                ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
+                                continue
 
-                        if auto_traded < 3:
-                            # Auto-trade top 3 — 30M preferred, then 15M, then 1H
-                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
-                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
-                            _traded_today.add(sig["symbol"])
-                            auto_traded += 1
-                        # Rest are available for manual trade — marked in ranked table
+                            if auto_traded < 3:
+                                # Auto-trade top 3 — 30M preferred, then 15M, then 1H
+                                ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
+                                ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                                _traded_today.add(sig["symbol"])
+                                auto_traded += 1
+                            # Rest are available for manual trade — marked in ranked table
 
-                    # Update stored ranked result with Auto markers
-                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+                        # Update stored ranked result with Auto markers
+                        st.session_state[f"ranked_scan_{tf_tag}"] = ranked
 
             last_scan = now
 
