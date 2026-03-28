@@ -637,25 +637,35 @@ def upstox_get_index_quote(yf_ticker: str) -> dict:
     return upstox_get_quote(inst_key)
 
 def upstox_get_ltp(symbol: str) -> float:
-    """Get LTP — Upstox primary, yfinance automatic fallback."""
-    # Try Upstox if connected
+    """
+    Get LTP — Upstox primary feed, yfinance guaranteed fallback.
+    NEVER blocks or errors when Upstox token is missing/expired.
+    yfinance always provides data so the app stays live on every refresh.
+    """
+    # Layer 1: Upstox live (only when token present and valid)
     if _upstox_connected():
         try:
             q = upstox_get_quote(_upstox_instrument_key(symbol))
             ltp = q.get("ltp", 0.0)
-            if ltp and ltp > 0:
+            if ltp and float(ltp) > 0:
                 return round(float(ltp), 2)
         except Exception:
-            pass
-    # yfinance fallback (always tried if Upstox fails or not connected)
+            pass   # silently fall through — never block the app
+
+    # Layer 2: yfinance fast_info (near real-time, always available)
+    suffix = "" if is_us_symbol(symbol) else ".NS"
     try:
-        fi  = yf.Ticker(symbol + ".NS").fast_info
+        fi  = yf.Ticker(symbol + suffix).fast_info
         ltp = float(getattr(fi, "last_price", 0) or
                     getattr(fi, "regularMarketPrice", 0) or 0)
         if ltp > 0:
             return round(ltp, 2)
-        # History fallback
-        hist = yf.Ticker(symbol + ".NS").history(period="1d", interval="1m")
+    except Exception:
+        pass
+
+    # Layer 3: yfinance history last close (ultimate fallback)
+    try:
+        hist = yf.Ticker(symbol + suffix).history(period="2d", interval="1d")
         if not hist.empty:
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = [c[0] for c in hist.columns]
@@ -1033,7 +1043,9 @@ def _all_session_paths():
     ]
 
 def _load_credentials():
-    """Load credentials — checks all 3 file locations + st.secrets fallback."""
+    """Load credentials from disk — checks all 3 file locations + st.secrets fallback.
+    Restores: Upstox token, broker keys, Telegram config, SL filter, scanner market.
+    App stays fully functional on every page refresh without re-entering the token."""
     # ── 1. Try all file locations ─────────────────────────────────────────────
     data = {}
     for path in _all_creds_paths():
@@ -1047,20 +1059,31 @@ def _load_credentials():
             continue
 
     if data:
+        # Broker keys + token
         for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
                   "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                   "broker","broker_connected"]:
             if k in data and not st.session_state.get(k):
                 st.session_state[k] = data[k]
+        # Telegram
         if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
             st.session_state["telegram_cfg"] = data["telegram_cfg"]
+        # SL filter settings
+        for k in ["ft_sl_min_pct","ft_sl_max_pct","ft_sl_filter_enabled"]:
+            if k in data and k not in st.session_state:
+                st.session_state[k] = data[k]
+        # Scanner market preference
+        for k in ["scanner_market","scanner_market_global"]:
+            if k in data and k not in st.session_state:
+                st.session_state[k] = data[k]
 
-    # ── 2. st.secrets fallback — always wins for Telegram + Upstox keys ──────
+    # ── 2. st.secrets fallback — wins for Telegram + Upstox keys ─────────────
     # This survives ALL restarts since secrets are stored on Streamlit Cloud
     try:
         _sec = st.secrets
         # Telegram from secrets
-        if not st.session_state.get("telegram_cfg") or            not st.session_state["telegram_cfg"].get("bot_token"):
+        if not st.session_state.get("telegram_cfg") or \
+                not st.session_state["telegram_cfg"].get("bot_token"):
             _tg = _sec.get("telegram", {})
             if _tg and _tg.get("bot_token"):
                 st.session_state["telegram_cfg"] = {
@@ -1079,6 +1102,9 @@ def _load_credentials():
                 st.session_state["upstox_api_key"]    = str(_up["api_key"])
             if _up.get("api_secret") and not st.session_state.get("upstox_api_secret"):
                 st.session_state["upstox_api_secret"] = str(_up["api_secret"])
+            # Also restore token from secrets if stored there (optional advanced setup)
+            if _up.get("access_token") and not st.session_state.get("upstox_access_token"):
+                st.session_state["upstox_access_token"] = str(_up["access_token"])
         # App defaults from secrets
         _app = _sec.get("app", {})
         if _app.get("default_balance") and not st.session_state.get("_ft_balance_set"):
@@ -1119,21 +1145,27 @@ def _load_session():
 
 
 def _save_credentials():
-    """Persist broker credentials to ALL storage locations (triple-backup)."""
+    """Persist broker credentials + Upstox token to ALL storage locations (triple-backup).
+    Token is saved so browser refresh / mobile switch never loses it."""
     try:
         data = {k: st.session_state.get(k,"") for k in
                 ["upstox_api_key","upstox_api_secret","upstox_access_token",
                  "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
-                 "broker","broker_connected"]}
+                 "broker","broker_connected",
+                 # SL filter settings — persist across sessions
+                 "ft_sl_min_pct","ft_sl_max_pct","ft_sl_filter_enabled",
+                 # Scanner market preference
+                 "scanner_market","scanner_market_global",
+                 ]}
         if st.session_state.get("telegram_cfg"):
             data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Write to ALL 3 locations — whichever is writable will succeed
+        payload = json.dumps(data)
         for path in _all_creds_paths():
             try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
                 with open(path, "w") as f:
-                    json.dump(data, f)
+                    f.write(payload)
             except Exception:
                 pass
     except Exception:
@@ -1349,6 +1381,17 @@ _NIFTY50_SYMBOLS = [
     "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
 ]
 
+# ── Nifty 100 = Nifty 50 + Next 50 most liquid large-caps ────────────────
+_NIFTY100_SYMBOLS = _NIFTY50_SYMBOLS + [
+    "VEDL","SIEMENS","HAVELLS","PIDILITIND","DABUR","GODREJCP","COLPAL","MARICO",
+    "BERGEPAINT","MUTHOOTFIN","CHOLAFIN","RECLTD","PFC","BANKBARODA","CANBK","PNB",
+    "FEDERALBNK","IDFCFIRSTB","RBLBANK","BAJAJ-AUTO","HEROMOTOCO","EICHERMOT",
+    "BOSCHLTD","MOTHERSON","BALKRISIND","CONCOR","INDHOTEL","JUBLFOOD","VOLTAS",
+    "ZOMATO","NAUKRI","DMART","IRCTC","TATACOMM","LTTS","MPHASIS","COFORGE",
+    "PERSISTENT","TATAELXSI","OFSS","KPITTECH","ZYDUSLIFE","ALKEM","LUPIN",
+    "TORNTPHARM","AUROPHARMA","IPCA","LALPATHLAB","ABB","BHEL","HAL","NHPC",
+]
+
 _US_SET = set(_DOW30_SYMBOLS + _NASDAQ100_SYMBOLS)
 
 def is_us_symbol(sym: str) -> bool:
@@ -1356,15 +1399,22 @@ def is_us_symbol(sym: str) -> bool:
     return sym.upper() in _US_SET
 
 def get_market_list(market: str) -> list:
-    """Return symbol list for selected market toggle."""
+    """Return symbol list for selected market toggle.
+    Default is Nifty 100 (best liquid large-caps, fast scan).
+    Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
+    """
     if market == "🇮🇳 Nifty 50":
         return _NIFTY50_SYMBOLS
+    elif market == "🇮🇳 Nifty 100":
+        return _NIFTY100_SYMBOLS
     elif market == "🇺🇸 Dow 30":
         return _DOW30_SYMBOLS
     elif market == "🇺🇸 Nasdaq 100":
         return _NASDAQ100_SYMBOLS
-    else:  # default — Nifty 200
+    elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
+    else:
+        return _NIFTY100_SYMBOLS   # default everywhere = Nifty 100
 
 
 @st.cache_data(ttl=3600)
@@ -2446,61 +2496,55 @@ def get_market_status(market: str = "india") -> dict:
 
 
 def _show_token_refresh_popup():
-    """Show token expiry dialog — only when user is logged in."""
-    # Never show on logout / login screen
+    """Show optional Upstox token refresh — non-blocking info banner.
+    App continues working via yfinance even without token.
+    Token is optional — only needed for faster live data and real order execution.
+    """
     if not st.session_state.get("logged_in"):
         return
 
-    api_key    = st.session_state.get("upstox_api_key","")
-    api_secret = st.session_state.get("upstox_api_secret","")
+    # Only show if user has saved API keys (means they intentionally set up Upstox)
+    # but the token is now expired/missing. Don't show to users who never set Upstox up.
+    api_key = st.session_state.get("upstox_api_key", "")
+    if not api_key:
+        return  # User never configured Upstox — no popup needed, yfinance just works
 
-    # Check if token is expired
-    token_expired = (
-        st.session_state.get("upstox_api_key","") and   # has credentials
-        (not _upstox_connected() or _upstox_token_expired())  # but token invalid
-    )
-
+    token_expired = not _upstox_connected() or _upstox_token_expired()
     if not token_expired:
-        return
+        return  # Token is fine — no popup needed
 
-    st.markdown("""
-    <div style='background:#1a1f0e;border:2px solid #7c3aed;border-radius:12px;
-                padding:1rem 1.25rem;margin-bottom:0.75rem;'>
-      <div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#c8a0f0;
-                  letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem;'>
-        ⚡ Upstox Token Refresh Required
-      </div>
-      <div style='font-family:DM Mono,monospace;font-size:0.8rem;color:#f8faf0;'>
-        Your Upstox access token has expired or is invalid.
-        Paste today's token below to restore live data feed and trading.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns([4,1])
-    with col1:
-        new_token = st.text_input(
-            "Paste new Upstox access token",
-            key="token_refresh_input",
-            type="password",
-            placeholder="eyJ0eXAiOiJKV1Qi...",
-            label_visibility="collapsed",
+    # Non-blocking collapsible banner (not a page blocker)
+    with st.expander("📡 Upstox token expired — click to refresh (optional, yfinance is live)", expanded=False):
+        st.markdown(
+            "<div style='font-family:DM Mono,monospace;font-size:0.76rem;color:#4a5e32;"
+            "padding:0.3rem 0;'>"
+            "Your Upstox token has expired. The app continues working with yfinance data (15-min delay). "
+            "Paste today's token below to restore real-time Upstox feed and live order execution."
+            "</div>",
+            unsafe_allow_html=True,
         )
-    with col2:
-        if st.button("✅ Activate", key="token_refresh_btn", use_container_width=True):
-            t = (new_token or "").strip()
-            if t and t.startswith("eyJ") and len(t) > 100:
-                st.session_state["upstox_access_token"] = t
-                st.session_state["broker_connected"]    = True
-                st.session_state["upstox_token_expired"]= False
-                _save_credentials()
-                st.cache_data.clear()
-                st.success("✅ Token updated! Live data feed restored.")
-                st.rerun()
-            else:
-                st.error("Invalid token. Must start with 'eyJ' and be 500+ characters.")
-
-    st.markdown("---")
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            new_token = st.text_input(
+                "Paste new Upstox access token",
+                key="token_refresh_input",
+                type="password",
+                placeholder="eyJ0eXAiOiJKV1Qi...",
+                label_visibility="collapsed",
+            )
+        with col2:
+            if st.button("✅ Activate", key="token_refresh_btn", use_container_width=True):
+                t = (new_token or "").strip()
+                if t and t.startswith("eyJ") and len(t) > 100:
+                    st.session_state["upstox_access_token"] = t
+                    st.session_state["broker_connected"]    = True
+                    st.session_state["upstox_token_expired"]= False
+                    _save_credentials()
+                    st.cache_data.clear()
+                    st.success("✅ Token updated! Live Upstox feed restored.")
+                    st.rerun()
+                else:
+                    st.error("Invalid token. Must start with 'eyJ' and be 500+ characters.")
 
 
 def _check_daily_token_reminder():
@@ -2565,39 +2609,39 @@ def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    _scan_mkt = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
+    _scan_mkt = st.session_state.get("scanner_market_global",
+                  st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
     _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
     _mkt_status_us    = get_market_status("us")
 
-    # ── Token expiry popup (shown if Upstox creds saved but token expired) ──
+    # Data feed status — yfinance always live; Upstox optional enhancement
+    _upstox_ok = _upstox_connected()
+    _feed_label = "📡 Upstox Live + yfinance" if _upstox_ok else "📊 yfinance (always live · Upstox optional)"
+    _feed_color = "#1a6b2e" if _upstox_ok else "#4a5e32"
+
+    # Non-blocking optional Upstox token refresh (collapsed by default)
     _show_token_refresh_popup()
 
     # Show Upstox renewal error if any (non-blocking)
     renewal_err = st.session_state.pop("upstox_renewal_error", None)
     if renewal_err:
-        st.warning(f"♻️ Upstox auto-renewal failed: {renewal_err[:80]} — Go to ⚙️ Broker to fix.", icon="⚠️")
+        st.warning(f"♻️ Upstox auto-renewal: {renewal_err[:80]} — yfinance is still active.", icon="ℹ️")
 
     # Show price alert notifications
     alert_notifs = st.session_state.pop("alert_notifications", [])
     for sym, msg in alert_notifs:
         st.toast(f"🔔 {msg}", icon="🎯")
 
-    # Market status pill + refresh button
-    status_col, refresh_col = st.columns([6, 1])
+    # Market status pill + data feed badge + refresh button
+    status_col, feed_col, refresh_col = st.columns([5, 3, 1])
     with status_col:
         dot_color = "#16a34a" if open_ else "#dc2626"
         status    = "LIVE · NSE Open" if open_ else "Market Closed"
         next_info = ""
         if not open_:
-            if now_ist.weekday() >= 5:
-                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
-            elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
-                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
-            else:
-                next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
-
+            next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
             f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;'>"
@@ -2610,15 +2654,20 @@ def render_market_header():
             f"</div>",
             unsafe_allow_html=True,
         )
+    with feed_col:
+        st.markdown(
+            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
+            f"color:{_feed_color};padding:0.35rem 0;text-align:center;'>"
+            f"{_feed_label}</div>",
+            unsafe_allow_html=True,
+        )
     with refresh_col:
         if st.button("🔄 Refresh", use_container_width=True, key="global_refresh"):
-            # Clear all data caches so everything reloads fresh
             st.cache_data.clear()
             st.rerun()
 
     # Auto-refresh using streamlit-autorefresh (reliable on Streamlit Cloud)
     if open_ and _HAS_AUTOREFRESH:
-        # 30s during market hours
         st_autorefresh(interval=30_000, limit=None, key="mkt_autorefresh")
     elif open_ and not _HAS_AUTOREFRESH:
         st.caption("💡 Install streamlit-autorefresh for live auto-refresh")
@@ -5440,43 +5489,51 @@ def page_scanner_signals(nse500: pd.DataFrame):
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
-        # ── Market Toggle ──────────────────────────────────────────────────
-        _market = st.session_state.get("scanner_market", "🇮🇳 Nifty 200")
-        _tm1, _tm2, _tm3, _tm4 = st.columns(4)
-        with _tm1:
-            if st.button("🇮🇳 Nifty 200", use_container_width=True,
-                         type="primary" if _market == "🇮🇳 Nifty 200" else "secondary",
-                         key="mkt_nifty200"):
-                st.session_state["scanner_market"] = "🇮🇳 Nifty 200"; st.rerun()
-        with _tm2:
-            if st.button("🇮🇳 Nifty 50", use_container_width=True,
-                         type="primary" if _market == "🇮🇳 Nifty 50" else "secondary",
-                         key="mkt_nifty50"):
-                st.session_state["scanner_market"] = "🇮🇳 Nifty 50"; st.rerun()
-        with _tm3:
-            if st.button("🇺🇸 Dow 30", use_container_width=True,
-                         type="primary" if _market == "🇺🇸 Dow 30" else "secondary",
-                         key="mkt_dow30"):
-                st.session_state["scanner_market"] = "🇺🇸 Dow 30"; st.rerun()
-        with _tm4:
-            if st.button("🇺🇸 Nasdaq 100", use_container_width=True,
-                         type="primary" if _market == "🇺🇸 Nasdaq 100" else "secondary",
-                         key="mkt_nasdaq"):
-                st.session_state["scanner_market"] = "🇺🇸 Nasdaq 100"; st.rerun()
+        # ── Global Market Toggle (persisted across refresh) ───────────────
+        # Default: Nifty 100. Dow 30 / Nasdaq 100 available for US testing.
+        # Choice is saved to disk so it survives page refresh and mobile switch.
+        _MARKETS     = ["🇮🇳 Nifty 100", "🇮🇳 Nifty 50", "🇮🇳 Nifty 200",
+                        "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
+        _saved_mkt   = st.session_state.get("scanner_market_global",
+                        st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+        # Migrate legacy values
+        if _saved_mkt not in _MARKETS:
+            _saved_mkt = "🇮🇳 Nifty 100"
+
+        _market = st.radio(
+            "Scan universe",
+            _MARKETS,
+            index=_MARKETS.index(_saved_mkt),
+            horizontal=True,
+            key="mkt_radio_global",
+            label_visibility="collapsed",
+        )
+        # Persist selection immediately so refresh / mobile keeps it
+        if _market != _saved_mkt:
+            st.session_state["scanner_market"]        = _market
+            st.session_state["scanner_market_global"] = _market
+            _save_credentials()   # write to disk right now
+            st.rerun()
+
         _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        _feed  = "yfinance (US, no token needed)" if _is_us else "yfinance / Upstox fallback"
+        _sym_count = len(get_market_list(_market))
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; "
-            f"{'<b>$USD</b> · yfinance (US)' if _is_us else '<b>₹INR</b> · Upstox / yfinance'}"
+            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"{'<b>$USD</b> · ' if _is_us else '<b>₹INR</b> · '}"
+            f"{_feed} &nbsp;·&nbsp; "
+            f"{'⚠️ US market — yfinance only, no Upstox needed' if _is_us else '✅ Data always live via yfinance'}"
             f"</div>", unsafe_allow_html=True)
         st.divider()
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>15 Min &amp; 30 Min</b> → Auto Forward Testing &nbsp;|&nbsp; "
-            "🖐 <b>1h / 1d / 1wk / 1mo</b> → Manual execution required</div>",
+            "⚡ <b>15 Min &amp; 30 Min &amp; 1 Hour</b> → Auto-scan + Forward Testing &nbsp;|&nbsp; "
+            "🖐 <b>1d / 1wk / 1mo</b> → Manual execution required &nbsp;|&nbsp; "
+            "📡 <b>Data feed:</b> yfinance always active (Upstox enhances speed when token present)</div>",
             unsafe_allow_html=True)
 
         TF_CONFIG = {
