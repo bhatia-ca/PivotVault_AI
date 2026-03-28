@@ -9488,8 +9488,8 @@ def main():
     # Daily 9 AM Telegram token reminder (weekdays only, once per day)
     _check_daily_token_reminder()
 
-    # Show token refresh popup at top of every page if needed
-    _show_token_refresh_popup()
+    # NOTE: _show_token_refresh_popup() is called inside render_market_header() above.
+    # Do NOT call it again here — duplicate widget keys crash Streamlit.
 
     # ── Run FT triggers on EVERY page (not just FT page) ───────────────────
     # This ensures SL/T1/T2 are checked even when user is on Scanner/Snapshot
