@@ -6471,10 +6471,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # ── Pull data from CPR scanner session state ──────────────────────────
         # Only use 15Min and 1Hour scans as requested
+        # ── Only 30m + 1h in Trade Signals tab ──────────────────────────────
+        # 15m excluded: too noisy, tight SL, not auto-traded
+        # Only signals that will actually execute (AUTO or MANUAL) are shown
         TF_LABELS = {
-            "cpr_scan_15m":  ("⚡ 15 Min",  "#7c3aed", "15m"),
-            "cpr_scan_30m":  ("⏱️ 30 Min",  "#ea580c", "30m"),
-            "cpr_scan_1h":   ("🕐 1 Hour",  "#1d4ed8", "1h"),
+            "cpr_scan_30m":  ("⏱️ 30 Min · AUTO",  "#ea580c", "30m"),
+            "cpr_scan_1h":   ("🕐 1 Hour · AUTO",   "#1d4ed8", "1h"),
         }
 
         all_signals = []
