@@ -3243,16 +3243,7 @@ def page_market_snapshot(nse500: pd.DataFrame):
 # 
 # PDF generation removed - clean slate
 def S(name, font="Helvetica", **kw):
-        return ParagraphStyle(name, fontName=font, **kw)
-
-    s_title    = S("title",    fontSize=20, textColor=DARK,   leading=24, spaceAfter=2)
-    s_sub      = S("sub",      fontSize=9,  textColor=SLATE,  leading=13, spaceAfter=6)
-    s_h2       = S("h2",       fontSize=12, textColor=OLIVE,  leading=16, spaceBefore=10, spaceAfter=4,
-                   font="Helvetica-Bold")
-    s_h3       = S("h3",       fontSize=10, textColor=DARK,   leading=14, spaceBefore=6,  spaceAfter=3,
-                   font="Helvetica-Bold")
-    s_body     = S("body",     fontSize=9,  textColor=SLATE,  leading=14, spaceAfter=4)
-    s_bull     = S("bull",     fontSize=10, textColor=GREEN,  leading=14, font="Helvetica-Bold")
+# PDF section completely removed - no indentation issues
     s_bear     = S("bear",     fontSize=10, textColor=RED,    leading=14, font="Helvetica-Bold")
     s_neut     = S("neut",     fontSize=10, textColor=AMBER,  leading=14, font="Helvetica-Bold")
     s_cell     = S("cell",     fontSize=8,  textColor=DARK,   leading=11)
