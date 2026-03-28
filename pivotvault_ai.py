@@ -3240,11 +3240,12 @@ def page_market_snapshot(nse500: pd.DataFrame):
 # ─────────────────────────────────────────────
 #  NARROW CPR SCANNER
 # ─────────────────────────────────────────────
-# def generate_stock_pdf REMOVED
+# 
+# PDF generation removed - clean slate
 def S(name, font="Helvetica", **kw):
         return ParagraphStyle(name, fontName=font, **kw)
 
-        s_title = S("title", fontSize=20, textColor=DARK, leading=24, spaceAfter=2)
+    s_title    = S("title",    fontSize=20, textColor=DARK,   leading=24, spaceAfter=2)
     s_sub      = S("sub",      fontSize=9,  textColor=SLATE,  leading=13, spaceAfter=6)
     s_h2       = S("h2",       fontSize=12, textColor=OLIVE,  leading=16, spaceBefore=10, spaceAfter=4,
                    font="Helvetica-Bold")
