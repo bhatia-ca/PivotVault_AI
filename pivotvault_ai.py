@@ -5793,6 +5793,28 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
                     # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
                     # Max 1 trade per symbol per day — no duplicate entries
+
+                    # ── FIX 1: Pre-market gate ─────────────────────────────────
+                    # Block ALL auto-entries before the safe trade window opens.
+                    # Data analysis showed 17/18 SL hits fired before 9:20 IST.
+                    # is_auto_trade_open() enforces 09:45–14:45 IST — guard here
+                    # so signals never even reach ft_add_signal pre-open.
+                    _mkt_key_scan = "us" if tf_tag == "us" else "india"
+                    if not is_auto_trade_open(_mkt_key_scan):
+                        ranked["🤖 Auto"] = "⏸ Outside window"
+                        st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+                        continue  # skip auto-trade block for this tf_tag
+
+                    # ── FIX 2: Market breadth filter ───────────────────────────
+                    # If ≥80% of ranked signals are Bearish, block BUY auto-entries.
+                    # If ≥80% are Bullish, block SELL auto-entries.
+                    # Prevents counter-trend entries on strong directional days.
+                    _total_sigs   = len(ranked)
+                    _bear_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bearish").sum())
+                    _bull_sigs    = int((ranked.get("Pattern", pd.Series()) == "Bullish").sum())
+                    _bear_dominates = _total_sigs > 0 and (_bear_sigs / _total_sigs) >= 0.80
+                    _bull_dominates = _total_sigs > 0 and (_bull_sigs / _total_sigs) >= 0.80
+
                     _today   = datetime.now().strftime("%Y-%m-%d")
                     _ft_evts = _ft_state().get("events", [])
                     _traded_today = set(
@@ -5833,10 +5855,20 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         if _overlap and _day_type == "Sideways":
                             continue
                         # Frank Ochoa optimal params:
-                        # Strength >= 75%, RR >= 2.0, Non-sideways day
-                        if not (_strength >= 75 and _rr >= 2.0):
+                        # FIX 3: Strength raised 75% → 80%, RR >= 2.0, Non-sideways day
+                        if not (_strength >= 80 and _rr >= 2.0):
                             continue
                         if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                            continue
+
+                        # FIX 4: Block counter-trend entries on strong directional days
+                        # If ≥80% signals are Bearish, skip any BUY auto-entry (and vice-versa)
+                        _sig_side = sig.get("side", "SELL")
+                        if _bear_dominates and _sig_side == "BUY":
+                            ranked.loc[_ri, "🤖 Auto"] = "⛔ Bear mkt"
+                            continue
+                        if _bull_dominates and _sig_side == "SELL":
+                            ranked.loc[_ri, "🤖 Auto"] = "⛔ Bull mkt"
                             continue
 
                         # Skip if this symbol already traded today
@@ -8229,6 +8261,70 @@ def _ft_run_triggers() -> list:
             pos["upnl"] = round((ltp - pos["entry"]) * pos.get("qty_remaining", pos["qty"]), 2)
         else:
             pos["upnl"] = round((pos["entry"] - ltp) * pos.get("qty_remaining", pos["qty"]), 2)
+
+        # ── FIX 5: Mid-day stop-loss (India only) ────────────────────────
+        # If a position is >0.30% against us at/after 13:00 IST, close it.
+        # Prevents holding losing trades all day to EOD — analysis showed
+        # SBICARD, DIVISLAB, HDFCAMC, UNH all lost at EOD having been red
+        # since mid-session.
+        if not is_us_symbol(pos["symbol"]):
+            from datetime import timezone as _tzmd
+            _ist_md = datetime.now(_tzmd(timedelta(hours=5, minutes=30)))
+            _midday_due = (
+                _ist_md.weekday() < 5
+                and _ist_md.hour >= 13
+                and pos["status"] == "OPEN"   # only before T1 (T1 already moves SL to entry)
+                and pos.get("qty_remaining", pos["qty"]) == pos["qty"]  # full position still open
+                and not pos.get("midday_sl_fired", False)
+            )
+            if _midday_due:
+                _upnl_pct = round(pos["upnl"] / max(pos["cost"], 1) * 100, 2)
+                if _upnl_pct <= -0.30:
+                    # Close full position at current LTP
+                    rem_qty  = pos.get("qty_remaining", pos["qty"])
+                    pnl_val  = round((ltp - pos["entry"]) * rem_qty if bull
+                                     else (pos["entry"] - ltp) * rem_qty, 2)
+                    pnl_pct  = round(pnl_val / max(pos["cost"], 1) * 100, 2)
+                    pos.update({
+                        "status":        "MIDDAY SL",
+                        "exit_px":       ltp,
+                        "pnl":           pnl_val,
+                        "pnl_pct":       pnl_pct,
+                        "upnl":          0.0,
+                        "closed_at":     now,
+                        "exit_type":     "Mid-Day SL (>0.3% down @ 13h)",
+                        "qty_remaining": 0,
+                        "midday_sl_fired": True,
+                    })
+                    ft["balance"] = round(ft["balance"] + pos["cost"] + pnl_val, 2)
+                    ft["events"].append({
+                        "time":     now,
+                        "type":     "MIDDAY SL",
+                        "id":       pos["id"],
+                        "symbol":   pos["symbol"],
+                        "side":     pos["side"],
+                        "price":    ltp,
+                        "entry":    pos["entry"],
+                        "qty":      rem_qty,
+                        "pnl":      pnl_val,
+                        "pnl_pct":  pnl_pct,
+                        "source":   pos["source"],
+                        "strategy": pos["strategy"],
+                        "tf":       pos.get("tf", "—"),
+                        "note":     f"Mid-day SL fired @ 13h — position was {_upnl_pct:.2f}% down. Closed @ ₹{ltp}",
+                    })
+                    fired.append({
+                        "symbol":   pos["symbol"],
+                        "hit":      "MID-DAY SL @ 13h",
+                        "pnl":      pnl_val,
+                        "strategy": pos["strategy"],
+                        "note":     f"Closed early — {_upnl_pct:.2f}% loss at 13h",
+                    })
+                    _send_telegram(_tg_trade_msg(
+                        {**pos, "exit_px": ltp, "pnl": pnl_val},
+                        event_type="MID-DAY SL @ 13h",
+                    ))
+                    continue  # skip further SL/T1/T2 checks for this position
 
         # ── Stage 1: T1 hit (only if not already trailing) ────────────────
         if pos["status"] == "OPEN":
