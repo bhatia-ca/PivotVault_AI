@@ -6248,16 +6248,19 @@ st.divider()
 
     # ══════════════════════════════════════════════════════════════
     #  SECTION 2 — TODAY'S ORDERS FROM UPSTOX
-    # ══════════════════════════════════════════════════════════════
-    st.markdown("### 📋 Today's Orders (from Upstox)")
+    # ═══════════════════════════════════════════════════════════════
+    # SECTION 2 — TODAY'S ORDERS FROM UPSTOX
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Today\'s Orders (from Upstox)")
     c_fetch, c_exit = st.columns([2,1])
     with c_fetch:
         if st.button("🔄 Fetch Live Orders", key="oe_fetch_orders", use_container_width=True):
             with st.spinner("Fetching orders..."):
-                orders = upstox_get_orders_today()
-            st.session_state["oe_live_orders"] = orders
-
+                # orders logic here...
+                pass
     with c_exit:
+        # exit logic here...
+        pass
         if st.button("🚨 Exit ALL Positions", key="oe_exit_all", use_container_width=True,
                      help="Emergency exit — closes all open intraday positions"):
             if st.session_state.get("oe_confirm_exit"):
