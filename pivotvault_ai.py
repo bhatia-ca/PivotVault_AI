@@ -1435,7 +1435,7 @@ def fetch_nifty200_list() -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  US MARKET STOCK LISTS — Dow 30 + Nasdaq 100
+#  US MARKET STOCK LISTS — removed (NSE only build)
 # ══════════════════════════════════════════════════════════════════════════════
 
 _DOW30_SYMBOLS = [
@@ -1487,16 +1487,13 @@ def is_us_symbol(sym: str) -> bool:
 def get_market_list(market: str) -> list:
     """Return symbol list for selected market toggle.
     Default is Nifty 100 (best liquid large-caps, fast scan).
-    Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
+    NSE only — Nifty 100 is the fixed scan universe.
     """
     if market == "🇮🇳 Nifty 50":
         return _NIFTY50_SYMBOLS
     elif market == "🇮🇳 Nifty 100":
         return _NIFTY100_SYMBOLS
-    elif market == "🇺🇸 Dow 30":
-        return _DOW30_SYMBOLS
-    elif market == "🇺🇸 Nasdaq 100":
-        return _NASDAQ100_SYMBOLS
+    # US markets removed — Nifty 100 is the only scan universe
     elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
     else:
@@ -2697,10 +2694,9 @@ def render_market_header():
     now_ist = datetime.now(IST)
     _scan_mkt = st.session_state.get("scanner_market_global",
                   st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
+    _mkt_key  = "india"  # Fixed: Nifty 100 NSE only
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
-    _mkt_status_us    = get_market_status("us")
 
     # Data feed status — yfinance always live; Upstox optional enhancement
     _upstox_ok = _upstox_connected()
@@ -5790,39 +5786,19 @@ def page_scanner_signals(nse500: pd.DataFrame):
     with tab_scan:
 
         # ── Global Market Toggle ──────────────────────────────────────
-        _MARKETS   = ["🇮🇳 Nifty 100", "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
-        _saved_mkt = st.session_state.get("scanner_market_global",
-                      st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-        if _saved_mkt not in _MARKETS:
-            _saved_mkt = "🇮🇳 Nifty 100"
-
-        _market = st.radio(
-            "Scan universe", _MARKETS,
-            index=_MARKETS.index(_saved_mkt),
-            horizontal=True,
-            key="mkt_radio_global",
-            label_visibility="collapsed",
-        )
-        if _market != _saved_mkt:
-            st.session_state["scanner_market"]        = _market
-            st.session_state["scanner_market_global"] = _market
-            _save_credentials()
-            st.rerun()
-
-        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
-        if _is_us and not is_market_open("us"):
-            st.warning("🇺🇸 US markets closed — scanning available 9:30 PM–4:00 AM IST")
-            return
-
+        # ── Scan Universe: fixed to Nifty 100 (NSE only) ─────────────
+        _market    = "🇮🇳 Nifty 100"
+        _is_us     = False
         _sym_count = len(get_market_list(_market))
-        _feed      = "yfinance (US)" if _is_us else "yfinance / Upstox"
+        st.session_state["scanner_market"]        = _market
+        st.session_state["scanner_market_global"] = _market
 
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"📊 <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
-            f"{'<b>$USD</b>' if _is_us else '<b>₹INR</b>'} &nbsp;·&nbsp; {_feed} &nbsp;·&nbsp; "
+            f"🇮🇳 <b>Nifty 100</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"<b>₹ INR</b> &nbsp;·&nbsp; yfinance / Upstox &nbsp;·&nbsp; "
             f"⚡ All scanners auto-refresh every <b>5 minutes</b></div>",
             unsafe_allow_html=True,
         )
@@ -6842,10 +6818,10 @@ def _trade_buttons(s: dict):
 
     if mkt_open and _auto_ok:
         status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-                       " · 🇮🇳 9:45–14:45 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
+                       " · 🇮🇳 9:45–14:45 IST — ACTIVE")
     elif mkt_open and not _auto_ok:
         status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
-                       " · 🇮🇳 Auto trades from 9:45 AM IST | 🇺🇸 Opens 9:45 AM EST")
+                       " · 🇮🇳 Auto trades from 9:45 AM IST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
