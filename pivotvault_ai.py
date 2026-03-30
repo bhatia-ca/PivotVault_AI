@@ -1434,19 +1434,39 @@ def fetch_nifty200_list() -> list:
         ]
 
 
-# US market lists removed — NSE only
-_US_SET = set()
+# ══════════════════════════════════════════════════════════════════════════════
+#  NSE SYMBOL LISTS — Nifty only build
+# ══════════════════════════════════════════════════════════════════════════════
 
+_NIFTY50_SYMBOLS = [
+    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
+    "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
+    "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
+    "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
+    "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
+    "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
+    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
+]
+
+# ── Nifty 100 = Nifty 50 + Next 50 most liquid large-caps ────────────────
+_NIFTY100_SYMBOLS = _NIFTY50_SYMBOLS + [
+    "VEDL","SIEMENS","HAVELLS","PIDILITIND","DABUR","GODREJCP","COLPAL","MARICO",
+    "BERGEPAINT","MUTHOOTFIN","CHOLAFIN","RECLTD","PFC","BANKBARODA","CANBK","PNB",
+    "FEDERALBNK","IDFCFIRSTB","RBLBANK","BAJAJ-AUTO","HEROMOTOCO","EICHERMOT",
+    "BOSCHLTD","MOTHERSON","BALKRISIND","CONCOR","INDHOTEL","JUBLFOOD","VOLTAS",
+    "ZOMATO","NAUKRI","DMART","IRCTC","TATACOMM","LTTS","MPHASIS","COFORGE",
+    "PERSISTENT","TATAELXSI","OFSS","KPITTECH","ZYDUSLIFE","ALKEM","LUPIN",
+    "TORNTPHARM","AUROPHARMA","IPCA","LALPATHLAB","ABB","BHEL","HAL","NHPC",
+]
+
+_US_SET = set()  # US markets removed — NSE only
 
 def is_us_symbol(sym: str) -> bool:
-    """Always False — NSE only."""
+    """Always False — NSE only build."""
     return False
 
 def get_market_list(market: str) -> list:
-    """Return symbol list for selected market toggle.
-    Default is Nifty 100 (best liquid large-caps, fast scan).
-    NSE only — Nifty 100 is the default scan universe.
-    """
+    """Return symbol list. NSE only — Nifty 100 default."""
     if market == "🇮🇳 Nifty 50":
         return _NIFTY50_SYMBOLS
     elif market == "🇮🇳 Nifty 100":
@@ -6819,10 +6839,10 @@ def _trade_buttons(s: dict):
             st.session_state["ft_loaded"]  = True
 
         bal = st.session_state.get("ft_balance", 10000000.0)
-        qty = max(1, int(bal * 0.10 / max(ltp, 1)))   # 10% per trade
+        qty = max(1, int(bal * 0.10 / max(ltp, 1)))
         cost= round(ltp * qty, 2)
         if cost > bal:
-            qty  = max(1, int(bal * 0.05 / max(ltp, 1)))  # fallback 5%
+            qty  = max(1, int(bal * 0.05 / max(ltp, 1)))
             cost = round(ltp * qty, 2)
         if cost > bal:
             st.toast(f"⚠️ Insufficient Forward Test balance for {sym}", icon="⚠️")
@@ -7969,7 +7989,7 @@ def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
         return  # No live price — skip
 
     bal  = ft["balance"]
-    # Dynamic position sizing: 10% of balance per trade (fallback 5%)
+    # Dynamic position sizing: 5% of balance per trade (max 2% if 5% too large)
     qty  = max(1, int(bal * 0.10 / max(ltp, 1)))
     cost = round(ltp * qty, 2)
     if cost > bal:
@@ -8414,7 +8434,7 @@ def page_forward_test():
     fired = _ft_run_triggers()
     for f in fired:
         icon = "🎯" if "T2" in f["hit"] else ("🎯" if "T1" in f["hit"] else "🛑")
-        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon='📊')
+        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon="📊")
 
     ft       = _ft_state()
     positions= ft["positions"]
