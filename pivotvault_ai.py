@@ -216,62 +216,62 @@ PVAI_ENTRY_GATE_M = 45
 
 PVAI_SCANNERS = [
     {
-        "name":       "15 Min",
+        "name":       "Alpha",
         "tag":        "alpha",
         "interval":   "15m",
         "period":     "10d",
-        "focus":      "Fast Scalping · CPR breakout · Auto-Trade",
+        "focus":      "Fast Scalping · CPR breakout · 15 Min",
         "color":      "#7c3aed",   # violet
         "bg":         "#f5f3ff",
-        "emoji":      "⚡",
+        "emoji":      "α",
         "refresh":    300,          # 5 minutes
         "auto_trade": True,
     },
     {
-        "name":       "30 Min",
+        "name":       "Beta",
         "tag":        "beta",
         "interval":   "30m",
         "period":     "20d",
-        "focus":      "Momentum · Trend continuation · Auto-Trade",
+        "focus":      "Momentum · Trend continuation · 30 Min",
         "color":      "#ea580c",   # orange
         "bg":         "#fff7ed",
-        "emoji":      "🔥",
+        "emoji":      "β",
         "refresh":    300,
         "auto_trade": True,
     },
     {
-        "name":       "1 Hour",
+        "name":       "Gamma",
         "tag":        "gamma",
         "interval":   "1h",
         "period":     "60d",
-        "focus":      "Swing Scalping · HMA + Volume · Auto-Trade",
+        "focus":      "Swing Scalping · HMA + Volume · 1 Hour",
         "color":      "#1d4ed8",   # blue
         "bg":         "#eff6ff",
-        "emoji":      "🌊",
+        "emoji":      "γ",
         "refresh":    300,
         "auto_trade": True,
     },
     {
-        "name":       "Daily",
+        "name":       "Delta",
         "tag":        "delta",
         "interval":   "1d",
         "period":     "120d",
-        "focus":      "Swing Trading · Daily CPR · Manual",
+        "focus":      "Swing Trading · Daily CPR levels",
         "color":      "#1a6b3c",   # green
         "bg":         "#edf7ee",
-        "emoji":      "⚓",
+        "emoji":      "Δ",
         "refresh":    300,
         "auto_trade": False,        # Daily — manual execution only
     },
     {
-        "name":       "Weekly",
+        "name":       "Pi",
         "tag":        "pi",
         "interval":   "1wk",
         "period":     "2y",
-        "focus":      "Positional · Weekly Pivots · Manual",
+        "focus":      "Positional · Weekly pivots · Macro bias",
         "color":      "#b45309",   # amber-brown
         "bg":         "#fdf9ec",
-        "emoji":      "🌐",
+        "emoji":      "π",
         "refresh":    300,
         "auto_trade": False,        # Weekly — manual execution only
     },
@@ -1434,69 +1434,23 @@ def fetch_nifty200_list() -> list:
         ]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  US MARKET STOCK LISTS — Dow 30 + Nasdaq 100
-# ══════════════════════════════════════════════════════════════════════════════
+# US market lists removed — NSE only
+_US_SET = set()
 
-_DOW30_SYMBOLS = [
-    "AAPL","AMGN","AXP","BA","CAT","CRM","CSCO","CVX","DIS","DOW",
-    "GS","HD","HON","IBM","INTC","JNJ","JPM","KO","MCD","MMM",
-    "MRK","MSFT","NKE","PG","TRV","UNH","V","VZ","WBA","WMT",
-]
-
-_NASDAQ100_SYMBOLS = [
-    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
-    "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","INTC","INTU","AMGN",
-    "AMAT","HON","BKNG","VRTX","SBUX","GILD","ADI","PANW","LRCX","MDLZ",
-    "REGN","KLAC","SNPS","CDNS","MELI","ASML","CRWD","ABNB","MNST","KDP",
-    "ORLY","FTNT","CTAS","CHTR","MRVL","CPRT","ROP","WDAY","DXCM","PCAR",
-    "ODFL","PAYX","ROST","AEP","FAST","CEG","IDXX","VRSK","BIIB","ANSS",
-    "FANG","EXC","CTSH","DLTR","XEL","EA","BKR","CSGP","GFS","GEHC",
-    "ON","ZS","TEAM","DDOG","ALGN","SIRI","WBD","ILMN","TTD","ZM",
-    "DOCU","OKTA","PINS","SNAP","UBER","COIN","RBLX","HOOD","SOFI","PLTR",
-    "AFRM","DASH","MDB","SNOW","BILL","RIVN","LCID","U","TWLO","OKTA",
-]
-
-_NIFTY50_SYMBOLS = [
-    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
-    "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
-    "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
-    "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
-    "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
-    "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
-    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
-]
-
-# ── Nifty 100 = Nifty 50 + Next 50 most liquid large-caps ────────────────
-_NIFTY100_SYMBOLS = _NIFTY50_SYMBOLS + [
-    "VEDL","SIEMENS","HAVELLS","PIDILITIND","DABUR","GODREJCP","COLPAL","MARICO",
-    "BERGEPAINT","MUTHOOTFIN","CHOLAFIN","RECLTD","PFC","BANKBARODA","CANBK","PNB",
-    "FEDERALBNK","IDFCFIRSTB","RBLBANK","BAJAJ-AUTO","HEROMOTOCO","EICHERMOT",
-    "BOSCHLTD","MOTHERSON","BALKRISIND","CONCOR","INDHOTEL","JUBLFOOD","VOLTAS",
-    "ZOMATO","NAUKRI","DMART","IRCTC","TATACOMM","LTTS","MPHASIS","COFORGE",
-    "PERSISTENT","TATAELXSI","OFSS","KPITTECH","ZYDUSLIFE","ALKEM","LUPIN",
-    "TORNTPHARM","AUROPHARMA","IPCA","LALPATHLAB","ABB","BHEL","HAL","NHPC",
-]
-
-_US_SET = set(_DOW30_SYMBOLS + _NASDAQ100_SYMBOLS)
 
 def is_us_symbol(sym: str) -> bool:
-    """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
-    return sym.upper() in _US_SET
+    """Always False — NSE only."""
+    return False
 
 def get_market_list(market: str) -> list:
     """Return symbol list for selected market toggle.
     Default is Nifty 100 (best liquid large-caps, fast scan).
-    Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
+    NSE only — Nifty 100 is the default scan universe.
     """
     if market == "🇮🇳 Nifty 50":
         return _NIFTY50_SYMBOLS
     elif market == "🇮🇳 Nifty 100":
         return _NIFTY100_SYMBOLS
-    elif market == "🇺🇸 Dow 30":
-        return _DOW30_SYMBOLS
-    elif market == "🇺🇸 Nasdaq 100":
-        return _NASDAQ100_SYMBOLS
     elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
     else:
@@ -2697,10 +2651,9 @@ def render_market_header():
     now_ist = datetime.now(IST)
     _scan_mkt = st.session_state.get("scanner_market_global",
                   st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-    _mkt_key  = "india"  # Fixed: Nifty 100 NSE only
+    _mkt_key  = "india"  # NSE only
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
-    _mkt_status_us    = get_market_status("us")
 
     # Data feed status — yfinance always live; Upstox optional enhancement
     _upstox_ok = _upstox_connected()
@@ -2727,7 +2680,7 @@ def render_market_header():
         status    = "LIVE · NSE Open" if open_ else "Market Closed"
         next_info = ""
         if not open_:
-            next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
+            next_info = f" · {_mkt_status_india['note']}"
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
             f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;'>"
@@ -5081,16 +5034,6 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 return "CPR Signal"
 
             strat_name = _classify_strategy()
-            _ALLOWED_STRATEGIES = {
-                "Two-Day CPR Non-Overlap",
-                "Extreme Reversal (Rubber Band)",
-                "Outside Reversal (False Breakout Fade)",
-                "Wick Reversal at CPR",
-                "Virgin CPR Breakout",
-            }
-            if strat_name not in _ALLOWED_STRATEGIES:
-                continue
-
             strat_name = _build_strategy_name({
                 "side":       pattern_main,
                 "tf":         interval,
@@ -5106,6 +5049,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "day_type":   day_type,
                 "tf_label":   interval,
             })
+            # Prepend strategy classification to name
             strat_name = f"{_classify_strategy()} — {strat_name}"
 
             rows.append({
@@ -5798,7 +5742,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
     # ══════════════════════════════════════════════════════════════════
     with tab_scan:
 
-        # ── Scan Universe: fixed to Nifty 100 (NSE) ─────────────────
+        # ── Scan Universe: Nifty 100 NSE only ────────────────────
         _market    = "🇮🇳 Nifty 100"
         _is_us     = False
         _sym_count = len(get_market_list(_market))
@@ -5856,7 +5800,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         if _top5_needs or _TOP5_KEY not in st.session_state:
             _mkt_list = get_market_list(
-                "🇮🇳 Nifty 100"
+                st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
             )
             with st.spinner("⚡ Running α Beta γ Gamma · 3 scanners in parallel…"):
                 _top5_result = _get_top5_best_trades(_mkt_list)   # removed :80 cap
@@ -6048,7 +5992,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         try:
                             result = scan_cpr_multi_tf(
                                 get_market_list(
-                                    "🇮🇳 Nifty 100"
+                                    st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
                                 ),
                                 interval=scanner_cfg["interval"],
                                 period=scanner_cfg["period"],
@@ -6071,29 +6015,24 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
                     if not result.empty:
                         st.toast(
-                            f"✅ {sc_name}: {len(result)} setups · {src_label}",
-                            icon=sc_emoji,
+                            f"{sc_emoji} {sc_name}: {len(result)} setups · {src_label}",
+                            icon="✅",
                         )
-                        if st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
-                            _dir_res = result[result["Pattern"].isin(["Bullish","Bearish"])] if "Pattern" in result.columns else result
-                            _nb = int((result["Pattern"] == "Bullish").sum()) if "Pattern" in result.columns else 0
-                            _nr = int((result["Pattern"] == "Bearish").sum()) if "Pattern" in result.columns else 0
-                            _badge = "⚡ AUTO-TRADE" if sc_auto else "🖐 MANUAL"
+                        # Telegram notification for auto scanners
+                        if sc_auto and st.session_state.get(
+                            "telegram_cfg", {}
+                        ).get("notify_signals", True):
                             _tl = [
-                                f"📡 <b>{sc_emoji} {sc_name} — {len(_dir_res)} Signals [{_badge}]</b>",
-                                f"🟢 Bullish: {_nb}  🔴 Bearish: {_nr}",
-                                "",
+                                f"📡 <b>{sc_emoji} Scanner {sc_name} — {len(result)} setups</b>"
                             ]
-                            for _, _r in _dir_res.iterrows():
-                                _se   = "🟢" if _r.get("Pattern","") == "Bullish" else "🔴"
-                                _side = "BUY" if _r.get("Pattern","") == "Bullish" else "SELL"
+                            for _, _r in result.head(3).iterrows():
+                                _se = "🟢" if _r.get("Pattern", "") == "Bullish" else "🔴"
                                 _tl.append(
-                                    f"{_se} <b>{_r.get('Symbol','')}</b> {_side} · "
-                                    f"Entry ₹{_r.get('Entry',0):,.2f} · T1 ₹{_r.get('T1',0):,.2f} · "
-                                    f"SL ₹{_r.get('SL',0):,.2f} · RR {_r.get('RR1',0):.1f}x · "
-                                    f"Str {_r.get('Strength%',0):.0f}%"
+                                    f"{_se} <b>{_r.get('Symbol','')}</b> · "
+                                    f"₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · "
+                                    f"SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%"
                                 )
-                            _tl.append(f"<i>PivotVault AI · {sc_name} · {datetime.now().strftime('%d %b %H:%M')} IST</i>")
+                            _tl.append("<i>PivotVault AI · Scanner " + sc_name + "</i>")
                             _send_telegram("\n".join(_tl))
 
                     else:
@@ -6110,28 +6049,26 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     if last_scan else "—"
                 )
 
-                # ── Live Stopwatch above scanner content ────────────────
+                # Countdown bar
                 remaining = max(0, 300 - elapsed)
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;"
-                    f"font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
-                    f"margin-bottom:0.85rem;padding:0.45rem 0.9rem;background:{sc_bg};"
-                    f"border:1px solid {sc_color}33;border-left:4px solid {sc_color};"
-                    f"border-radius:7px;'>"
-                    f"<span style='font-size:1.15rem;'>⏱</span>"
-                    f"<span style='color:{sc_color};font-weight:800;'>{sc_emoji} {sc_name}</span>"
-                    f"<span style='background:{sc_color}18;color:{sc_color};"
-                    f"border:1px solid {sc_color}55;border-radius:20px;padding:2px 11px;"
-                    f"font-size:0.73rem;font-weight:700;font-family:DM Mono,monospace;"
-                    f"letter-spacing:0.04em;' id='sw_{sc_tag}'>⏳ —</span>"
-                    f"<span style='color:#8a9a78;'>Last: <b>{scan_time_str}</b></span>"
-                    f"<span style='margin-left:auto;'>"
-                    f"{'<span style="background:#e4f0d0;color:#2d7a3a;border-radius:10px;padding:1px 9px;font-size:0.65rem;font-weight:700;">⚡ AUTO</span>' if sc_auto else '<span style="background:#fdf3d4;color:#7a5800;border-radius:10px;padding:1px 9px;font-size:0.65rem;font-weight:700;">🖐 MANUAL</span>'}"
-                    f"</span></div>"
-                    f"<script>(function(){{"
-                    f"  var s={remaining}, el=document.getElementById('sw_{sc_tag}');"
-                    f"  {'(function tick(){{ if(s<=0){{window.location.reload();return;}} if(el) el.innerText="⏱ "+Math.floor(s/60)+":"+(s%60<10?"0":"")+s%60; s--; setTimeout(tick,1000); }})();' if sc_auto else 'if(el) el.innerText="✅ Done";'}"
-                    f"}})();</script>",
+                    f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+                    f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{sc_bg};"
+                    f"border:1px solid {sc_color}33;border-left:3px solid {sc_color};"
+                    f"border-radius:6px;'>"
+                    f"<span style='color:{sc_color};font-weight:700;'>"
+                    f"{sc_emoji} {sc_name}</span>"
+                    f"<span>Last scan: <b>{scan_time_str}</b></span>"
+                    f"<span>Next refresh: <b id='cd_{sc_tag}'>—</b></span>"
+                    f"</div>"
+                    f"<script>"
+                    f"(function(){{var s={remaining};"
+                    f"function t(){{if(s<=0){{window.location.reload();return;}}"
+                    f"var e=document.getElementById('cd_{sc_tag}');"
+                    f"if(e)e.innerText=Math.floor(s/60)+':'+(s%60<10?'0':'')+s%60;"
+                    f"s--;setTimeout(t,1000);}};t();}})();"
+                    f"</script>",
                     unsafe_allow_html=True,
                 )
 
@@ -6396,7 +6333,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 with r2:
                     _wa_lines = [
                         f"📡 *{sc_emoji} Scanner {sc_name}* — {_scan_time_str}",
-                        f"🇮🇳 Nifty 100 | {sc_focus}",
+                        f"🇮🇳 {_market} | {sc_focus}",
                         "", "🟢 *BULLISH SETUPS*",
                     ]
                     for i, (_, r) in enumerate(top_bull.head(5).iterrows(), 1):
@@ -6525,16 +6462,15 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # ── BUG FIX: TF_LABELS now includes alpha(15m), beta(30m), gamma(1h)
         #    and uses the named scanner labels — the original only had 30m + 1h
         TF_LABELS = {
-            "cpr_scan_alpha": ("⚡ 15 Min",  "#7c3aed", "alpha",  "⚡ 15 Min"),
-            "cpr_scan_beta":  ("🔥 30 Min",  "#ea580c", "beta",   "🔥 30 Min"),
-            "cpr_scan_gamma": ("🌊 1 Hour",  "#1d4ed8", "gamma",  "🌊 1 Hour"),
-            "cpr_scan_delta": ("⚓ Daily",   "#1a6b3c", "delta",  "⚓ Daily"),
-            "cpr_scan_pi":    ("🌐 Weekly",  "#b45309", "pi",     "🌐 Weekly"),
+            "cpr_scan_alpha": ("α Alpha · 15 Min",  "#7c3aed", "alpha", "α Alpha"),
+            "cpr_scan_beta":  ("β Beta · 30 Min",   "#ea580c", "beta",  "β Beta"),
+            "cpr_scan_gamma": ("γ Gamma · 1 Hour",  "#1d4ed8", "gamma", "γ Gamma"),
         }
+        # Also accept legacy keys (in case only old scanner ran)
         _LEGACY_TF = {
-            "cpr_scan_15m": ("⚡ 15 Min", "#7c3aed", "alpha", "⚡ 15 Min"),
-            "cpr_scan_30m": ("🔥 30 Min", "#ea580c", "beta",  "🔥 30 Min"),
-            "cpr_scan_1h":  ("🌊 1 Hour", "#1d4ed8", "gamma", "🌊 1 Hour"),
+            "cpr_scan_15m": ("⚡ 15 Min", "#7c3aed", "alpha", "α Alpha"),
+            "cpr_scan_30m": ("⏱️ 30 Min", "#ea580c", "beta",  "β Beta"),
+            "cpr_scan_1h":  ("🕐 1 Hour", "#1d4ed8", "gamma", "γ Gamma"),
         }
 
         all_signals = []
@@ -6587,21 +6523,18 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 _seen[_k] = _s
         all_signals = list(_seen.values())
 
-        _pv_traded = st.session_state.get("pv_traded_signals", set())
-        all_signals = [s for s in all_signals if (s["symbol"], s["side"]) not in _pv_traded]
-
         if not all_signals:
             st.markdown("""
             <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
                         border:2px dashed #dae0cb;border-radius:12px;
                         font-family:DM Mono,monospace;">
-                <div style="font-size:2rem;margin-bottom:0.75rem;">✅</div>
+                <div style="font-size:2rem;margin-bottom:0.75rem;">📡</div>
                 <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
-                    All signals traded!
+                    No signals yet
                 </div>
                 <div style="font-size:0.82rem;color:#5a6a48;">
-                    No pending signals. Go to <b>📡 Scanner</b> → click <b>🔄 Scan Now</b><br>
-                    for fresh signals, or wait for the 5-min auto-refresh.
+                    Go to <b>📡 Scanner</b> → pick any scanner tab → click <b>🔄 Scan Now</b><br>
+                    Signals auto-appear and refresh every 5 min.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -6640,8 +6573,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
         with fc1:
             tf_filter = st.multiselect(
                 "Scanner",
-                ["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"],
-                default=["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"],
+                ["α Alpha", "β Beta", "γ Gamma"],
+                default=["α Alpha", "β Beta", "γ Gamma"],
                 key="sig_tf_filter",
                 label_visibility="collapsed",
             )
@@ -6655,7 +6588,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         with fc4:
             min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
 
-        effective_tf = tf_filter if tf_filter else ["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"]
+        effective_tf = tf_filter if tf_filter else ["α Alpha", "β Beta", "γ Gamma"]
         filtered = [
             s for s in all_signals
             if s["tf"] in effective_tf
@@ -6876,20 +6809,6 @@ def _trade_buttons(s: dict):
         except Exception:
             ltp = s.get("entry", 0)
         if not ltp: return
-        if "pv_traded_signals" not in st.session_state:
-            st.session_state["pv_traded_signals"] = set()
-        st.session_state["pv_traded_signals"].add((sym, s["side"]))
-        _tg_m = st.session_state.get("telegram_cfg", {})
-        if _tg_m.get("notify_entry", True):
-            _arr = "🟢" if bull else "🔴"
-            _send_telegram(
-                f"🖐 <b>MANUAL TRADE — {sym}</b>\n"
-                f"{_arr} <b>{'BUY' if bull else 'SELL'}</b> via {broker_name}\n"
-                f"Entry ₹{ltp:,.2f} · T1 ₹{s.get('t1',0):,.2f} · "
-                f"SL ₹{s.get('sl',0):,.2f} · RR {s.get('rr1',0):.1f}x\n"
-                f"Strength {s.get('strength',0)}% · {s.get('candle','—')}\n"
-                f"<i>PivotVault AI · {s.get('tf','—')} · Manual punch</i>"
-            )
 
         # Load FT data
         if not st.session_state.get("ft_loaded"):
@@ -6900,10 +6819,10 @@ def _trade_buttons(s: dict):
             st.session_state["ft_loaded"]  = True
 
         bal = st.session_state.get("ft_balance", 10000000.0)
-        qty = max(1, int(bal * 0.05 / max(ltp, 1)))
+        qty = max(1, int(bal * 0.10 / max(ltp, 1)))   # 10% per trade
         cost= round(ltp * qty, 2)
         if cost > bal:
-            qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+            qty  = max(1, int(bal * 0.05 / max(ltp, 1)))  # fallback 5%
             cost = round(ltp * qty, 2)
         if cost > bal:
             st.toast(f"⚠️ Insufficient Forward Test balance for {sym}", icon="⚠️")
@@ -6993,21 +6912,6 @@ def _trade_buttons(s: dict):
     with c4:
         if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
                      use_container_width=True):
-            if "pv_traded_signals" not in st.session_state:
-                st.session_state["pv_traded_signals"] = set()
-            st.session_state["pv_traded_signals"].add((sym, s["side"]))
-            _tg_f = st.session_state.get("telegram_cfg", {})
-            if _tg_f.get("notify_entry", True):
-                try: _ltp_f = _ft_get_ltp(sym) or s.get("entry", 0)
-                except: _ltp_f = s.get("entry", 0)
-                _send_telegram(
-                    f"⚗️ <b>FWD TEST — {sym}</b>\n"
-                    f"{'🟢' if bull else '🔴'} <b>{'BUY' if bull else 'SELL'}</b>\n"
-                    f"Entry ₹{_ltp_f:,.2f} · T1 ₹{s.get('t1',0):,.2f} · "
-                    f"SL ₹{s.get('sl',0):,.2f} · RR {s.get('rr1',0):.1f}x\n"
-                    f"Strength {s.get('strength',0)}% · {s.get('candle','—')}\n"
-                    f"<i>PivotVault AI · {s.get('tf','—')} · Forward Test</i>"
-                )
             try:
                 live = _ft_get_ltp(sym) or s.get("entry", 0)
             except Exception:
@@ -8065,11 +7969,11 @@ def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
         return  # No live price — skip
 
     bal  = ft["balance"]
-    # Dynamic position sizing: 5% of balance per trade (max 2% if 5% too large)
-    qty  = max(1, int(bal * 0.05 / max(ltp, 1)))
+    # Dynamic position sizing: 10% of balance per trade (fallback 5%)
+    qty  = max(1, int(bal * 0.10 / max(ltp, 1)))
     cost = round(ltp * qty, 2)
     if cost > bal:
-        qty  = max(1, int(bal * 0.02 / max(ltp, 1)))
+        qty  = max(1, int(bal * 0.05 / max(ltp, 1)))
         cost = round(ltp * qty, 2)
     if cost > bal:
         st.session_state["ft_low_bal_alert"] = True
@@ -8106,9 +8010,6 @@ def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
         "currency":   "$" if _us else "₹",
     }
     ft["positions"].append(pos)
-    if "pv_traded_signals" not in st.session_state:
-        st.session_state["pv_traded_signals"] = set()
-    st.session_state["pv_traded_signals"].add((sym, side))
     ft["balance"] = round(bal - cost, 2)
 
     # Mark this symbol+side as traded today
@@ -8513,7 +8414,7 @@ def page_forward_test():
     fired = _ft_run_triggers()
     for f in fired:
         icon = "🎯" if "T2" in f["hit"] else ("🎯" if "T1" in f["hit"] else "🛑")
-        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon=icon)
+        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon='📊')
 
     ft       = _ft_state()
     positions= ft["positions"]
