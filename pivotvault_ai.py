@@ -2697,7 +2697,7 @@ def render_market_header():
     now_ist = datetime.now(IST)
     _scan_mkt = st.session_state.get("scanner_market_global",
                   st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
+    _mkt_key  = "india"  # Fixed: Nifty 100 NSE only
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
     _mkt_status_us    = get_market_status("us")
@@ -5081,16 +5081,15 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 return "CPR Signal"
 
             strat_name = _classify_strategy()
-            # ── CLEAN SIGNAL FILTER: Only P1–P5 high-conviction strategies ──
             _ALLOWED_STRATEGIES = {
-                "Two-Day CPR Non-Overlap",                 # P1 — highest conviction trending day
-                "Extreme Reversal (Rubber Band)",          # P2 — mean reversion at extreme
-                "Outside Reversal (False Breakout Fade)",  # P3 — false breakout fade
-                "Wick Reversal at CPR",                    # P4 — precision wick at CPR level
-                "Virgin CPR Breakout",                     # P5 — untested CPR magnet
+                "Two-Day CPR Non-Overlap",
+                "Extreme Reversal (Rubber Band)",
+                "Outside Reversal (False Breakout Fade)",
+                "Wick Reversal at CPR",
+                "Virgin CPR Breakout",
             }
             if strat_name not in _ALLOWED_STRATEGIES:
-                continue  # Skip P6–P10 & generic signals — keep only top 5 strategies
+                continue
 
             strat_name = _build_strategy_name({
                 "side":       pattern_main,
@@ -5107,7 +5106,6 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "day_type":   day_type,
                 "tf_label":   interval,
             })
-            # Prepend strategy classification to name
             strat_name = f"{_classify_strategy()} — {strat_name}"
 
             rows.append({
@@ -5800,40 +5798,19 @@ def page_scanner_signals(nse500: pd.DataFrame):
     # ══════════════════════════════════════════════════════════════════
     with tab_scan:
 
-        # ── Global Market Toggle ──────────────────────────────────────
-        _MARKETS   = ["🇮🇳 Nifty 100", "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
-        _saved_mkt = st.session_state.get("scanner_market_global",
-                      st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-        if _saved_mkt not in _MARKETS:
-            _saved_mkt = "🇮🇳 Nifty 100"
-
-        _market = st.radio(
-            "Scan universe", _MARKETS,
-            index=_MARKETS.index(_saved_mkt),
-            horizontal=True,
-            key="mkt_radio_global",
-            label_visibility="collapsed",
-        )
-        if _market != _saved_mkt:
-            st.session_state["scanner_market"]        = _market
-            st.session_state["scanner_market_global"] = _market
-            _save_credentials()
-            st.rerun()
-
-        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
-        if _is_us and not is_market_open("us"):
-            st.warning("🇺🇸 US markets closed — scanning available 9:30 PM–4:00 AM IST")
-            return
-
+        # ── Scan Universe: fixed to Nifty 100 (NSE) ─────────────────
+        _market    = "🇮🇳 Nifty 100"
+        _is_us     = False
         _sym_count = len(get_market_list(_market))
-        _feed      = "yfinance (US)" if _is_us else "yfinance / Upstox"
+        st.session_state["scanner_market"]        = _market
+        st.session_state["scanner_market_global"] = _market
 
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"📊 <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
-            f"{'<b>$USD</b>' if _is_us else '<b>₹INR</b>'} &nbsp;·&nbsp; {_feed} &nbsp;·&nbsp; "
+            f"🇮🇳 <b>Nifty 100</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"<b>₹ INR</b> &nbsp;·&nbsp; yfinance / Upstox &nbsp;·&nbsp; "
             f"⚡ All scanners auto-refresh every <b>5 minutes</b></div>",
             unsafe_allow_html=True,
         )
@@ -5879,7 +5856,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         if _top5_needs or _TOP5_KEY not in st.session_state:
             _mkt_list = get_market_list(
-                st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
+                "🇮🇳 Nifty 100"
             )
             with st.spinner("⚡ Running α Beta γ Gamma · 3 scanners in parallel…"):
                 _top5_result = _get_top5_best_trades(_mkt_list)   # removed :80 cap
@@ -6071,7 +6048,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         try:
                             result = scan_cpr_multi_tf(
                                 get_market_list(
-                                    st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
+                                    "🇮🇳 Nifty 100"
                                 ),
                                 interval=scanner_cfg["interval"],
                                 period=scanner_cfg["period"],
@@ -6097,7 +6074,6 @@ def page_scanner_signals(nse500: pd.DataFrame):
                             f"✅ {sc_name}: {len(result)} setups · {src_label}",
                             icon=sc_emoji,
                         )
-                        # Telegram: ALL scanners, ALL directional signals immediately
                         if st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
                             _dir_res = result[result["Pattern"].isin(["Bullish","Bearish"])] if "Pattern" in result.columns else result
                             _nb = int((result["Pattern"] == "Bullish").sum()) if "Pattern" in result.columns else 0
@@ -6420,7 +6396,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 with r2:
                     _wa_lines = [
                         f"📡 *{sc_emoji} Scanner {sc_name}* — {_scan_time_str}",
-                        f"🇮🇳 {_market} | {sc_focus}",
+                        f"🇮🇳 Nifty 100 | {sc_focus}",
                         "", "🟢 *BULLISH SETUPS*",
                     ]
                     for i, (_, r) in enumerate(top_bull.head(5).iterrows(), 1):
@@ -6555,7 +6531,6 @@ def page_scanner_signals(nse500: pd.DataFrame):
             "cpr_scan_delta": ("⚓ Daily",   "#1a6b3c", "delta",  "⚓ Daily"),
             "cpr_scan_pi":    ("🌐 Weekly",  "#b45309", "pi",     "🌐 Weekly"),
         }
-        # Also accept legacy keys (in case only old scanner ran)
         _LEGACY_TF = {
             "cpr_scan_15m": ("⚡ 15 Min", "#7c3aed", "alpha", "⚡ 15 Min"),
             "cpr_scan_30m": ("🔥 30 Min", "#ea580c", "beta",  "🔥 30 Min"),
@@ -6612,7 +6587,6 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 _seen[_k] = _s
         all_signals = list(_seen.values())
 
-        # ── Remove already-traded signals ──────────────────────────────
         _pv_traded = st.session_state.get("pv_traded_signals", set())
         all_signals = [s for s in all_signals if (s["symbol"], s["side"]) not in _pv_traded]
 
@@ -6867,10 +6841,10 @@ def _trade_buttons(s: dict):
 
     if mkt_open and _auto_ok:
         status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-                       " · 🇮🇳 9:45–14:45 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
+                       " · 🇮🇳 9:45–14:45 IST — ACTIVE")
     elif mkt_open and not _auto_ok:
         status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
-                       " · 🇮🇳 Auto trades from 9:45 AM IST | 🇺🇸 Opens 9:45 AM EST")
+                       " · 🇮🇳 Auto trades from 9:45 AM IST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
@@ -6902,11 +6876,9 @@ def _trade_buttons(s: dict):
         except Exception:
             ltp = s.get("entry", 0)
         if not ltp: return
-        # ── Mark traded → disappears from Signal tab ────────────────
         if "pv_traded_signals" not in st.session_state:
             st.session_state["pv_traded_signals"] = set()
         st.session_state["pv_traded_signals"].add((sym, s["side"]))
-        # ── Telegram: immediate manual punch notification ────────────
         _tg_m = st.session_state.get("telegram_cfg", {})
         if _tg_m.get("notify_entry", True):
             _arr = "🟢" if bull else "🔴"
@@ -7021,11 +6993,9 @@ def _trade_buttons(s: dict):
     with c4:
         if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
                      use_container_width=True):
-            # ── Mark traded → disappears from Signal tab ────────────
             if "pv_traded_signals" not in st.session_state:
                 st.session_state["pv_traded_signals"] = set()
             st.session_state["pv_traded_signals"].add((sym, s["side"]))
-            # ── Telegram: Fwd Test punch notification ───────────────
             _tg_f = st.session_state.get("telegram_cfg", {})
             if _tg_f.get("notify_entry", True):
                 try: _ltp_f = _ft_get_ltp(sym) or s.get("entry", 0)
@@ -8136,7 +8106,6 @@ def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
         "currency":   "$" if _us else "₹",
     }
     ft["positions"].append(pos)
-    # ── Mark in session so Trade Signals tab hides this signal ──
     if "pv_traded_signals" not in st.session_state:
         st.session_state["pv_traded_signals"] = set()
     st.session_state["pv_traded_signals"].add((sym, side))
