@@ -216,62 +216,62 @@ PVAI_ENTRY_GATE_M = 45
 
 PVAI_SCANNERS = [
     {
-        "name":       "Alpha",
+        "name":       "15 Min",
         "tag":        "alpha",
         "interval":   "15m",
         "period":     "10d",
-        "focus":      "Fast Scalping · CPR breakout · 15 Min",
+        "focus":      "Fast Scalping · CPR breakout · Auto-Trade",
         "color":      "#7c3aed",   # violet
         "bg":         "#f5f3ff",
-        "emoji":      "α",
+        "emoji":      "⚡",
         "refresh":    300,          # 5 minutes
         "auto_trade": True,
     },
     {
-        "name":       "Beta",
+        "name":       "30 Min",
         "tag":        "beta",
         "interval":   "30m",
         "period":     "20d",
-        "focus":      "Momentum · Trend continuation · 30 Min",
+        "focus":      "Momentum · Trend continuation · Auto-Trade",
         "color":      "#ea580c",   # orange
         "bg":         "#fff7ed",
-        "emoji":      "β",
+        "emoji":      "🔥",
         "refresh":    300,
         "auto_trade": True,
     },
     {
-        "name":       "Gamma",
+        "name":       "1 Hour",
         "tag":        "gamma",
         "interval":   "1h",
         "period":     "60d",
-        "focus":      "Swing Scalping · HMA + Volume · 1 Hour",
+        "focus":      "Swing Scalping · HMA + Volume · Auto-Trade",
         "color":      "#1d4ed8",   # blue
         "bg":         "#eff6ff",
-        "emoji":      "γ",
+        "emoji":      "🌊",
         "refresh":    300,
         "auto_trade": True,
     },
     {
-        "name":       "Delta",
+        "name":       "Daily",
         "tag":        "delta",
         "interval":   "1d",
         "period":     "120d",
-        "focus":      "Swing Trading · Daily CPR levels",
+        "focus":      "Swing Trading · Daily CPR · Manual",
         "color":      "#1a6b3c",   # green
         "bg":         "#edf7ee",
-        "emoji":      "Δ",
+        "emoji":      "⚓",
         "refresh":    300,
         "auto_trade": False,        # Daily — manual execution only
     },
     {
-        "name":       "Pi",
+        "name":       "Weekly",
         "tag":        "pi",
         "interval":   "1wk",
         "period":     "2y",
-        "focus":      "Positional · Weekly pivots · Macro bias",
+        "focus":      "Positional · Weekly Pivots · Manual",
         "color":      "#b45309",   # amber-brown
         "bg":         "#fdf9ec",
-        "emoji":      "π",
+        "emoji":      "🌐",
         "refresh":    300,
         "auto_trade": False,        # Weekly — manual execution only
     },
@@ -5081,6 +5081,17 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 return "CPR Signal"
 
             strat_name = _classify_strategy()
+            # ── CLEAN SIGNAL FILTER: Only P1–P5 high-conviction strategies ──
+            _ALLOWED_STRATEGIES = {
+                "Two-Day CPR Non-Overlap",                 # P1 — highest conviction trending day
+                "Extreme Reversal (Rubber Band)",          # P2 — mean reversion at extreme
+                "Outside Reversal (False Breakout Fade)",  # P3 — false breakout fade
+                "Wick Reversal at CPR",                    # P4 — precision wick at CPR level
+                "Virgin CPR Breakout",                     # P5 — untested CPR magnet
+            }
+            if strat_name not in _ALLOWED_STRATEGIES:
+                continue  # Skip P6–P10 & generic signals — keep only top 5 strategies
+
             strat_name = _build_strategy_name({
                 "side":       pattern_main,
                 "tf":         interval,
@@ -6086,21 +6097,27 @@ def page_scanner_signals(nse500: pd.DataFrame):
                             f"✅ {sc_name}: {len(result)} setups · {src_label}",
                             icon=sc_emoji,
                         )
-                        # Telegram notification for auto scanners
-                        if sc_auto and st.session_state.get(
-                            "telegram_cfg", {}
-                        ).get("notify_signals", True):
+                        # Telegram: ALL scanners, ALL directional signals immediately
+                        if st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
+                            _dir_res = result[result["Pattern"].isin(["Bullish","Bearish"])] if "Pattern" in result.columns else result
+                            _nb = int((result["Pattern"] == "Bullish").sum()) if "Pattern" in result.columns else 0
+                            _nr = int((result["Pattern"] == "Bearish").sum()) if "Pattern" in result.columns else 0
+                            _badge = "⚡ AUTO-TRADE" if sc_auto else "🖐 MANUAL"
                             _tl = [
-                                f"📡 <b>{sc_emoji} Scanner {sc_name} — {len(result)} setups</b>"
+                                f"📡 <b>{sc_emoji} {sc_name} — {len(_dir_res)} Signals [{_badge}]</b>",
+                                f"🟢 Bullish: {_nb}  🔴 Bearish: {_nr}",
+                                "",
                             ]
-                            for _, _r in result.head(3).iterrows():
-                                _se = "🟢" if _r.get("Pattern", "") == "Bullish" else "🔴"
+                            for _, _r in _dir_res.iterrows():
+                                _se   = "🟢" if _r.get("Pattern","") == "Bullish" else "🔴"
+                                _side = "BUY" if _r.get("Pattern","") == "Bullish" else "SELL"
                                 _tl.append(
-                                    f"{_se} <b>{_r.get('Symbol','')}</b> · "
-                                    f"₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · "
-                                    f"SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%"
+                                    f"{_se} <b>{_r.get('Symbol','')}</b> {_side} · "
+                                    f"Entry ₹{_r.get('Entry',0):,.2f} · T1 ₹{_r.get('T1',0):,.2f} · "
+                                    f"SL ₹{_r.get('SL',0):,.2f} · RR {_r.get('RR1',0):.1f}x · "
+                                    f"Str {_r.get('Strength%',0):.0f}%"
                                 )
-                            _tl.append("<i>PivotVault AI · Scanner " + sc_name + "</i>")
+                            _tl.append(f"<i>PivotVault AI · {sc_name} · {datetime.now().strftime('%d %b %H:%M')} IST</i>")
                             _send_telegram("\n".join(_tl))
 
                     else:
@@ -6117,26 +6134,28 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     if last_scan else "—"
                 )
 
-                # Countdown bar
+                # ── Live Stopwatch above scanner content ────────────────
                 remaining = max(0, 300 - elapsed)
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
-                    f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
-                    f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{sc_bg};"
-                    f"border:1px solid {sc_color}33;border-left:3px solid {sc_color};"
-                    f"border-radius:6px;'>"
-                    f"<span style='color:{sc_color};font-weight:700;'>"
-                    f"{sc_emoji} {sc_name}</span>"
-                    f"<span>Last scan: <b>{scan_time_str}</b></span>"
-                    f"<span>Next refresh: <b id='cd_{sc_tag}'>—</b></span>"
-                    f"</div>"
-                    f"<script>"
-                    f"(function(){{var s={remaining};"
-                    f"function t(){{if(s<=0){{window.location.reload();return;}}"
-                    f"var e=document.getElementById('cd_{sc_tag}');"
-                    f"if(e)e.innerText=Math.floor(s/60)+':'+(s%60<10?'0':'')+s%60;"
-                    f"s--;setTimeout(t,1000);}};t();}})();"
-                    f"</script>",
+                    f"<div style='display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.73rem;color:#5a6a48;"
+                    f"margin-bottom:0.85rem;padding:0.45rem 0.9rem;background:{sc_bg};"
+                    f"border:1px solid {sc_color}33;border-left:4px solid {sc_color};"
+                    f"border-radius:7px;'>"
+                    f"<span style='font-size:1.15rem;'>⏱</span>"
+                    f"<span style='color:{sc_color};font-weight:800;'>{sc_emoji} {sc_name}</span>"
+                    f"<span style='background:{sc_color}18;color:{sc_color};"
+                    f"border:1px solid {sc_color}55;border-radius:20px;padding:2px 11px;"
+                    f"font-size:0.73rem;font-weight:700;font-family:DM Mono,monospace;"
+                    f"letter-spacing:0.04em;' id='sw_{sc_tag}'>⏳ —</span>"
+                    f"<span style='color:#8a9a78;'>Last: <b>{scan_time_str}</b></span>"
+                    f"<span style='margin-left:auto;'>"
+                    f"{'<span style="background:#e4f0d0;color:#2d7a3a;border-radius:10px;padding:1px 9px;font-size:0.65rem;font-weight:700;">⚡ AUTO</span>' if sc_auto else '<span style="background:#fdf3d4;color:#7a5800;border-radius:10px;padding:1px 9px;font-size:0.65rem;font-weight:700;">🖐 MANUAL</span>'}"
+                    f"</span></div>"
+                    f"<script>(function(){{"
+                    f"  var s={remaining}, el=document.getElementById('sw_{sc_tag}');"
+                    f"  {'(function tick(){{ if(s<=0){{window.location.reload();return;}} if(el) el.innerText="⏱ "+Math.floor(s/60)+":"+(s%60<10?"0":"")+s%60; s--; setTimeout(tick,1000); }})();' if sc_auto else 'if(el) el.innerText="✅ Done";'}"
+                    f"}})();</script>",
                     unsafe_allow_html=True,
                 )
 
@@ -6530,15 +6549,17 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # ── BUG FIX: TF_LABELS now includes alpha(15m), beta(30m), gamma(1h)
         #    and uses the named scanner labels — the original only had 30m + 1h
         TF_LABELS = {
-            "cpr_scan_alpha": ("α Alpha · 15 Min",  "#7c3aed", "alpha", "α Alpha"),
-            "cpr_scan_beta":  ("β Beta · 30 Min",   "#ea580c", "beta",  "β Beta"),
-            "cpr_scan_gamma": ("γ Gamma · 1 Hour",  "#1d4ed8", "gamma", "γ Gamma"),
+            "cpr_scan_alpha": ("⚡ 15 Min",  "#7c3aed", "alpha",  "⚡ 15 Min"),
+            "cpr_scan_beta":  ("🔥 30 Min",  "#ea580c", "beta",   "🔥 30 Min"),
+            "cpr_scan_gamma": ("🌊 1 Hour",  "#1d4ed8", "gamma",  "🌊 1 Hour"),
+            "cpr_scan_delta": ("⚓ Daily",   "#1a6b3c", "delta",  "⚓ Daily"),
+            "cpr_scan_pi":    ("🌐 Weekly",  "#b45309", "pi",     "🌐 Weekly"),
         }
         # Also accept legacy keys (in case only old scanner ran)
         _LEGACY_TF = {
-            "cpr_scan_15m": ("⚡ 15 Min", "#7c3aed", "alpha", "α Alpha"),
-            "cpr_scan_30m": ("⏱️ 30 Min", "#ea580c", "beta",  "β Beta"),
-            "cpr_scan_1h":  ("🕐 1 Hour", "#1d4ed8", "gamma", "γ Gamma"),
+            "cpr_scan_15m": ("⚡ 15 Min", "#7c3aed", "alpha", "⚡ 15 Min"),
+            "cpr_scan_30m": ("🔥 30 Min", "#ea580c", "beta",  "🔥 30 Min"),
+            "cpr_scan_1h":  ("🌊 1 Hour", "#1d4ed8", "gamma", "🌊 1 Hour"),
         }
 
         all_signals = []
@@ -6591,18 +6612,22 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 _seen[_k] = _s
         all_signals = list(_seen.values())
 
+        # ── Remove already-traded signals ──────────────────────────────
+        _pv_traded = st.session_state.get("pv_traded_signals", set())
+        all_signals = [s for s in all_signals if (s["symbol"], s["side"]) not in _pv_traded]
+
         if not all_signals:
             st.markdown("""
             <div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
                         border:2px dashed #dae0cb;border-radius:12px;
                         font-family:DM Mono,monospace;">
-                <div style="font-size:2rem;margin-bottom:0.75rem;">📡</div>
+                <div style="font-size:2rem;margin-bottom:0.75rem;">✅</div>
                 <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem;">
-                    No signals yet
+                    All signals traded!
                 </div>
                 <div style="font-size:0.82rem;color:#5a6a48;">
-                    Go to <b>📡 Scanner</b> → pick any scanner tab → click <b>🔄 Scan Now</b><br>
-                    Signals auto-appear and refresh every 5 min.
+                    No pending signals. Go to <b>📡 Scanner</b> → click <b>🔄 Scan Now</b><br>
+                    for fresh signals, or wait for the 5-min auto-refresh.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -6641,8 +6666,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
         with fc1:
             tf_filter = st.multiselect(
                 "Scanner",
-                ["α Alpha", "β Beta", "γ Gamma"],
-                default=["α Alpha", "β Beta", "γ Gamma"],
+                ["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"],
+                default=["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"],
                 key="sig_tf_filter",
                 label_visibility="collapsed",
             )
@@ -6656,7 +6681,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         with fc4:
             min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
 
-        effective_tf = tf_filter if tf_filter else ["α Alpha", "β Beta", "γ Gamma"]
+        effective_tf = tf_filter if tf_filter else ["⚡ 15 Min", "🔥 30 Min", "🌊 1 Hour", "⚓ Daily", "🌐 Weekly"]
         filtered = [
             s for s in all_signals
             if s["tf"] in effective_tf
@@ -6877,6 +6902,22 @@ def _trade_buttons(s: dict):
         except Exception:
             ltp = s.get("entry", 0)
         if not ltp: return
+        # ── Mark traded → disappears from Signal tab ────────────────
+        if "pv_traded_signals" not in st.session_state:
+            st.session_state["pv_traded_signals"] = set()
+        st.session_state["pv_traded_signals"].add((sym, s["side"]))
+        # ── Telegram: immediate manual punch notification ────────────
+        _tg_m = st.session_state.get("telegram_cfg", {})
+        if _tg_m.get("notify_entry", True):
+            _arr = "🟢" if bull else "🔴"
+            _send_telegram(
+                f"🖐 <b>MANUAL TRADE — {sym}</b>\n"
+                f"{_arr} <b>{'BUY' if bull else 'SELL'}</b> via {broker_name}\n"
+                f"Entry ₹{ltp:,.2f} · T1 ₹{s.get('t1',0):,.2f} · "
+                f"SL ₹{s.get('sl',0):,.2f} · RR {s.get('rr1',0):.1f}x\n"
+                f"Strength {s.get('strength',0)}% · {s.get('candle','—')}\n"
+                f"<i>PivotVault AI · {s.get('tf','—')} · Manual punch</i>"
+            )
 
         # Load FT data
         if not st.session_state.get("ft_loaded"):
@@ -6980,6 +7021,23 @@ def _trade_buttons(s: dict):
     with c4:
         if st.button("🧪 Fwd Test", key=f"fwd_{sym}_{s['side']}_{s['tf']}",
                      use_container_width=True):
+            # ── Mark traded → disappears from Signal tab ────────────
+            if "pv_traded_signals" not in st.session_state:
+                st.session_state["pv_traded_signals"] = set()
+            st.session_state["pv_traded_signals"].add((sym, s["side"]))
+            # ── Telegram: Fwd Test punch notification ───────────────
+            _tg_f = st.session_state.get("telegram_cfg", {})
+            if _tg_f.get("notify_entry", True):
+                try: _ltp_f = _ft_get_ltp(sym) or s.get("entry", 0)
+                except: _ltp_f = s.get("entry", 0)
+                _send_telegram(
+                    f"⚗️ <b>FWD TEST — {sym}</b>\n"
+                    f"{'🟢' if bull else '🔴'} <b>{'BUY' if bull else 'SELL'}</b>\n"
+                    f"Entry ₹{_ltp_f:,.2f} · T1 ₹{s.get('t1',0):,.2f} · "
+                    f"SL ₹{s.get('sl',0):,.2f} · RR {s.get('rr1',0):.1f}x\n"
+                    f"Strength {s.get('strength',0)}% · {s.get('candle','—')}\n"
+                    f"<i>PivotVault AI · {s.get('tf','—')} · Forward Test</i>"
+                )
             try:
                 live = _ft_get_ltp(sym) or s.get("entry", 0)
             except Exception:
@@ -8078,6 +8136,10 @@ def ft_add_signal(s: dict, source: str = "Scanner", manual: bool = False):
         "currency":   "$" if _us else "₹",
     }
     ft["positions"].append(pos)
+    # ── Mark in session so Trade Signals tab hides this signal ──
+    if "pv_traded_signals" not in st.session_state:
+        st.session_state["pv_traded_signals"] = set()
+    st.session_state["pv_traded_signals"].add((sym, side))
     ft["balance"] = round(bal - cost, 2)
 
     # Mark this symbol+side as traded today
