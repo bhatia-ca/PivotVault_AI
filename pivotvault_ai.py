@@ -1069,17 +1069,12 @@ def _load_credentials():
             continue
 
     if data:
-        # Broker keys — only set if not already in session
-        for k in ["upstox_api_key","upstox_api_secret",
+        # Broker keys + token
+        for k in ["upstox_api_key","upstox_api_secret","upstox_access_token",
                   "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                   "broker","broker_connected"]:
             if k in data and not st.session_state.get(k):
                 st.session_state[k] = data[k]
-        # Upstox access token — ALWAYS restore from file.
-        # An empty string in session_state (e.g. after logout) must NOT block restore.
-        # Token is pasted once every morning at 9 AM — it must survive logout/refresh.
-        if data.get("upstox_access_token"):
-            st.session_state["upstox_access_token"] = data["upstox_access_token"]
         # Telegram
         if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
             st.session_state["telegram_cfg"] = data["telegram_cfg"]
@@ -6030,6 +6025,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
             pass  # empty state — stay in tab
 
+        # ── Guard: ensure required columns exist before filtering ─────────────────
+        # scan_df can be non-empty but missing columns when yfinance returns partial data
+        if "Pattern"   not in scan_df.columns: scan_df["Pattern"]   = "Neutral"
+        if "CPR Width%" not in scan_df.columns: scan_df["CPR Width%"] = 0.0
+        if "Strength%"  not in scan_df.columns: scan_df["Strength%"]  = 0.0
+
         # ── All bullish & bearish — no strength cutoff ────────────────────────────
         all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
         all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
@@ -9496,17 +9497,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
         )
     with lc2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
-            _clear_session()                              # delete session files only
+            _clear_session()                              # delete all session files
             st.session_state["logged_in"]    = False
             st.session_state["username"]     = ""
             st.session_state["user_email"]   = ""
             st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
-            st.session_state["tg_otp_code"]  = ""
-            # ── Broker token intentionally NOT cleared ──
-            # Upstox token is pasted once at 9 AM and must survive logout/login.
-            # It is a daily-expiry JWT — no security risk keeping it in session.
-            # _load_credentials() will restore it from the creds file on next load anyway.
+            st.session_state["tg_otp_code"]  = ""       # clear any pending OTP
             st.rerun()
 
     # Update page on selection change
