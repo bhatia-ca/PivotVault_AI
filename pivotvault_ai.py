@@ -1435,7 +1435,7 @@ def fetch_nifty200_list() -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  US MARKET STOCK LISTS — removed (NSE only build)
+#  US MARKET STOCK LISTS — removed (NSE only)
 # ══════════════════════════════════════════════════════════════════════════════
 
 _DOW30_SYMBOLS = [
@@ -1493,7 +1493,7 @@ def get_market_list(market: str) -> list:
         return _NIFTY50_SYMBOLS
     elif market == "🇮🇳 Nifty 100":
         return _NIFTY100_SYMBOLS
-    # US markets removed — Nifty 100 is the only scan universe
+    # US markets removed — Nifty 100 only
     elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
     else:
@@ -2723,7 +2723,7 @@ def render_market_header():
         status    = "LIVE · NSE Open" if open_ else "Market Closed"
         next_info = ""
         if not open_:
-            next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
+            next_info = f" · {_mkt_status_india['note']}"
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
             f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;'>"
@@ -5787,18 +5787,20 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # ── Global Market Toggle ──────────────────────────────────────
         # ── Scan Universe: fixed to Nifty 100 (NSE only) ─────────────
-        _market    = "🇮🇳 Nifty 100"
-        _is_us     = False
-        _sym_count = len(get_market_list(_market))
+        _market = "🇮🇳 Nifty 100"
+        _is_us  = False
         st.session_state["scanner_market"]        = _market
         st.session_state["scanner_market_global"] = _market
+
+        _sym_count = len(get_market_list(_market))
+        _feed      = "yfinance (US)" if _is_us else "yfinance / Upstox"
 
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"🇮🇳 <b>Nifty 100</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
-            f"<b>₹ INR</b> &nbsp;·&nbsp; yfinance / Upstox &nbsp;·&nbsp; "
+            f"📊 <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"{'<b>$USD</b>' if _is_us else '<b>₹INR</b>'} &nbsp;·&nbsp; {_feed} &nbsp;·&nbsp; "
             f"⚡ All scanners auto-refresh every <b>5 minutes</b></div>",
             unsafe_allow_html=True,
         )
