@@ -6477,16 +6477,16 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # Only use 15Min and 1Hour scans as requested
         # ── Only 30m + 1h in Trade Signals tab ──────────────────────────────
         # 15m excluded: too noisy, tight SL, not auto-traded
-        # Only signals that will actually execute (AUTO or MANUAL) are shown
+        # tf_filter_key must match the multiselect options exactly (no " · AUTO" suffix)
         TF_LABELS = {
-            "cpr_scan_30m":  ("⏱️ 30 Min · AUTO",  "#ea580c", "30m"),
-            "cpr_scan_1h":   ("🕐 1 Hour · AUTO",   "#1d4ed8", "1h"),
+            "cpr_scan_30m":  ("⏱️ 30 Min · AUTO",  "#ea580c", "30m", "⏱️ 30 Min"),
+            "cpr_scan_1h":   ("🕐 1 Hour · AUTO",   "#1d4ed8", "1h",  "🕐 1 Hour"),
         }
 
         all_signals = []
         scan_times  = {}
 
-        for key, (label, color, tag) in TF_LABELS.items():
+        for key, (label, color, tag, tf_filter_key) in TF_LABELS.items():
             _raw = st.session_state.get(key)
             df = _raw if isinstance(_raw, pd.DataFrame) else pd.DataFrame()
             ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
@@ -6494,7 +6494,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
                 for _, r in df.iterrows():
                     _sig = {
-                        "tf":       label,
+                        "tf":       tf_filter_key,   # matches multiselect options exactly
+                        "tf_label": label,            # full label with AUTO badge for display
                         "tf_color": color,
                         "symbol":   r["Symbol"],
                         "side":     "BUY"  if r["Pattern"] == "Bullish" else "SELL",
@@ -6598,7 +6599,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # Apply filters
         filtered = [s for s in all_signals
-                    if s["tf"] in (tf_filter if tf_filter else ["⚡ 15 Min","🕐 1 Hour"])
+                    if s["tf"] in (tf_filter if tf_filter else ["⏱️ 30 Min","🕐 1 Hour"])
                     and (side_filter == "All"
                          or (side_filter == "BUY only"  and s["side"] == "BUY")
                          or (side_filter == "SELL only" and s["side"] == "SELL"))
@@ -6657,7 +6658,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
           </span>
           <span style="background:{tf_c}18;color:{tf_c};border:1px solid {tf_c}44;
                        border-radius:12px;padding:1px 7px;font-size:0.65rem;font-weight:700;">
-            {s['tf']}
+            {s.get('tf_label', s['tf'])}
           </span>
         </div>
         <span style="font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;">
