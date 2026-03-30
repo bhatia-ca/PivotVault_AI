@@ -5648,360 +5648,1097 @@ def page_scanner_signals(nse500: pd.DataFrame):
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
-        # ── Market selector ──────────────────────────────────────────────
-        MARKETS = ["Nifty 50", "Nifty 100", "Nifty 200", "Dow 30", "Nasdaq 100"]
-        _saved = st.session_state.get("scannermarketglobal",
-                 st.session_state.get("scannermarket", "Nifty 100"))
-        if _saved not in MARKETS:
-            _saved = "Nifty 100"
+        # ── Global Market Toggle (persisted across refresh) ───────────────
+        # Default: Nifty 100. Dow 30 / Nasdaq 100 available for US testing.
+        # Choice is saved to disk so it survives page refresh and mobile switch.
+        _MARKETS     = ["🇮🇳 Nifty 100", 
+                        "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
+        _saved_mkt   = st.session_state.get("scanner_market_global",
+                        st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+        # Migrate legacy values
+        if _saved_mkt not in _MARKETS:
+            _saved_mkt = "🇮🇳 Nifty 100"
 
-        market = st.radio(
-            "Scan universe", MARKETS,
-            index=MARKETS.index(_saved),
+        _market = st.radio(
+            "Scan universe",
+            _MARKETS,
+            index=_MARKETS.index(_saved_mkt),
             horizontal=True,
-            key="mktradioglobal",
+            key="mkt_radio_global",
             label_visibility="collapsed",
         )
-        if market != _saved:
-            st.session_state["scannermarket"] = market
-            st.session_state["scannermarketglobal"] = market
-            savecredentials()
+        # Persist selection immediately so refresh / mobile keeps it
+        if _market != _saved_mkt:
+            st.session_state["scanner_market"]        = _market
+            st.session_state["scanner_market_global"] = _market
+            _save_credentials()   # write to disk right now
             st.rerun()
 
-        is_us = market in ("Dow 30", "Nasdaq 100")
-        if is_us and not ismarketopen_us():
-            st.warning("⚠️ US markets closed. Dow/Nasdaq scanning available 9:30 PM – 4:00 AM IST.")
+        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        # US markets only live during US hours (9:30 AM–4:00 PM EST/EDT)
+        if _is_us and not is_market_open("us"):
+            st.warning("🇺🇸 US markets closed — Dow/Nasdaq scanning available 9:30 PM–4:00 AM IST")
             return
-
-        sym_count = len(getmarketlist(market))
-
-        # ── Live status bar ───────────────────────────────────────────────
+        _feed  = "yfinance (US, no token needed)" if _is_us else "yfinance / Upstox fallback"
+        _sym_count = len(get_market_list(_market))
         st.markdown(
-            f"""<div style="background:#f0f4e8;border-left:3px solid #4e6130;border-radius:6px;
-            padding:0.4rem 0.9rem;margin-bottom:0.5rem;font-family:'DM Mono',monospace;
-            font-size:0.72rem;color:#5a6a48">
-            Scanning <b>{market}</b> &nbsp;·&nbsp; {sym_count} symbols &nbsp;·&nbsp;
-            Feed: {'yfinance (US)' if is_us else 'yfinance + Upstox fallback'}
-            </div>""",
+            f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
+            f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
+            f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
+            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"{'<b>$USD</b> · ' if _is_us else '<b>₹INR</b> · '}"
+            f"{_feed} &nbsp;·&nbsp; "
+            f"{'⚠️ US market — yfinance only, no Upstox needed' if _is_us else '✅ Data always live via yfinance'}"
+            f"</div>", unsafe_allow_html=True)
+        st.divider()
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+            "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
+            "border-radius:6px;border-left:3px solid #4e6130;'>"
+            "⚡ <b>15 Min &amp; 30 Min &amp; 1 Hour</b> → Auto-scan + Forward Testing &nbsp;|&nbsp; "
+            "🖐 <b>1d / 1wk / 1mo</b> → Manual execution required &nbsp;|&nbsp; "
+            "📡 <b>Data feed:</b> yfinance always active (Upstox enhances speed when token present)</div>",
+            unsafe_allow_html=True)
+
+        # ═══════════════════════════════════════════════════════════════════
+        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS ⚡15m · ⏱️30m · 🕐1H
+        # ═══════════════════════════════════════════════════════════════════
+        _TOP5_KEY      = "top5_best_trades"
+        _TOP5_TIME_KEY = "top5_best_trades_time"
+        _top5_age      = time.time() - st.session_state.get(_TOP5_TIME_KEY, 0)
+        _top5_needs    = _top5_age >= 900  # auto-refresh every 15 min
+
+        _th1, _th2 = st.columns([5, 1])
+        with _th1:
+            st.markdown("""
+            <div style="display:flex;align-items:center;gap:10px;
+                        font-family:'IBM Plex Mono',monospace;">
+              <span style="font-size:1.6rem;">🏆</span>
+              <div>
+                <div style="font-size:1.05rem;font-weight:700;color:#1a1f0e;">
+                  Top 5 Best Trades
+                </div>
+                <div style="font-size:0.68rem;color:#5a6a48;letter-spacing:0.06em;
+                            text-transform:uppercase;margin-top:1px;">
+                  Auto-ranked across ⚡ 15 Min · ⏱️ 30 Min · 🕐 1 Hour &nbsp;·&nbsp;
+                  Frank Ochoa Composite Score &nbsp;·&nbsp; Refreshes every 15 min
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with _th2:
+            if st.button("🔄 Refresh Top 5", key="refresh_top5_btn",
+                         use_container_width=True):
+                _top5_needs = True
+                st.session_state.pop(_TOP5_KEY, None)
+
+        if _top5_needs or _TOP5_KEY not in st.session_state:
+            _mkt_list = get_market_list(
+                st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
+            )
+            with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
+                _top5_result = _get_top5_best_trades(_mkt_list[:80])
+            st.session_state[_TOP5_KEY]      = _top5_result
+            st.session_state[_TOP5_TIME_KEY] = time.time()
+            _top5_age = 0
+
+        _top5_trades = st.session_state.get(_TOP5_KEY, [])
+
+        if not _top5_trades:
+            st.info("📡 No top trades found yet — click **🔄 Refresh Top 5** to scan all 3 timeframes.")
+        else:
+            _scan_age_min = int(_top5_age / 60)
+            st.markdown(
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
+                f"color:#5a6a48;margin-bottom:0.6rem;'>"
+                f"✅ Last scanned <b>{_scan_age_min} min ago</b> · "
+                f"Showing <b>{len(_top5_trades)}</b> best unique setups across 15m + 30m + 1H</div>",
+                unsafe_allow_html=True,
+            )
+
+            _t5cols = st.columns(min(5, len(_top5_trades)))
+            _medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+
+            for _idx, _sig in enumerate(_top5_trades):
+                _is_bull  = _sig.get("Pattern", "") == "Bullish"
+                _hc       = "#16a34a" if _is_bull else "#dc2626"
+                _hbg      = "#edf7ee" if _is_bull else "#fdf0ee"
+                _hbd      = "#b8dfc0" if _is_bull else "#f0c0b8"
+                _arrow    = "▲" if _is_bull else "▼"
+                _side_lbl = "BUY" if _is_bull else "SELL"
+                _tf_lbl   = _sig.get("_tf_label", "")
+                _tf_color = _sig.get("_tf_color", "#5a6a48")
+                _tf_tag   = _sig.get("_tf_tag", "")
+                _score    = _sig.get("_rank_score", 0)
+                _sym      = _sig.get("Symbol", "")
+                _rr       = float(_sig.get("RR1", 0))
+                _str      = int(_sig.get("Strength%", 0))
+                _candle   = _sig.get("Candle", "—")
+                _rsi      = float(_sig.get("RSI", 50))
+                _hma      = str(_sig.get("HMA", "—"))
+                _vol      = str(_sig.get("Vol Surge", "—"))
+                _entry    = float(_sig.get("Entry", 0))
+                _t1       = float(_sig.get("T1", 0))
+                _t2       = float(_sig.get("T2", 0))
+                _sl       = float(_sig.get("SL", 0))
+                _sl_pct   = abs(_entry - _sl) / _entry * 100 if _entry > 0 else 0
+                _day_type = str(_sig.get("Day Type", ""))
+                _cpr_w    = float(_sig.get("CPR Width%", 0))
+                _rr_col   = "#16a34a" if _rr >= 2.0 else ("#d97706" if _rr >= 1.5 else "#dc2626")
+                _medal    = _medals[_idx] if _idx < len(_medals) else f"#{_idx+1}"
+
+                if   _score >= 100: _grade, _gc = "A+", "#16a34a"
+                elif _score >= 80:  _grade, _gc = "A",  "#16a34a"
+                elif _score >= 65:  _grade, _gc = "B+", "#d97706"
+                elif _score >= 50:  _grade, _gc = "B",  "#d97706"
+                else:               _grade, _gc = "C",  "#dc2626"
+
+                with _t5cols[_idx]:
+                    st.markdown(f"""
+                    <div style="background:#fff;border:1.5px solid {_hbd};
+                    border-top:4px solid {_hc};border-radius:10px;
+                    padding:0.75rem 0.8rem;margin-bottom:0.3rem;
+                    box-shadow:0 2px 10px rgba(0,0,0,0.07);">
+                      <div style="display:flex;justify-content:space-between;
+                      align-items:center;margin-bottom:0.4rem;">
+                        <span style="font-size:1.15rem;">{_medal}</span>
+                        <span style="background:{_tf_color}18;color:{_tf_color};
+                        font-family:IBM Plex Mono,monospace;font-size:0.58rem;
+                        font-weight:700;padding:2px 6px;border-radius:4px;
+                        border:1px solid {_tf_color}44;">{_tf_lbl}</span>
+                      </div>
+                      <div style="font-family:'IBM Plex Mono',monospace;
+                      font-size:1rem;font-weight:700;color:#1a1f0e;">
+                        <span style="color:{_hc};">{_arrow}</span> {_sym}
+                      </div>
+                      <div style="font-family:'IBM Plex Mono',monospace;
+                      font-size:0.62rem;color:#5a6a48;margin-bottom:0.4rem;">
+                        {_candle} &nbsp;·&nbsp; RSI {_rsi:.0f} &nbsp;·&nbsp; {_day_type}
+                      </div>
+                      <div style="background:#f1f5f9;border-radius:3px;
+                      height:4px;margin-bottom:0.45rem;">
+                        <div style="background:{_hc};width:{min(_str,100)}%;
+                        height:100%;border-radius:3px;"></div>
+                      </div>
+                      <div style="background:#f7f9f2;border-radius:6px;
+                      padding:0.35rem 0.5rem;font-family:'IBM Plex Mono',monospace;
+                      font-size:0.63rem;margin-bottom:0.4rem;line-height:1.8;">
+                        <div>Entry <b style="color:#1a1f0e;">₹{_entry:,.2f}</b></div>
+                        <div>T1 &nbsp; <b style="color:{_hc};">₹{_t1:,.2f}</b>
+                          &nbsp;·&nbsp; T2 <b style="color:{_hc};">₹{_t2:,.2f}</b></div>
+                        <div>SL &nbsp; <b style="color:#c0392b;">₹{_sl:,.2f}</b>
+                          <span style="color:#e74c3c;font-size:0.58rem;">
+                          &nbsp;({_sl_pct:.2f}%)</span></div>
+                      </div>
+                      <div style="display:flex;flex-wrap:wrap;gap:3px;
+                      font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+                      margin-bottom:0.3rem;">
+                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
+                        border-radius:3px;padding:1px 5px;color:{_rr_col};font-weight:700;">
+                          R:R {_rr:.1f}x</span>
+                        <span style="background:{_hbg};border:1px solid {_hbd};
+                        border-radius:3px;padding:1px 5px;color:{_hc};font-weight:700;">
+                          {_str}%</span>
+                        <span style="background:#fff8ed;border:1px solid #f0d070;
+                        border-radius:3px;padding:1px 5px;color:{_gc};font-weight:700;">
+                          {_grade}</span>
+                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
+                        border-radius:3px;padding:1px 5px;color:#5a6a48;">
+                          Score {_score:.0f}</span>
+                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
+                        border-radius:3px;padding:1px 5px;color:#5a6a48;">
+                          CPR {_cpr_w:.3f}%</span>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    _btn_type = "primary" if _idx == 0 else "secondary"
+                    if st.button(
+                        f"➕ {'⭐ Trade' if _idx == 0 else 'Trade'} #{_idx+1} · {_sym}",
+                        key=f"top5_trade_{_idx}_{_sym}_{_tf_tag}",
+                        use_container_width=True,
+                        type=_btn_type,
+                    ):
+                        _msig = {
+                            "symbol":    _sym,
+                            "side":      _side_lbl,
+                            "entry":     _entry,
+                            "sl":        _sl,
+                            "t1":        _t1,
+                            "t2":        _t2,
+                            "rr1":       _rr,
+                            "tf":        _tf_tag,
+                            "strategy":  _sig.get("Strategy", "CPR"),
+                            "strength":  _str,
+                            "candle":    _candle,
+                            "day_type":  _day_type,
+                            "cpr_w":     _cpr_w,
+                            "rsi":       _rsi,
+                            "hma":       _hma,
+                            "vol":       _vol,
+                            "ltp":       _entry,
+                            "rank_score": _score,
+                        }
+                        ft_add_signal(
+                            _msig,
+                            source=f"🏆 Top5·Rank#{_idx+1}·{_tf_tag.upper()}"
+                        )
+                        _tg_payload = {
+                            "symbol": _sym, "side": _side_lbl,
+                            "entry": _entry, "target": _t1, "sl": _sl,
+                            "qty": 1, "cost": _entry, "rr": _rr,
+                            "tf": _tf_tag, "pnl": 0,
+                        }
+                        _send_telegram(_tg_trade_msg(_tg_payload, "ENTRY"))
+                        st.success(
+                            f"✅ **{_sym}** ({_tf_lbl}) added to Forward Testing! "
+                            f"Entry ₹{_entry:,.2f} · T1 ₹{_t1:,.2f} · SL ₹{_sl:,.2f}"
+                        )
+
+        st.divider()
+
+        # ── Manual TF scanner continues below ─────────────────────────────────
+        TF_CONFIG = {
+            "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+            "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
+            "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"60d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
+            "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"120d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
+            "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
+            "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
+        }
+
+        # ── Header ────────────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.25rem;
+                    padding:1.25rem 1.5rem;background:#ffffff;border:1px solid #dae0cb;
+                    border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+            <div style="font-size:2rem;">📡</div>
+            <div style="flex:1;">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:1.1rem;
+                            font-weight:700;color:#1a1f0e;">CPR Scanner</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                            color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
+                    Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+                </div>
+            </div>
+            <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
+                <div style="font-size:0.62rem;color:#5a6a48;text-transform:uppercase;letter-spacing:0.07em;">Next refresh in</div>
+                <div id="countdown" style="font-size:1.3rem;font-weight:700;color:#1a6b3c;">—</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Notification bar — device-aware ─────────────────────────────────────
+        st.markdown("""
+        <div id="pvNBar" style="border-radius:9px;padding:9px 14px;
+             margin-bottom:0.75rem;font-family:DM Mono,monospace;font-size:0.76rem;
+             border:1.5px solid #b8c89a;background:#f0f4e8;min-height:38px;">
+            <div id="pvNContent"></div>
+        </div>
+        <script>
+        (function(){
+            var w  = window.parent||window;
+            var ua = navigator.userAgent||"";
+            var isIOS     = /iPhone|iPad|iPod/i.test(ua);
+            var isAndroid = /Android/i.test(ua);
+            var isPWA     = window.matchMedia("(display-mode:standalone)").matches||
+                            window.navigator.standalone===true;
+            var isMobile  = isIOS||isAndroid;
+            var el = document.getElementById("pvNContent");
+            if(!el) return;
+
+            function render(){
+                if(isIOS && !isPWA){
+                    el.innerHTML = "📱 <b>iOS:</b> Notifications not supported in Safari. "
+                        +"<span style='color:#7a5800;'>Add to Home Screen (PWA) to enable.</span>";
+                    return;
+                }
+                if(!("Notification" in w)){
+                    el.innerHTML = "⚠️ Browser doesn't support notifications. Use Chrome/Edge.";
+                    return;
+                }
+                var p = w.Notification.permission;
+                if(p==="granted"){
+                    document.getElementById("pvNBar").style.background="#e4f5e8";
+                    document.getElementById("pvNBar").style.borderColor="#8dcc9a";
+                    el.innerHTML = "<span style='color:#1a6b2e;font-weight:700;'>✅ Notifications active</span>"
+                        +" · <span style='color:#2e3d1a;'>"+(isMobile?"Android Chrome":"Desktop browser")+"</span>"
+                        +" <button onclick='pvSendTest()' style='margin-left:8px;background:#1a6b2e;"
+                        +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                        +"font-size:0.72rem;cursor:pointer;font-weight:700;'>🧪 Test</button>";
+                } else if(p==="denied"){
+                    document.getElementById("pvNBar").style.background="#fbe8e6";
+                    document.getElementById("pvNBar").style.borderColor="#dc9090";
+                    el.innerHTML = "❌ Notifications blocked. "
+                        +(isAndroid?"Chrome → 3-dot menu → Site settings → Notifications → Allow."
+                        :"Browser Settings → Notifications → Allow this site.");
+                } else {
+                    el.innerHTML = "🔔 Enable "+(isMobile?"mobile":"desktop")+" notifications for instant signal alerts"
+                        +" <button onclick='pvAskNotif()' style='margin-left:8px;background:#3d5a1c;"
+                        +"color:#fff;border:none;border-radius:5px;padding:3px 10px;"
+                        +"font-size:0.72rem;cursor:pointer;font-weight:700;'>Allow</button>";
+                }
+            }
+            window.pvAskNotif = function(){
+                w.Notification.requestPermission().then(function(){ render(); });
+            };
+            window.pvSendTest = function(){
+                try{
+                    var n = new w.Notification("🧪 PivotVault AI — Test",{
+                        body:"RELIANCE BUY · Entry ₹2,850 · T1 ₹2,920 · SL ₹2,800 · R:R 2.1x",
+                        icon:"/static/icon-192.png", tag:"pv-test"
+                    });
+                    n.onclick=function(){w.focus();n.close();};
+                    el.innerHTML="<span style='color:#1a6b2e;font-weight:700;'>"
+                        +"✅ Test sent! Check your "+(isMobile?"phone":"desktop")+".</span>";
+                    setTimeout(render,3500);
+                }catch(e){ el.innerHTML="❌ "+e.message; }
+            };
+            render();
+        })();
+        </script>
+        """, unsafe_allow_html=True)
+
+        # ── Timeframe selector ────────────────────────────────────────────────────
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            tf_choice = st.selectbox(
+                "Timeframe",
+                list(TF_CONFIG.keys()),
+                index=2,
+                label_visibility="collapsed",
+                key="scanner_tf",
+            )
+        with c2:
+            manual_btn = st.button("🔄 Scan Now", use_container_width=True, key="run_cpr_scan_btn")
+
+        cfg        = TF_CONFIG[tf_choice]
+        tf_col     = cfg["color"]
+        tf_bg      = cfg["bg"]
+        tf_tag     = cfg["tag"]
+        refresh_s  = cfg["refresh"]
+
+        scan_key      = f"cpr_scan_{tf_tag}"
+        scan_time_key = f"cpr_scan_time_{tf_tag}"
+
+        now           = time.time()
+        last_scan     = st.session_state.get(scan_time_key, 0)
+        age           = now - last_scan
+        needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
+
+        # ── Run scan only for selected timeframe ──────────────────────────────────
+        if needs_refresh:
+            # Warn if Upstox not connected — yfinance may be blocked on Streamlit Cloud
+            if not _upstox_connected():
+                st.info(
+                    "💡 **Tip:** Connect your Upstox API token in ⚙️ Broker Settings for reliable data. "
+                    "yfinance may be rate-limited on Streamlit Cloud.",
+                    icon="ℹ️",
+                )
+            upstox_live  = _upstox_connected()
+            has_creds    = _upstox_has_credentials()
+            n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
+
+            if has_creds and not upstox_live:
+                st.warning(
+                    "⚠️ Upstox token expired — scanner will use yfinance. "
+                    "Paste today's token above to restore Upstox live feed.",
+                    icon="🔑",
+                )
+
+            src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
+            with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
+                try:
+                    result = scan_cpr_multi_tf(
+                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200")),
+                        interval=cfg["interval"],
+                        period=cfg["period"],
+                        max_stocks=n_stocks,
+                    )
+                    if result.empty:
+                        st.warning(
+                            f"⚠️ No setups found on {tf_tag.upper()}. "
+                            f"{'Market may be closed — data is from last session.' if not is_market_open('us' if st.session_state.get('scanner_market','') in ('🇺🇸 Dow 30','🇺🇸 Nasdaq 100') else 'india') else 'All stocks filtered out — try a different timeframe.'}"
+                        )
+                    else:
+                        st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
+                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
+                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
+                            for _,_r in result.head(3).iterrows():
+                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
+                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
+                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
+                            _send_telegram("\n".join(_tl))
+                except Exception as e:
+                    st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
+                    result = pd.DataFrame()
+            st.session_state[scan_key]      = result
+            st.session_state[scan_time_key] = now
+
+            # ── Rank signals & Auto-trade BEST 3 only ────────────────────
+            if not result.empty and tf_tag in ("15m","30m","1h"):
+
+                def _signal_rank_score(row):
+                    """
+                    Composite rank score — Frank Ochoa weighted.
+                    Higher score = better quality signal.
+                    """
+                    s   = float(row.get("Strength%",   0))
+                    rr  = float(row.get("RR1",         1.0))
+                    cw  = float(row.get("CPR Width%",  1.0))
+                    dt  = str(row.get("Day Type",      ""))
+                    ov  = bool(row.get("CPR Overlap",  False))
+                    cn  = str(row.get("Candle",        ""))
+                    rsi = float(row.get("RSI",         50))
+                    hma = str(row.get("HMA",           ""))
+                    vol = str(row.get("Vol Surge",     ""))
+                    side= str(row.get("Pattern",       ""))
+
+                    score = (s * 0.35) + (rr * 15)
+
+                    # CPR Width — narrower = better (trending day)
+                    if cw < 0.25:   score += 20
+                    elif cw < 0.5:  score += 10
+                    elif cw > 1.0:  score -= 10
+
+                    # Day Type bonus/penalty (Ochoa Two-Day CPR)
+                    if dt == "Trending":    score += 25
+                    elif dt == "Moderate":  score += 10
+                    elif dt == "Sideways":  score -= 40
+                    elif dt == "Volatile":  score -= 5
+
+                    # Overlap heavy penalty
+                    if ov: score -= 30
+
+                    # Candle quality bonus
+                    _premium = {
+                        "Morning Star": 20, "Evening Star": 20,
+                        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+                        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+                        "Hammer": 12, "Shooting Star": 12,
+                        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+                        "Inside Bar": 5, "Doji at CPR": 3,
+                    }
+                    score += _premium.get(cn, 0)
+
+                    # RSI alignment
+                    if side == "Bullish" and rsi >= 55:    score += 8
+                    elif side == "Bearish" and rsi <= 45:  score += 8
+                    elif side == "Bullish" and rsi <= 40:  score -= 5
+                    elif side == "Bearish" and rsi >= 60:  score -= 5
+
+                    # HMA alignment
+                    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+                        score += 10
+
+                    # Volume surge
+                    if "✅" in vol: score += 8
+
+                    # Timeframe bonus — 30M is primary (highest quality CPR signals)
+                    _tf = str(row.get("tf",""))
+                    if   "30m" in _tf or "30M" in _tf: score += 15  # primary TF
+                    elif "1h"  in _tf or "1H"  in _tf: score += 8   # swing TF
+                    elif "15m" in _tf or "15M" in _tf: score += 5   # scalp TF
+
+                    return round(score, 2)
+
+                # Compute rank score for every directional signal
+                ranked = result[result["Pattern"] != "Neutral"].copy()
+                if not ranked.empty:
+                    ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
+                    ranked["🤖 Auto"]        = ""   # will be filled below
+                    ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
+                    ranked.index = ranked.index + 1  # rank 1 = best
+
+                    # Store ranked result for scanner UI display
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+                    # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
+                    # Max 1 trade per symbol per day — no duplicate entries
+                    _today   = datetime.now().strftime("%Y-%m-%d")
+                    _ft_evts = _ft_state().get("events", [])
+                    _traded_today = set(
+                        e.get("symbol","") for e in _ft_evts
+                        if e.get("type","") == "ENTRY"
+                        and str(e.get("time","")).startswith(_today)
+                    )
+                    auto_traded = 0
+                    for _ri, row in ranked.iterrows():
+                        sig = {
+                            "symbol":     row.get("Symbol",""),
+                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                            "entry":      row.get("Entry",   row.get("LTP",0)),
+                            "sl":         row.get("SL",      0),
+                            "t1":         row.get("T1",      0),
+                            "t2":         row.get("T2",      0),
+                            "rr1":        row.get("RR1",     2.0),
+                            "tf":         tf_tag,
+                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
+                            "strategy":   row.get("Strategy","CPR"),
+                            "strength":   row.get("Strength%",0),
+                            "candle":     row.get("Candle","—"),
+                            "day_type":   row.get("Day Type",""),
+                            "cpr_overlap":row.get("CPR Overlap", False),
+                            "rsi":        row.get("RSI", 50),
+                            "hma":        row.get("HMA","—"),
+                            "vol":        row.get("Vol Surge","—"),
+                            "cprw":       row.get("CPR Width%", 1.0),
+                            "ltp":        row.get("LTP", 0),
+                            "rank_score": row.get("🏆 Rank Score", 0),
+                        }
+                        _strength = float(sig.get("strength", 0))
+                        _rr       = float(sig.get("rr1", 0))
+                        _overlap  = sig.get("cpr_overlap", False)
+                        _day_type = sig.get("day_type", "")
+
+                        # Block sideways + enforce quality gate
+                        if _overlap and _day_type == "Sideways":
+                            continue
+                        # Frank Ochoa optimal params:
+                        # Strength >= 75%, RR >= 2.0, Non-sideways day
+                        if not (_strength >= 75 and _rr >= 2.0):
+                            continue
+
+                        # ── MIN SL DISTANCE FILTER (0.50%) ──────────────────
+                        # Prevents noise-triggered SL hits on tight stops
+                        # Based on forward test analysis: 17/18 SL hits had SL% < 0.50%
+                        _entry_px = float(sig.get("entry", 0))
+                        _sl_px    = float(sig.get("sl",    0))
+                        _sl_pct   = abs(_entry_px - _sl_px) / _entry_px * 100 if _entry_px > 0 else 0
+                        if _sl_pct < 0.50:
+                            continue   # SL too tight — skip, noise will hit it
+
+                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                            continue
+
+                        # Skip if this symbol already traded today
+                        if sig["symbol"] in _traded_today:
+                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
+                            continue
+
+                        if auto_traded < 3:
+                            # ── AUTO-TRADE GATE: Only 30m + 1h timeframes ──
+                            # 15m excluded — too noisy, tight SL, high false signals
+                            if tf_tag not in ("30m", "1h"):
+                                continue
+                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
+                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                            _traded_today.add(sig["symbol"])
+                            auto_traded += 1
+                        # Rest are available for manual trade — marked in ranked table
+
+                    # Update stored ranked result with Auto markers
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+            last_scan = now
+
+            # ── Always sync canonical keys read by Trade Signals tab ──────────────
+            # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
+            if tf_tag in ("15m", "30m", "1h"):
+                st.session_state[f"cpr_scan_{tf_tag}"]      = result
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+            # ── Store signals + fire desktop notifications ────────────────────────
+            if not result.empty:
+                top3_bull = result[result["Pattern"]=="Bullish"].head(3)
+                top3_bear = result[result["Pattern"]=="Bearish"].head(3)
+                notif_signals = []
+                for _, r in top3_bull.iterrows():
+                    notif_signals.append({
+                        "symbol": r["Symbol"], "side": "BUY",
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "candle": r.get("Candle","—"),
+                    })
+                for _, r in top3_bear.iterrows():
+                    notif_signals.append({
+                        "symbol": r["Symbol"], "side": "SELL",
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "candle": r.get("Candle","—"),
+                    })
+                st.session_state["pending_signals"] = notif_signals
+                # Also update the per-tag scan time key used by Trade Signals tab
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+                # ── Fire desktop notifications via window.parent ──────────────────
+                # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
+                notif_js_list = json.dumps([
+                    {"sym": s["symbol"], "side": s["side"],
+                     "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
+                     "rr": s["rr"], "str": s["strength"]}
+                    for s in notif_signals[:6]
+                ])
+                st.markdown(f"""
+    <script>
+    (function fireNotifs() {{
+        var sigs = {notif_js_list};
+        var w    = window.parent || window;
+        if (!("Notification" in w)) return;
+        if (w.Notification.permission !== "granted") {{
+            // Flash the allow button if not granted
+            var btn = document.getElementById("pv-allow-btn");
+            if (btn) {{
+                btn.style.animation = "none";
+                btn.style.background = "#c0392b";
+                btn.innerText = "⚠️ Allow Notifications!";
+            }}
+            return;
+        }}
+        sigs.forEach(function(s, i) {{
+            setTimeout(function() {{
+                var emoji = s.side === "BUY" ? "🟢" : "🔴";
+                w.pvNotify(
+                    emoji + " " + s.side + " Signal — " + s.sym + " (" + s.str + "%)",
+                    "Entry ₹" + s.entry + "  |  T1 ₹" + s.t1 + "  |  SL ₹" + s.sl + "  |  R:R " + s.rr + "x",
+                    "pv-" + s.sym
+                );
+            }}, i * 800);  // Stagger by 800ms so they don't all fire at once
+        }});
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
+
+        scan_df  = st.session_state.get(scan_key, pd.DataFrame())
+        elapsed  = int(now - last_scan)
+        remaining = max(0, refresh_s - elapsed)
+
+        # ── Countdown JS ──────────────────────────────────────────────────────────
+        st.markdown(f"""
+        <script>
+        (function() {{
+            var secs = {remaining};
+            function pad(n) {{ return n < 10 ? "0"+n : n; }}
+            function fmt(s) {{
+                if (s >= 3600) return pad(Math.floor(s/3600))+"h "+pad(Math.floor((s%3600)/60))+"m";
+                return pad(Math.floor(s/60))+":"+pad(s%60);
+            }}
+            function tick() {{
+                if (secs <= 0) {{ window.location.reload(); return; }}
+                var el = document.getElementById("countdown");
+                if (el) el.innerText = fmt(secs);
+                secs--;
+                setTimeout(tick, 1000);
+            }}
+            tick();
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
+
+        # ── Status bar ────────────────────────────────────────────────────────────
+        scan_dt = datetime.fromtimestamp(last_scan).strftime("%d %b  %H:%M:%S") if last_scan else "—"
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:1rem;flex-wrap:wrap;"
+            f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#5a6a48;"
+            f"margin-bottom:1rem;padding:0.5rem 0.9rem;background:{tf_bg};"
+            f"border:1px solid {tf_col}33;border-left:3px solid {tf_col};border-radius:6px;'>"
+            f"<span style='color:{tf_col};font-weight:700;'>{tf_choice}</span>"
+            f"<span>Last scan: <b>{scan_dt}</b></span>"
+            f"<span>Auto-refresh: every <b>{cfg['refresh_label']}</b></span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        # ── Scan settings ────────────────────────────────────────────────
-        with st.expander("⚙️ Scan Settings", expanded=False):
-            sc1, sc2, sc3 = st.columns([1, 1, 2])
-            with sc1:
-                scan_tf = st.selectbox(
-                    "Timeframe", ["15m", "30m", "1h", "1d", "1wk", "1mo"],
-                    index=1, key="scan_tf_select"
-                )
-            with sc2:
-                min_strength = st.slider(
-                    "Min Strength %", 0, 100, 60, step=5, key="scan_min_strength"
-                )
-            with sc3:
-                direction_filter = st.radio(
-                    "Direction", ["Both", "Bullish only", "Bearish only"],
-                    horizontal=True, key="scan_direction_filter"
-                )
+        if scan_df.empty:
+            st.warning("⚠️ Scanner returned no results. Click 🔄 Scan Now to retry.")
+            with st.expander("🔍 Debug — What to check if scanner shows no data"):
+                st.markdown("""
+    **Common causes:**
 
-        st.divider()
+    1. **First run** — Click **🔄 Scan Now** manually to trigger the first scan.
 
-        # ── Top 5 Best Trades ─────────────────────────────────────────────
-        TOP5KEY     = "top5besttrades"
-        TOP5TIMEKEY = "top5besttradestime"
-        top5_age    = time.time() - st.session_state.get(TOP5TIMEKEY, 0)
-        top5_needs  = top5_age > 900
+    2. **yfinance rate limit** — NSE/yfinance blocks frequent requests from cloud IPs.
+       Connect Upstox in ⚙️ Broker Settings for live data that always works.
 
-        th1, th2 = st.columns([5, 1])
-        with th1:
+    3. **Weekend / market closed** — Scanner still works but data is from last trading day.
+
+    4. **All CPR widths > 2%** — All stocks filtered out. Try switching to **1 Day** timeframe
+       which typically has more narrow CPR setups.
+
+    5. **Streamlit Cloud cold start** — Wait 30 seconds then click Scan Now.
+                """)
+                st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
+            pass  # empty state — stay in tab
+
+        # ── Guard: ensure required columns exist before filtering ─────────────────
+        # scan_df can be non-empty but missing columns when yfinance returns partial data
+        if "Pattern"    not in scan_df.columns: scan_df["Pattern"]    = "Neutral"
+        if "CPR Width%" not in scan_df.columns: scan_df["CPR Width%"] = 0.0
+        if "Strength%"  not in scan_df.columns: scan_df["Strength%"]  = 0.0
+
+        # ── All bullish & bearish — no strength cutoff ────────────────────────────
+        all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
+        all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
+
+        # ── Summary metrics ───────────────────────────────────────────────────────
+        n_scanned = len(scan_df)
+        n_narrow  = int((scan_df["CPR Width%"] < 0.25).sum())
+        n_bull    = len(all_bull)
+        n_bear    = len(all_bear)
+        n_qual    = n_bull + n_bear   # all directional stocks
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("📊 Scanned",   n_scanned)
+        m2.metric("🎯 Narrow CPR", n_narrow)
+        m3.metric("📈 Directional", n_qual)
+        m4.metric("🟢 Bullish",   n_bull)
+        m5.metric("🔴 Bearish",   n_bear)
+
+        st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
+
+        if n_qual == 0:
             st.markdown(
-                """<div style="display:flex;align-items:center;gap:10px;font-family:'IBM Plex Mono',monospace">
-                <span style="font-size:1.6rem">🏆</span>
-                <div>
-                  <div style="font-size:1.05rem;font-weight:700;color:#1a1f0e">Top 5 Best Trades</div>
-                  <div style="font-size:0.68rem;color:#5a6a48;letter-spacing:0.06em;text-transform:uppercase;margin-top:1px">
-                    Auto-ranked · 15m / 30m / 1H · Frank Ochoa Composite Score · Refreshes every 15 min
-                  </div>
-                </div></div>""",
+                f"<div style='text-align:center;padding:2rem;background:#f7f9f2;"
+                f"border:2px dashed #dce3ed;border-radius:10px;"
+                f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8a9a78;'>"
+                f"Scanned <b>{n_scanned}</b> stocks on {tf_tag.upper()} — no directional CPR setups found right now.<br>"
+                f"<span style='font-size:0.72rem;'>All CPR widths may be > 2%, or no RSI/HMA confirmation. "
+                f"Try switching to 📅 1 Day timeframe or 🔄 Scan Now again.</span>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
-        with th2:
-            if st.button("🔄 Refresh Top 5", key="refresh_top5_btn", use_container_width=True):
-                top5_needs = True
-                st.session_state.pop(TOP5KEY, None)
+            pass  # empty state — stay in tab
 
-        if top5_needs or TOP5KEY not in st.session_state:
-            mkt_list = getmarketlist(st.session_state.get("scannermarket", "Nifty 100"))[:80]
-            with st.spinner("Scanning 15m / 30m / 1H in parallel for best setups…"):
-                top5_result = gettop5besttrades(mkt_list)
-            st.session_state[TOP5KEY]     = top5_result
-            st.session_state[TOP5TIMEKEY] = time.time()
-            top5_age = 0
+        # ── Top 10 each side — sorted by Strength then tightest CPR ──────────────
+        top_bull = all_bull.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bull.empty else pd.DataFrame()
+        top_bear = all_bear.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).head(10) if not all_bear.empty else pd.DataFrame()
 
-        top5_trades = st.session_state.get(TOP5KEY, [])
+        def _cards(df, direction):
+            is_bull = direction == "Bullish"
+            hc  = "#16a34a" if is_bull else "#dc2626"
+            hbg = "#edf7ee" if is_bull else "#fdf0ee"
+            hbd = "#b8dfc0" if is_bull else "#f0c0b8"
+            arr = "▲" if is_bull else "▼"
 
-        if not top5_trades:
-            st.info("No top trades found yet — click **Refresh Top 5** to scan all 3 timeframes.")
-        else:
-            scan_age_min = int(top5_age // 60)
-            st.caption(f"Last scanned **{scan_age_min} min ago** · {len(top5_trades)} best unique setups across 15m / 30m / 1H")
-            medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-            t5cols = st.columns(min(5, len(top5_trades)))
-            for idx, sig in enumerate(top5_trades):
-                is_bull  = sig.get("Pattern", "") == "Bullish"
-                hc       = "#16a34a" if is_bull else "#dc2626"
-                hbg      = "#edf7ee" if is_bull else "#fdf0ee"
-                hbd      = "#b8dfc0" if is_bull else "#f0c0b8"
-                arrow    = "▲" if is_bull else "▼"
-                tf_lbl   = sig.get("tflabel", "")
-                tf_color = sig.get("tfcolor", "#5a6a48")
-                score    = sig.get("rankscore", 0)
-                sym      = sig.get("Symbol", "")
-                rr       = float(sig.get("RR1", 0))
-                strength = str(int(sig.get("Strength", 0)))
-                candle   = sig.get("Candle", "")
-                rsi      = float(sig.get("RSI", 50))
-                entry    = float(sig.get("Entry", 0))
-                t1       = float(sig.get("T1", 0))
-                t2       = float(sig.get("T2", 0))
-                sl       = float(sig.get("SL", 0))
-                sl_pct   = abs(entry - sl) / entry * 100 if entry > 0 else 0
-                cpr_w    = float(sig.get("CPR Width", 0))
-                day_type = str(sig.get("Day Type", ""))
-                rr_col   = "#16a34a" if rr >= 2.0 else "#d97706" if rr >= 1.5 else "#dc2626"
-                medal    = medals[idx] if idx < len(medals) else f"{idx+1}"
-                if   score >= 100: grade, gc = "A+", "#16a34a"
-                elif score >=  80: grade, gc = "A",  "#16a34a"
-                elif score >=  65: grade, gc = "B+", "#d97706"
-                elif score >=  50: grade, gc = "B",  "#d97706"
-                else:              grade, gc = "C",  "#dc2626"
+            if df.empty:
+                return (f"<div style='padding:2rem;text-align:center;background:#f7f9f2;"
+                        f"border:2px dashed #dce3ed;border-radius:10px;"
+                        f"font-family:IBM Plex Mono,monospace;font-size:0.78rem;color:#8a9a78;'>"
+                        f"No {direction} picks match criteria on this timeframe</div>")
 
-                with t5cols[idx]:
-                    st.markdown(
-                        f"""<div style="background:#fff;border:1.5px solid {hbd};border-top:4px solid {hc};
-                        border-radius:10px;padding:0.75rem 0.8rem;margin-bottom:0.3rem;
-                        box-shadow:0 2px 10px rgba(0,0,0,0.07)">
-                          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
-                            <span style="font-size:1.15rem">{medal}</span>
-                            <span style="background:{tf_color}18;color:{tf_color};font-family:'IBM Plex Mono',monospace;
-                              font-size:0.58rem;font-weight:700;padding:2px 6px;border-radius:4px;
-                              border:1px solid {tf_color}44">{tf_lbl}</span>
-                          </div>
-                          <div style="font-family:'IBM Plex Mono',monospace;font-size:1rem;font-weight:700;color:#1a1f0e">
-                            <span style="color:{hc}">{arrow}</span> {sym}
-                          </div>
-                          <div style="font-family:'IBM Plex Mono',monospace;font-size:0.62rem;color:#5a6a48;margin-bottom:0.4rem">
-                            {candle} &nbsp;·&nbsp; RSI {rsi:.0f} &nbsp;·&nbsp; {day_type}
-                          </div>
-                          <div style="background:#f1f5f9;border-radius:3px;height:4px;margin-bottom:0.2rem">
-                            <div style="background:{hc};width:{min(int(strength or 0),100)}%;height:100%;border-radius:3px"></div>
-                          </div>
-                          <div style="background:#f1f5f9;border-radius:3px;height:4px;margin-bottom:0.45rem">
-                            <div style="background:{rr_col};width:{min(int(rr/5*100),100)}%;height:100%;border-radius:3px"></div>
-                          </div>
-                          <div style="background:#f7f9f2;border-radius:6px;padding:0.35rem 0.5rem;
-                            font-family:'IBM Plex Mono',monospace;font-size:0.63rem;
-                            margin-bottom:0.4rem;line-height:1.8">
-                            <div>Entry <b style="color:#1a1f0e">{entry:,.2f}</b></div>
-                            <div>T1 &nbsp;<b style="color:{hc}">{t1:,.2f}</b> &nbsp;·&nbsp; T2 <b style="color:{hc}">{t2:,.2f}</b></div>
-                            <div>SL &nbsp;<b style="color:#c0392b">{sl:,.2f}</b>
-                              <span style="color:#e74c3c;font-size:0.58rem">&nbsp;{sl_pct:.2f}%</span></div>
-                          </div>
-                          <div style="display:flex;flex-wrap:wrap;gap:3px;font-family:'IBM Plex Mono',monospace;
-                            font-size:0.6rem;margin-bottom:0.3rem">
-                            <span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;
-                              padding:1px 5px;color:{rr_col};font-weight:700">RR {rr:.1f}x</span>
-                            <span style="background:{hbg};border:1px solid {hbd};border-radius:3px;
-                              padding:1px 5px;color:{hc};font-weight:700">{strength}%</span>
-                            <span style="background:#fff8ed;border:1px solid #f0d070;border-radius:3px;
-                              padding:1px 5px;color:{gc};font-weight:700">{grade}</span>
-                            <span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;
-                              padding:1px 5px;color:#5a6a48">Score {score:.0f}</span>
-                            <span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;
-                              padding:1px 5px;color:#5a6a48">CPR {cpr_w:.3f}</span>
-                          </div>
-                        </div>""",
-                        unsafe_allow_html=True,
-                    )
-                    st.link_button(
-                        "📈 Groww",
-                        f"https://groww.in/stocks/{sym.lower()}-share-price",
+            html = (f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;"
+                    f"font-weight:700;color:{hc};letter-spacing:0.05em;text-transform:uppercase;"
+                    f"padding:0.5rem 0.9rem;background:{hbg};border:1px solid {hbd};"
+                    f"border-left:4px solid {hc};border-radius:6px;margin-bottom:0.6rem;'>"
+                    f"{arr} Top 10 {direction} · Narrow CPR · Frank Ochoa Strategy</div>")
+
+            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+            for rank, (_, row) in enumerate(df.iterrows(), 1):
+                prob     = int(row["Strength%"])
+                rsi_c    = "#16a34a" if row["RSI"] >= 55 else ("#dc2626" if row["RSI"] <= 45 else "#d97706")
+                medal    = medals.get(rank, f"#{rank}")
+                candle   = str(row.get("Candle", "None"))
+                candle_icon = "🕯️" if candle != "None" else ""
+                rr1      = float(row.get("RR1", 0))
+                rr2      = float(row.get("RR2", 0))
+                rr_col   = "#16a34a" if rr1 >= 2 else ("#d97706" if rr1 >= 1.5 else "#dc2626")
+                osc      = str(row.get("Osc Cross", "—"))
+                vol      = str(row.get("Vol Surge", "—"))
+                cpr_w    = float(row.get("CPR Width%", 0))
+
+                html += (
+                    f'<div style="background:#fff;border:1px solid {hbd};border-radius:10px;'
+                    f'padding:0.85rem 1rem;margin-bottom:0.5rem;box-shadow:0 1px 5px rgba(0,0,0,0.05);">'
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">'
+                    f'<div style="display:flex;align-items:center;gap:8px;">'
+                    f'<span style="font-size:1rem;">{medal}</span>'
+                    f'<div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.95rem;font-weight:700;color:#1a1f0e;">{row["Symbol"]}</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#5a6a48;">'
+                    f'&#8377;{row["LTP"]:,.2f} &nbsp;·&nbsp; ATR &#8377;{row["ATR"]:,.2f} &nbsp;·&nbsp; {candle_icon} {candle}</div>'
+                    f'</div></div>'
+                    f'<div style="text-align:right;">'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:{hc};">{prob}%</div>'
+                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;">Strength</div>'
+                    f'</div></div>'
+                    f'<div style="background:#f1f5f9;border-radius:3px;height:5px;margin-bottom:0.5rem;">'
+                    f'<div style="background:{hc};width:{prob}%;height:100%;border-radius:3px;"></div></div>'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.45rem;'
+                    f'padding:0.4rem 0.6rem;background:#f7f9f2;border-radius:6px;'
+                    f'font-family:IBM Plex Mono,monospace;font-size:0.68rem;">'
+                    f'<span style="color:#5a6a48;">Entry <b style="color:#1a1f0e;">&#8377;{row["Entry"]:,.2f}</b></span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">T1 <b style="color:{hc};">&#8377;{row["T1"]:,.2f}</b></span>'
+                    f'<span style="color:#5a6a48;">T2 <b style="color:{hc};">&#8377;{row["T2"]:,.2f}</b></span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">SL <b style="color:#c0392b;">&#8377;{row["SL"]:,.2f}</b> ' + (f'<span style="color:#e74c3c;font-size:0.65rem">({round(abs(row.get("Entry",0)-row["SL"])/row.get("Entry",1)*100,2):.2f}%)</span>' if row.get("Entry",0)>0 else '') + f'</span>'
+                    f'<span>|</span>'
+                    f'<span style="color:#5a6a48;">R:R <b style="color:{rr_col};">{rr1}x / {rr2}x</b></span>'
+                    f'</div>'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:0.3rem;">'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">CPR {cpr_w:.3f}%</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">TC &#8377;{row["TC"]:,.2f} / BC &#8377;{row["BC"]:,.2f}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};">HMA {row["HMA"]}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{rsi_c};">RSI {row["RSI"]}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Osc {osc}</span>'
+                    f'<span style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:#1a1f0e;">Vol {vol}</span>'
+                    f'<span style="background:{hbg};border:1px solid {hbd};border-radius:4px;padding:0.15rem 0.45rem;font-family:IBM Plex Mono,monospace;font-size:0.67rem;color:{hc};font-weight:600;">{arr} NARROW</span>'
+                    f'</div></div>'
+                )
+            return html
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown(_cards(top_bull, "Bullish"), unsafe_allow_html=True)
+        with col_r:
+            st.markdown(_cards(top_bear, "Bearish"), unsafe_allow_html=True)
+
+        # Full results table
+        if n_qual > 0:
+            with st.expander(f"📋 All {n_qual} stocks ({n_bull} Bullish + {n_bear} Bearish)", expanded=False):
+                # ── Ranked Signal Table — Best 3 Auto + Rest Manual ─────
+                _ranked_key = f"ranked_scan_{tf_tag}"
+                if st.session_state.get(_ranked_key) is not None and not st.session_state[_ranked_key].empty:
+                    ranked_df = st.session_state[_ranked_key].copy()
+                    st.markdown("#### 🏆 Signal Rankings — Sorted by Frank Ochoa Quality Score")
+                    # Colour-coded badge for auto vs manual
+                    def _auto_badge(v):
+                        return "🤖 AUTO" if v == "🤖 Auto" else "👤 Manual"
+                    if "🤖 Auto" in ranked_df.columns:
+                        ranked_df["Trade"] = ranked_df["🤖 Auto"].apply(_auto_badge)
+                    # Show key columns
+                    _rcols = [c for c in ["Trade","🏆 Rank Score","Symbol","Pattern","Strength%",
+                                          "Candle","Day Type","RR1","Entry","T1","SL","RSI","HMA",
+                                          "Vol Surge","CPR Width%"] if c in ranked_df.columns]
+                    st.dataframe(
+                        ranked_df[_rcols].rename(columns={"Pattern":"Side","CPR Width%":"CPR W%"}),
                         use_container_width=True,
+                        hide_index=False,
+                        height=min(500, 60 + len(ranked_df) * 38),
                     )
-                    st.link_button(
-                        "⚡ Zerodha",
-                        f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sym}&transaction_type={'BUY' if is_bull else 'SELL'}",
-                        use_container_width=True,
-                    )
-                    if st.button("📝 Paper Trade", key=f"paper_{idx}_{sym}", use_container_width=True):
-                        st.session_state.setdefault("papertrades", []).append({
-                            "symbol": sym, "side": "BUY" if is_bull else "SELL",
-                            "entry": entry, "t1": t1, "sl": sl, "rr": rr
-                        })
-                        st.toast(f"✅ {sym} {'BUY' if is_bull else 'SELL'} @ {entry:,.2f} queued", icon="📝")
+                    # Manual trade buttons for non-auto signals
+                    _manual_sigs = ranked_df[ranked_df.get("🤖 Auto","") != "🤖 Auto"] if "🤖 Auto" in ranked_df.columns else ranked_df
+                    if not _manual_sigs.empty:
+                        st.markdown("##### 👤 Manual Trade — Click to enter any signal into Forward Testing")
+                        _mcols = st.columns(min(4, len(_manual_sigs)))
+                        for _mi, (_ri, _mr) in enumerate(_manual_sigs.iterrows()):
+                            _side_icon = "🟢" if _mr.get("Pattern","") == "Bullish" else "🔴"
+                            with _mcols[_mi % len(_mcols)]:
+                                if st.button(
+                                    f"{_side_icon} #{_ri} {_mr.get('Symbol','')}\n"
+                                    f"Str:{int(_mr.get('Strength%',0))}% RR:{_mr.get('RR1',0):.1f}x",
+                                    key=f"manual_ft_{tf_tag}_{_ri}_{_mr.get('Symbol','')}",
+                                    use_container_width=True,
+                                ):
+                                    _msig = {
+                                        "symbol":  _mr.get("Symbol",""),
+                                        "side":    "BUY" if _mr.get("Pattern","") == "Bullish" else "SELL",
+                                        "entry":   _mr.get("Entry", _mr.get("LTP",0)),
+                                        "sl":      _mr.get("SL", 0),
+                                        "t1":      _mr.get("T1", 0),
+                                        "t2":      _mr.get("T2", 0),
+                                        "rr1":     _mr.get("RR1", 2.0),
+                                        "tf":      tf_tag,
+                                        "strategy":_mr.get("Strategy","CPR"),
+                                        "strength":_mr.get("Strength%",0),
+                                        "candle":  _mr.get("Candle","—"),
+                                        "rank_score": _mr.get("🏆 Rank Score", 0),
+                                    }
+                                    ft_add_signal(_msig, source=f"👤 Manual · Rank#{_ri} · {tf_tag.upper()}")
+                                    st.success(f"✅ {_mr.get('Symbol','')} added to Forward Testing!")
+                    st.divider()
 
+                disp = scan_df[scan_df["Pattern"] != "Neutral"].sort_values(["Strength%","CPR Width%"], ascending=[False,True]).copy()
+                for c in ["LTP","Entry","T1","T2","T3","SL","TC","BC"]:
+                    if c in disp.columns:
+                        disp[c] = disp[c].apply(lambda x: f"Rs.{x:,.2f}")
+                disp["CPR Width%"] = disp["CPR Width%"].apply(lambda x: f"{x:.3f}%" if isinstance(x, float) else x)
+                disp["Strength%"]  = disp["Strength%"].apply(lambda x: f"{x}%")
+                show_cols = [c for c in ["Symbol","LTP","Strength%","Candle","Entry","T1","T2","SL","RR1","RR2","RSI","HMA","Vol Surge","CPR Width%"] if c in disp.columns]
+                st.dataframe(disp[show_cols], use_container_width=True, hide_index=True)
+
+        # ═══════════════════════════════════════════════════════════════════
+        #  SEND REPORT
+        # ═══════════════════════════════════════════════════════════════════
         st.divider()
+        st.markdown(
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.9rem;font-weight:700;"
+            "color:#1a1f0e;margin-bottom:0.75rem;'>📤  Send / Download Scanner Report</div>",
+            unsafe_allow_html=True,
+        )
 
-        # ── Full scanner results ──────────────────────────────────────────
-        st.markdown("### 📊 Full Scanner Results")
+        scan_time_str = datetime.now().strftime("%d %b %Y  %H:%M")
 
-        sc1, sc2 = st.columns([2, 3])
-        with sc1:
-            sort_by = st.selectbox(
-                "Sort by", ["Rank Score", "Strength", "RR", "Symbol"],
-                key="scan_sort_by", label_visibility="visible"
-            )
+        # Build /* WhatsApp removed */essage text
+        def _wa_text(bull_df, bear_df, tf_lbl, scan_t):
+            lines = [
+                "🏦 *PivotVault AI — CPR Scanner*",
+                f"📅 {tf_lbl}  |  {scan_t}",
+                "🔍 Frank Ochoa Strategy  |  Narrow CPR  |  R:R >= 1.5x",
+                "",
+                "🟢 *BULLISH SETUPS*",
+            ]
+            if bull_df.empty:
+                lines.append("No bullish picks found.")
+            else:
+                for i, (_, r) in enumerate(bull_df.head(10).iterrows(), 1):
+                    lines.append(
+                        f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                        f"{r.get('Candle','—')}  "
+                        f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                    )
+            lines += ["", "🔴 *BEARISH SETUPS*"]
+            if bear_df.empty:
+                lines.append("No bearish picks found.")
+            else:
+                for i, (_, r) in enumerate(bear_df.head(10).iterrows(), 1):
+                    lines.append(
+                        f"{i}. *{r['Symbol']}* Rs.{r['LTP']:,.2f}  Score {int(r['Strength%'])}%  "
+                        f"{r.get('Candle','—')}  "
+                        f"Entry Rs.{r['Entry']:,.2f}  T1 Rs.{r['T1']:,.2f}  SL Rs.{r['SL']:,.2f}  R:R {r['RR1']}x"
+                    )
+            lines += ["", "⚠️ Educational use only. Not financial advice.", "📱 Sent via PivotVault AI"]
+            return "\n".join(lines)
 
-        import pandas as pd
-        raw_dfs = []
-        for tfkey in ["cprscandf", "cprscan15m", "cprscan30m", "cprscan1h", "cprscan1d", "cprscan1wk", "cprscan1mo"]:
-            raw = st.session_state.get(tfkey)
-            if isinstance(raw, pd.DataFrame) and not raw.empty:
-                raw_dfs.append(raw)
+        # Build HTML email body
+        def _html_email(bull_df, bear_df, tf_lbl, scan_t):
+            def _tbl_rows(df, is_bull):
+                if df.empty:
+                    return "<tr><td colspan='9' style='padding:8px;color:#8a9a78;font-style:italic;'>No qualifying stocks found.</td></tr>"
+                hc = "#16a34a" if is_bull else "#dc2626"
+                out = ""
+                for _, r in df.iterrows():
+                    rr_c = "#16a34a" if r.get("RR1",0)>=2 else ("#d97706" if r.get("RR1",0)>=1.5 else "#dc2626")
+                    out += (
+                        f"<tr style='border-bottom:1px solid #f1f5f9;'>"
+                        f"<td style='padding:7px 5px;font-weight:700;font-family:Courier New,monospace;color:#1a1f0e;'>{r['Symbol']}</td>"
+                        f"<td style='padding:7px 5px;font-size:0.83rem;'>Rs.{r['LTP']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{hc};font-weight:700;'>{int(r['Strength%'])}%</td>"
+                        f"<td style='padding:7px 5px;font-size:0.8rem;'>{r.get('Candle','—')}</td>"
+                        f"<td style='padding:7px 5px;font-size:0.8rem;'>Rs.{r['Entry']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{hc};'>Rs.{r['T1']:,.2f} / Rs.{r['T2']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:#c0392b;'>Rs.{r['SL']:,.2f}</td>"
+                        f"<td style='padding:7px 5px;color:{rr_c};font-weight:700;'>{r.get('RR1',0)}x</td>"
+                        f"<td style='padding:7px 5px;color:#5a6a48;'>{r['RSI']}</td>"
+                        f"</tr>"
+                    )
+                return out
 
-        if raw_dfs:
-            all_df = pd.concat(raw_dfs, ignore_index=True).drop_duplicates(subset=["Symbol"], keep="first")
-        else:
-            all_df = pd.DataFrame()
+            TH = "background:#1e293b;color:#e2e8f0;padding:7px 5px;text-align:left;font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;"
+            TBLS = "width:100%;border-collapse:collapse;font-family:Courier New,monospace;font-size:0.82rem;"
+            HDR_COL = "background:linear-gradient(135deg,#0d1f0a,#1a4a10)"
 
-        if all_df.empty:
-            st.markdown(
-                """<div style="text-align:center;padding:3rem 1rem;background:#f7f9f2;
-                border:2px dashed #dae0cb;border-radius:12px;font-family:'DM Mono',monospace">
-                <div style="font-size:2rem;margin-bottom:0.75rem">🔍</div>
-                <div style="font-size:1rem;font-weight:700;color:#1a1f0e;margin-bottom:0.5rem">No scan results yet</div>
-                <div style="font-size:0.82rem;color:#5a6a48">
-                  Click <b>Refresh Top 5</b> above or run a manual scan.<br>
-                  Results appear here automatically after each scan.
-                </div></div>""",
-                unsafe_allow_html=True,
-            )
-        else:
-            if direction_filter == "Bullish only":
-                all_df = all_df[all_df.get("Pattern", pd.Series(dtype=str)) == "Bullish"] if "Pattern" in all_df.columns else all_df
-            elif direction_filter == "Bearish only":
-                all_df = all_df[all_df.get("Pattern", pd.Series(dtype=str)) == "Bearish"] if "Pattern" in all_df.columns else all_df
+            return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+    <body style="margin:0;padding:0;background:#f1f5f9;">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:20px 10px;">
+    <table width="700" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+    <tr><td style="{HDR_COL};padding:22px 26px;">
+      <div style="font-family:Courier New,monospace;font-size:1.25rem;font-weight:700;color:#e8eddf;">🏦 PivotVault AI — CPR Scanner</div>
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;color:#b5c77a;margin-top:4px;letter-spacing:0.07em;text-transform:uppercase;">{tf_lbl} · Frank Ochoa Strategy · {scan_t}</div>
+    </td></tr>
+    <tr><td style="padding:20px 22px;">
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#2d7a3a;border-left:4px solid #16a34a;padding-left:8px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">▲ BULLISH SETUPS</div>
+      <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+      {_tbl_rows(bull_df, True)}</table>
+      <div style="font-family:Courier New,monospace;font-size:0.72rem;font-weight:700;color:#c0392b;border-left:4px solid #dc2626;padding-left:8px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:0.07em;">▼ BEARISH SETUPS</div>
+      <table style="{TBLS}"><tr><th style="{TH}">Symbol</th><th style="{TH}">LTP</th><th style="{TH}">Score</th><th style="{TH}">Candle</th><th style="{TH}">Entry</th><th style="{TH}">T1 / T2</th><th style="{TH}">SL</th><th style="{TH}">R:R</th><th style="{TH}">RSI</th></tr>
+      {_tbl_rows(bear_df, False)}</table>
+    </td></tr>
+    <tr><td style="padding:12px 22px 20px;"><div style="background:#f7f9f2;border-radius:6px;padding:10px 14px;font-size:0.68rem;color:#8a9a78;line-height:1.6;font-family:Courier New,monospace;">⚠️ For educational purposes only. Not financial advice. Entry/Target/SL from Frank Ochoa Pivot Boss + ATR-14. Always use proper risk management.</div></td></tr>
+    </table></td></tr></table></body></html>"""
 
-            if "Strength" in all_df.columns:
-                all_df = all_df[pd.to_numeric(all_df["Strength"], errors="coerce").fillna(0) >= min_strength]
+        rtab1, rtab2, rtab3 = st.tabs(["📧 /* Gmail removed *// Email", "💬 WhatsApp", "⬇️ Download PDF"])
 
-            sort_map = {"Rank Score": "rankscore", "Strength": "Strength", "RR": "RR1", "Symbol": "Symbol"}
-            sort_col = sort_map.get(sort_by, "rankscore")
-            if sort_col in all_df.columns:
-                all_df = all_df.sort_values(sort_col, ascending=(sort_col == "Symbol"))
+        with rtab1:
+            st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Send report to any Gmail or SMTP email inbox.</div>", unsafe_allow_html=True)
+            cfg = st.session_state.get("smtp_cfg", {"host": "smtp.gmail.com", "port": 587, "sender": "", "password": ""})
+            with st.expander("⚙️ SMTP Settings", expanded=not bool(cfg.get("sender"))):
+                sc1, sc2 = st.columns(2)
+                with sc1:
+                    nh = st.text_input("SMTP Host",     value=cfg["host"],     key="sc_host")
+                    ns = st.text_input("Sender Email",  value=cfg["sender"],   key="sc_sender")
+                with sc2:
+                    np = st.selectbox("Port", [587, 465], index=0 if cfg["port"] == 587 else 1, key="sc_port")
+                    nw = st.text_input("App Password",  value=cfg["password"], type="password", key="sc_pwd",
+                                       help="Gmail: Google Account → Security → App Passwords (not your normal password)")
+                if st.button("💾 Save", key="sc_save"):
+                    st.session_state["smtp_cfg"] = {"host": nh, "port": np, "sender": ns, "password": nw}
+                    st.success("SMTP settings saved!")
 
-            bull_n = int((all_df["Pattern"] == "Bullish").sum()) if "Pattern" in all_df.columns else 0
-            bear_n = len(all_df) - bull_n
-            st.caption(
-                f"**{len(all_df)}** signals — 🟢 {bull_n} Bullish · 🔴 {bear_n} Bearish  "
-                f"(Strength ≥ {min_strength}%)"
-            )
+            ec1, ec2 = st.columns([3, 1])
+            with ec1:
+                to_em = st.text_input("Recipient Email", placeholder="you@gmail.com", label_visibility="collapsed", key="sc_to")
+            with ec2:
+                send_em = st.button("📧 Send", use_container_width=True, key="sc_send_em")
 
-            def _color_rows(row):
-                c = "#edf7ee" if row.get("Pattern") == "Bullish" else "#fdf0ee"
-                return [f"background-color: {c}"] * len(row)
+            if send_em:
+                cfg2 = st.session_state.get("smtp_cfg", {})
+                if not to_em.strip():
+                    st.error("Enter recipient email address.")
+                elif not cfg2.get("sender") or not cfg2.get("password"):
+                    st.error("Configure SMTP settings above first.")
+                else:
+                    body = _html_email(top_bull, top_bear, tf_choice, scan_time_str)
+                    with st.spinner("Sending email…"):
+                        ok, msg = send_report_email(to_em.strip(), cfg2["host"], cfg2["port"], cfg2["sender"], cfg2["password"], body, scan_time_str)
+                    if ok:
+                        st.success(f"✅ Report sent to {to_em.strip()}")
+                    else:
+                        st.error(f"❌ {msg}")
+                        st.caption("Gmail tip: use an App Password not your regular password. Requires 2FA enabled.")
 
-            display_cols = [c for c in ["Symbol", "Pattern", "Strength", "RR1", "Entry", "T1", "SL", "Candle", "RSI", "CPR Width", "rankscore"] if c in all_df.columns]
-            styled = all_df[display_cols].style.apply(_color_rows, axis=1)
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-
-            import datetime as _dt
-            csv_bytes = all_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "⬇️ Download Results as CSV",
-                data=csv_bytes,
-                file_name=f"pivotvault_scan_{market.replace(' ','_')}_{_dt.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv",
-                key="scan_csv_dl",
-            )
-
-            st.divider()
-
-            # ── Signal Detail Drawer ──────────────────────────────────────
-            st.markdown("### 🔎 Signal Detail")
-            sym_list = all_df["Symbol"].tolist() if "Symbol" in all_df.columns else []
-            if sym_list:
-                sel_sym = st.selectbox("Pick a symbol to inspect", sym_list, key="scan_detail_sym")
-                row = all_df[all_df["Symbol"] == sel_sym].iloc[0]
-                is_bull_d = str(row.get("Pattern", "")) == "Bullish"
-                hc_d   = "#16a34a" if is_bull_d else "#dc2626"
-                hbg_d  = "#edf7ee" if is_bull_d else "#fdf0ee"
-                hbd_d  = "#b8dfc0" if is_bull_d else "#f0c0b8"
-                entry_d = float(row.get("Entry", 0))
-                t1_d    = float(row.get("T1", 0))
-                t2_d    = float(row.get("T2", 0))
-                sl_d    = float(row.get("SL", 0))
-                t1_pct  = (t1_d - entry_d) / entry_d * 100 if entry_d > 0 else 0
-                sl_pct_d= abs(entry_d - sl_d) / entry_d * 100 if entry_d > 0 else 0
-                rr_d    = float(row.get("RR1", 0))
-                str_d   = float(row.get("Strength", 0))
-                hma_d   = str(row.get("HMA", ""))
-                vol_d   = str(row.get("Vol Surge", ""))
-                cpr_d   = float(row.get("CPR Width", 0))
-                rsi_d   = float(row.get("RSI", 50))
-                rat_d   = str(row.get("Rationale", ""))
-                candle_d= str(row.get("Candle", ""))
-
+        with rtab2:
+            st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;margin-bottom:0.75rem;'>Share scanner results via WhatsApp.</div>", unsafe_allow_html=True)
+            wa_msg = _wa_text(top_bull, top_bear, tf_choice, scan_time_str)
+            st.text_area("Message Preview (copy or use button below)", wa_msg, height=200, key="wa_prev")
+            wc1, wc2 = st.columns([3, 1])
+            with wc1:
+                wa_ph = st.text_input("Phone number with country code", placeholder="919876543210", label_visibility="collapsed", key="wa_ph")
+            with wc2:
+                wa_go = st.button("💬 Open WhatsApp", use_container_width=True, key="wa_go")
+            if wa_go and wa_ph.strip():
+                import urllib.parse as _up
+                wa_url = "https://wa.me/" + wa_ph.strip().replace("+","") + "?text=" + _up.quote(wa_msg)
                 st.markdown(
-                    f"""<div style="background:#fff;border:1.5px solid {hbd_d};border-top:4px solid {hc_d};
-                    border-radius:12px;padding:1rem 1.2rem;font-family:'IBM Plex Mono',monospace;font-size:0.78rem">
-                      <div style="font-size:1.1rem;font-weight:800;color:#1a1f0e;margin-bottom:0.6rem">
-                        <span style="color:{hc_d}">{'▲' if is_bull_d else '▼'}</span> {sel_sym}
-                        &nbsp;<span style="background:{hbg_d};color:{hc_d};border:1px solid {hbd_d};
-                        border-radius:12px;padding:2px 10px;font-size:0.68rem;font-weight:700">
-                        {'BULLISH' if is_bull_d else 'BEARISH'}</span>
-                      </div>
-                      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:0.7rem">
-                        <div style="background:#f7f9f2;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">Entry</div>
-                          <div style="font-weight:700;color:#1a1f0e">{entry_d:,.2f}</div>
-                        </div>
-                        <div style="background:#f7f9f2;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">Target 1</div>
-                          <div style="font-weight:700;color:{hc_d}">{t1_d:,.2f}
-                            <span style="font-size:0.6rem">+{t1_pct:.1f}%</span></div>
-                        </div>
-                        <div style="background:#f7f9f2;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">Target 2</div>
-                          <div style="font-weight:700;color:{hc_d}">{t2_d:,.2f}</div>
-                        </div>
-                        <div style="background:#fdf0ee;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">Stop Loss</div>
-                          <div style="font-weight:700;color:#c0392b">{sl_d:,.2f}
-                            <span style="font-size:0.6rem"> -{sl_pct_d:.1f}%</span></div>
-                        </div>
-                        <div style="background:#f7f9f2;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">RR Ratio</div>
-                          <div style="font-weight:700;color:{'#16a34a' if rr_d>=2 else '#d97706'}">{rr_d:.2f}x</div>
-                        </div>
-                        <div style="background:#f7f9f2;border-radius:6px;padding:0.4rem 0.6rem">
-                          <div style="font-size:0.58rem;color:#8a9a78;text-transform:uppercase">Strength</div>
-                          <div style="font-weight:700;color:#1a1f0e">{str_d:.0f}%</div>
-                        </div>
-                      </div>
-                      <div style="font-size:0.7rem;color:#5a6a48;line-height:1.8">
-                        <b>Candle:</b> {candle_d} &nbsp;·&nbsp;
-                        <b>RSI:</b> {rsi_d:.1f} &nbsp;·&nbsp;
-                        <b>HMA:</b> {hma_d} &nbsp;·&nbsp;
-                        <b>Vol:</b> {vol_d} &nbsp;·&nbsp;
-                        <b>CPR Width:</b> {cpr_d:.3f}
-                      </div>
-                      {f'<div style="margin-top:0.5rem;font-size:0.7rem;color:#5a6a48"><b>Rationale:</b> {rat_d}</div>' if rat_d else ''}
-                    </div>""",
+                    f"<a href='{wa_url}' target='_blank' style='display:inline-block;background:#25d366;color:#fff;"
+                    f"font-family:IBM Plex Mono,monospace;font-size:0.82rem;font-weight:600;"
+                    f"padding:0.55rem 1.5rem;border-radius:8px;text-decoration:none;margin-top:0.5rem;'>"
+                    f"💬 Open WhatsApp →</a>",
                     unsafe_allow_html=True,
                 )
-                bc1, bc2, bc3 = st.columns(3)
-                with bc1:
-                    st.link_button("📈 Groww", f"https://groww.in/stocks/{sel_sym.lower()}-share-price", use_container_width=True)
-                with bc2:
-                    st.link_button("⚡ Zerodha", f"https://kite.zerodha.com/orders?exchange=NSE&tradingsymbol={sel_sym}&transaction_type={'BUY' if is_bull_d else 'SELL'}", use_container_width=True)
-                with bc3:
-                    if st.button("📝 Paper Trade", key=f"detail_paper_{sel_sym}", use_container_width=True):
-                        st.session_state.setdefault("papertrades", []).append({
-                            "symbol": sel_sym, "side": "BUY" if is_bull_d else "SELL",
-                            "entry": entry_d, "t1": t1_d, "sl": sl_d, "rr": rr_d
-                        })
-                        st.toast(f"✅ {sel_sym} @ {entry_d:,.2f} queued", icon="📝")
+                st.caption("Opens WhatsApp with message pre-filled. Just tap Send.")
+            elif wa_go:
+                st.warning("Enter phone number with country code (e.g. 919876543210)")
+            st.caption("💡 You can also copy the message above and paste into any chat — WhatsApp, Telegram, SMS, etc.")
+
+        with rtab3:
+            st.markdown(
+                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.75rem;color:#5a6a48;"
+                "margin-bottom:0.75rem;'>Download the scanner report as a PDF. "
+                "Download a snapshot of the current scan results.</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("📄 Generate & Download PDF", use_container_width=True, key="sc_gen_pdf"):
+                with st.spinner("Building PDF…"):
+                    try:
+                        pdf_bytes = build_scanner_pdf(top_bull, top_bear, tf_choice, scan_time_str)
+                        st.download_button(
+                            label=f"⬇️ Download PDF — {tf_tag.upper()} Scanner",
+                            data=pdf_bytes,
+                            file_name=f"PivotVault_Scanner_{tf_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="sc_pdf_dl",
+                        )
+                        st.success("PDF ready — click button above to download!")
+                    except Exception as ex:
+                        st.error(f"PDF error: {ex}")
+
+        # ── Footer ────────────────────────────────────────────────────────────────
+
+            # ── Footer ────────────────────────────────────────────────────────────────
+        st.markdown(f"""
+        <div style="background:#f7f9f2;border:1px solid #dae0cb;border-radius:10px;
+                    padding:0.9rem 1.1rem;margin-top:0.75rem;
+                    font-family:IBM Plex Mono,monospace;font-size:0.7rem;color:#5a6a48;line-height:1.9;">
+        <b style="color:#1a1f0e;">Auto-Refresh Schedule</b><br>
+        ⚡ 15 Min chart → refreshes every <b>15 minutes</b> &nbsp;|&nbsp;
+        🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
+        📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
+        📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
+        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+        </div>
+        """, unsafe_allow_html=True)
+
     with tab_sig:
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
