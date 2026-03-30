@@ -1435,7 +1435,7 @@ def fetch_nifty200_list() -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  US MARKET STOCK LISTS — removed (NSE only)
+#  US MARKET STOCK LISTS — Dow 30 + Nasdaq 100
 # ══════════════════════════════════════════════════════════════════════════════
 
 _DOW30_SYMBOLS = [
@@ -1487,13 +1487,16 @@ def is_us_symbol(sym: str) -> bool:
 def get_market_list(market: str) -> list:
     """Return symbol list for selected market toggle.
     Default is Nifty 100 (best liquid large-caps, fast scan).
-    NSE only — Nifty 100 is the fixed scan universe.
+    Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
     """
     if market == "🇮🇳 Nifty 50":
         return _NIFTY50_SYMBOLS
     elif market == "🇮🇳 Nifty 100":
         return _NIFTY100_SYMBOLS
-    # US markets removed — Nifty 100 only
+    elif market == "🇺🇸 Dow 30":
+        return _DOW30_SYMBOLS
+    elif market == "🇺🇸 Nasdaq 100":
+        return _NASDAQ100_SYMBOLS
     elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
     else:
@@ -2694,9 +2697,10 @@ def render_market_header():
     now_ist = datetime.now(IST)
     _scan_mkt = st.session_state.get("scanner_market_global",
                   st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-    _mkt_key  = "india"  # Fixed: Nifty 100 NSE only
+    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
+    _mkt_status_us    = get_market_status("us")
 
     # Data feed status — yfinance always live; Upstox optional enhancement
     _upstox_ok = _upstox_connected()
@@ -2723,7 +2727,7 @@ def render_market_header():
         status    = "LIVE · NSE Open" if open_ else "Market Closed"
         next_info = ""
         if not open_:
-            next_info = f" · {_mkt_status_india['note']}"
+            next_info = f" · {_mkt_status_india['note']} | {_mkt_status_us['note']}"
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:8px;padding:0.3rem 0;"
             f"font-family:IBM Plex Mono,monospace;font-size:0.72rem;'>"
@@ -5786,11 +5790,29 @@ def page_scanner_signals(nse500: pd.DataFrame):
     with tab_scan:
 
         # ── Global Market Toggle ──────────────────────────────────────
-        # ── Scan Universe: fixed to Nifty 100 (NSE only) ─────────────
-        _market = "🇮🇳 Nifty 100"
-        _is_us  = False
-        st.session_state["scanner_market"]        = _market
-        st.session_state["scanner_market_global"] = _market
+        _MARKETS   = ["🇮🇳 Nifty 100", "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
+        _saved_mkt = st.session_state.get("scanner_market_global",
+                      st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+        if _saved_mkt not in _MARKETS:
+            _saved_mkt = "🇮🇳 Nifty 100"
+
+        _market = st.radio(
+            "Scan universe", _MARKETS,
+            index=_MARKETS.index(_saved_mkt),
+            horizontal=True,
+            key="mkt_radio_global",
+            label_visibility="collapsed",
+        )
+        if _market != _saved_mkt:
+            st.session_state["scanner_market"]        = _market
+            st.session_state["scanner_market_global"] = _market
+            _save_credentials()
+            st.rerun()
+
+        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        if _is_us and not is_market_open("us"):
+            st.warning("🇺🇸 US markets closed — scanning available 9:30 PM–4:00 AM IST")
+            return
 
         _sym_count = len(get_market_list(_market))
         _feed      = "yfinance (US)" if _is_us else "yfinance / Upstox"
@@ -6061,8 +6083,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
                     if not result.empty:
                         st.toast(
-                            f"✅ {sc_name}: {len(result)} setups · {src_label}",
-                            icon=sc_emoji,
+                            f"{sc_emoji} {sc_name}: {len(result)} setups · {src_label}",
+                            icon="✅",
                         )
                         # Telegram notification for auto scanners
                         if sc_auto and st.session_state.get(
@@ -6820,10 +6842,10 @@ def _trade_buttons(s: dict):
 
     if mkt_open and _auto_ok:
         status_html = ("<span style='color:#1a6b2e;font-weight:700;'>● NSE Open</span>"
-                       " · 🇮🇳 9:45–14:45 IST — ACTIVE")
+                       " · 🇮🇳 9:45–14:45 IST | 🇺🇸 9:45–15:45 EST — ACTIVE")
     elif mkt_open and not _auto_ok:
         status_html = ("<span style='color:#b8860b;font-weight:700;'>● Pre-open phase</span>"
-                       " · 🇮🇳 Auto trades from 9:45 AM IST")
+                       " · 🇮🇳 Auto trades from 9:45 AM IST | 🇺🇸 Opens 9:45 AM EST")
     elif up_live:
         status_html = f"<span style='color:#7c3aed;font-weight:700;'>● Upstox Live</span> · {next_open}"
     else:
@@ -8460,7 +8482,7 @@ def page_forward_test():
     fired = _ft_run_triggers()
     for f in fired:
         icon = "🎯" if "T2" in f["hit"] else ("🎯" if "T1" in f["hit"] else "🛑")
-        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon=icon)
+        st.toast(f"{icon} {f['symbol']} — {f['hit']} | P&L ₹{f['pnl']:+,.2f}", icon="📊")
 
     ft       = _ft_state()
     positions= ft["positions"]
