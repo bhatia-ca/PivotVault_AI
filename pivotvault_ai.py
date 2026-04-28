@@ -1,6 +1,33 @@
 import streamlit as st
 import pandas as pd
 import os
+import logging
+import time as _time_mod
+from datetime import datetime as _dt_mod, timedelta as _td_mod, timezone as _tz_mod
+
+# ── Logger (replaces silent `except Exception: pass` swallowing) ───────────
+logging.basicConfig(
+    level=os.environ.get("PVAI_LOG_LEVEL", "WARNING"),
+    format="%(asctime)s [%(levelname)s] %(name)s :: %(message)s",
+)
+logger = logging.getLogger("pivotvault")
+
+# ── IST timestamp helpers (NSE is the only market for live trade events) ──
+_IST_TZ = _tz_mod(_td_mod(hours=5, minutes=30))
+def _ist_now_dt():
+    """Timezone-aware current time in Asia/Kolkata."""
+    return _dt_mod.now(_IST_TZ)
+def _ist_now_str(fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """IST-locked timestamp string for logs/trade records."""
+    return _ist_now_dt().strftime(fmt)
+
+# ── Secure-file helper: chmod 0600 best-effort (no-op on Windows) ─────────
+def _secure_file(path: str) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except Exception as _e:
+        logger.debug("chmod 0600 skipped for %s: %s", path, _e)
+
 try:
     from streamlit_autorefresh import st_autorefresh
     _HAS_AUTOREFRESH = True
@@ -1245,17 +1272,18 @@ def _save_credentials():
                  ]}
         if st.session_state.get("telegram_cfg"):
             data["telegram_cfg"] = st.session_state["telegram_cfg"]
-        data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data["creds_saved_at"] = _ist_now_str()
         payload = json.dumps(data)
         for path in _all_creds_paths():
             try:
                 os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
                 with open(path, "w") as f:
                     f.write(payload)
-            except Exception:
-                pass
-    except Exception:
-        pass
+                _secure_file(path)
+            except Exception as _e:
+                logger.warning("creds save failed for %s: %s", path, _e)
+    except Exception as _e:
+        logger.exception("_save_credentials failed: %s", _e)
 
 
 def _upstox_token_expired() -> bool:
@@ -1278,8 +1306,8 @@ def _upstox_token_expired() -> bool:
                 from datetime import timezone as _tzcheck
                 now_ts = datetime.now(_tzcheck.utc).timestamp()
                 return now_ts > exp
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("upstox token decode failed: %s", _e)
     return False
 
 def _save_session():
@@ -1294,11 +1322,12 @@ def _save_session():
                 os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
                 with open(path, "w") as f:
                     f.write(payload)
-            except Exception:
-                pass
+                _secure_file(path)
+            except Exception as _e:
+                logger.warning("session save failed for %s: %s", path, _e)
         _save_credentials()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.exception("_save_session failed: %s", _e)
 
 def _clear_session():
     """Delete persisted session from ALL 3 storage locations on logout."""
@@ -1306,8 +1335,8 @@ def _clear_session():
         try:
             if os.path.exists(path):
                 os.remove(path)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("session clear failed for %s: %s", path, _e)
 
 defaults = {
     # Auth
@@ -6866,7 +6895,7 @@ def _trade_buttons(s: dict):
             "exit_time":  None,
             "source":     f"{broker_name} · {s.get('tf','—')}",
             "strategy":   s.get("rationale", s.get("strategy","CPR Signal"))[:50],
-            "opened_at":  datetime.now().strftime("%d %b %H:%M:%S"),
+            "opened_at":  _ist_now_str("%d %b %H:%M:%S"),
         }
         trades = st.session_state.get("ft_trades", [])
         trades.append(trade)
@@ -7030,7 +7059,7 @@ def _trade_buttons(s: dict):
                                    "gtt_ids": gtt.get("gtt_ids",[]),
                                    "symbol": sym, "side": preview["side"],
                                    "qty": qty, "entry": ltp, "sl": sl, "t1": t1, "t2": t2,
-                                   "placed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                   "placed_at": _ist_now_str(),
                                    "status": "OPEN"})
                         st.session_state["upstox_live_orders"] = lo
                         st.session_state.pop("upstox_order_preview", None)
@@ -7181,7 +7210,7 @@ def _order_log_add(entry: dict):
     """Add an order event to session-based order log."""
     if "upstox_order_log" not in st.session_state:
         st.session_state["upstox_order_log"] = []
-    entry["logged_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry["logged_at"] = _ist_now_str()
     st.session_state["upstox_order_log"].insert(0, entry)
     # Keep last 100 orders in memory
     st.session_state["upstox_order_log"] = st.session_state["upstox_order_log"][:100]
@@ -7873,8 +7902,9 @@ def _ft_save(state: dict):
             _os.makedirs(_os.path.dirname(_os.path.abspath(path)), exist_ok=True)
             with open(path, "w") as f:
                 f.write(payload)
-        except Exception:
-            pass
+            _secure_file(path)
+        except Exception as _e:
+            logger.warning("FT save failed for %s: %s", path, _e)
 
 def _ft_state():
     """Get FT state — reloads from disk if session was lost (e.g. server restart)."""
@@ -7892,8 +7922,8 @@ def _ft_flush():
         state = st.session_state.get("_ft")
         if state and isinstance(state, dict):
             _ft_save(state)
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("_ft_flush failed: %s", _e)
 
 # ── LTP fetch ────────────────────────────────────────────────────────────
 
@@ -8233,6 +8263,14 @@ def _ft_run_triggers() -> list:
 
     Entry only from FIRST live tick during market hours (handled in ft_add_signal).
     """
+    # ── Rate-limit: this runs on every Streamlit rerun. Cap to 1 cycle / 5s
+    # to avoid double-firing SL/T1 events when autorefresh is on.
+    _last = st.session_state.get("_ft_last_trigger_run", 0.0)
+    _now_mono = _time_mod.monotonic()
+    if (_now_mono - float(_last or 0.0)) < 5.0:
+        return []
+    st.session_state["_ft_last_trigger_run"] = _now_mono
+
     # ── EOD auto-close at 15:30 ──────────────────────────────────────────
     eod_fired = _ft_auto_close_eod()
 
@@ -8246,7 +8284,7 @@ def _ft_run_triggers() -> list:
 
         pos["ltp"] = ltp
         bull = pos["side"] == "BUY"
-        now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now  = _ist_now_str()
 
         # ── Update unrealised P&L ─────────────────────────────────────────
         if bull:
@@ -8642,7 +8680,7 @@ def page_forward_test():
                                   else (pos["entry"]-ex_px)*pos["qty"], 2)
                     pos.update({"status":"MANUAL EXIT","exit_px":ex_px,"pnl":pnl,
                                 "pnl_pct":round(pnl/max(pos["cost"],1)*100,2),
-                                "closed_at":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "closed_at":_ist_now_str(),
                                 "exit_type":"Manual T1"})
                     ft["balance"] = round(ft["balance"]+pos["cost"]+pnl, 2)
                     ft["events"].append({"time":pos["closed_at"],"type":"MANUAL EXIT",
@@ -8658,7 +8696,7 @@ def page_forward_test():
                                 else (pos["entry"]-ex_px)*pos["qty"], 2)
                     pos.update({"status":"MANUAL EXIT","exit_px":ex_px,"pnl":pnl,
                                 "pnl_pct":round(pnl/max(pos["cost"],1)*100,2),
-                                "closed_at":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "closed_at":_ist_now_str(),
                                 "exit_type":"Manual"})
                     ft["balance"] = round(ft["balance"]+pos["cost"]+pnl, 2)
                     ft["events"].append({"time":pos["closed_at"],"type":"MANUAL EXIT",
@@ -9774,8 +9812,8 @@ def main():
                         "🎯" if "T1" in _bf.get("hit","") else "🛑")
                 st.toast(f"{_icon} {_bf['symbol']} — {_bf['hit']} | "
                          f"₹{_bf.get('pnl',0):+,.2f}", icon=_icon)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("background _ft_run_triggers failed: %s", _e)
 
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
