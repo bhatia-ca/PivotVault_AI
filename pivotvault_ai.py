@@ -1069,7 +1069,7 @@ def _load_credentials():
             continue
 
     if data:
-        # Broker keys — only set if not already in session
+        # Broker keys (excluding token — handled separately below)
         for k in ["upstox_api_key","upstox_api_secret",
                   "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                   "broker","broker_connected"]:
@@ -1077,7 +1077,7 @@ def _load_credentials():
                 st.session_state[k] = data[k]
         # Upstox token — ALWAYS restore from file.
         # Empty string in session_state (after logout/refresh) must NOT block restore.
-        # Token is pasted once at 9 AM daily — must survive logout/refresh all day.
+        # Token is pasted once at 9 AM and must survive logout/refresh all day.
         if data.get("upstox_access_token"):
             st.session_state["upstox_access_token"] = data["upstox_access_token"]
         # Telegram
@@ -1091,6 +1091,9 @@ def _load_credentials():
         for k in ["scanner_market","scanner_market_global"]:
             if k in data and k not in st.session_state:
                 st.session_state[k] = data[k]
+        # Tab visibility — restore which pages are toggled on
+        if data.get("tab_visibility") and "tab_visibility" not in st.session_state:
+            st.session_state["tab_visibility"] = data["tab_visibility"]
 
     # ── 2. st.secrets fallback — wins for Telegram + Upstox keys ─────────────
     # This survives ALL restarts since secrets are stored on Streamlit Cloud
@@ -1172,6 +1175,9 @@ def _save_credentials():
                  # Scanner market preference
                  "scanner_market","scanner_market_global",
                  ]}
+        # Persist tab visibility toggles so they survive logout/refresh
+        if st.session_state.get("tab_visibility"):
+            data["tab_visibility"] = st.session_state["tab_visibility"]
         if st.session_state.get("telegram_cfg"):
             data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -5512,19 +5518,12 @@ buildCards();
     st.markdown(groww_html, unsafe_allow_html=True)
 
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TOP 5 BEST TRADES ENGINE
-#  Scans 15m + 30m + 1h simultaneously and returns the 5 highest-ranked signals
-#  using the Frank Ochoa composite quality score.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _signal_rank_score_global(row, tf_tag: str) -> float:
-    """
-    Standalone Frank Ochoa composite rank scorer — callable from anywhere.
-    Same algorithm as the inline _signal_rank_score inside the scanner loop,
-    extracted so _get_top5_best_trades can call it from a ThreadPoolExecutor.
-    Higher score = better quality signal.
-    """
     try:
         s    = float(row.get("Strength%",   0) or 0)
         rr   = float(row.get("RR1",         1.0) or 1.0)
@@ -5537,45 +5536,35 @@ def _signal_rank_score_global(row, tf_tag: str) -> float:
         vol  = str(row.get("Vol Surge",     ""))
         side = str(row.get("Pattern",       ""))
     except Exception:
-        return 0.0  # uncastable row — skip silently
-
+        return 0.0
     score = (s * 0.35) + (rr * 15)
-
     if cw < 0.25:   score += 20
     elif cw < 0.5:  score += 10
     elif cw > 1.0:  score -= 10
-
     if dt == "Trending":    score += 25
     elif dt == "Moderate":  score += 10
     elif dt == "Sideways":  score -= 40
     elif dt == "Volatile":  score -= 5
-
     if ov: score -= 30
-
     _premium = {
-        "Morning Star": 20,       "Evening Star": 20,
-        "Bullish Engulfing": 18,  "Bearish Engulfing": 18,
-        "Bull Pin Bar": 15,        "Bear Pin Bar": 15,
-        "Hammer": 12,              "Shooting Star": 12,
-        "Bullish Marubozu": 8,    "Bearish Marubozu": 8,
-        "Inside Bar": 5,           "Doji at CPR": 3,
+        "Morning Star": 20, "Evening Star": 20,
+        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+        "Hammer": 12, "Shooting Star": 12,
+        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+        "Inside Bar": 5, "Doji at CPR": 3,
     }
     score += _premium.get(cn, 0)
-
-    if side == "Bullish" and rsi >= 55:    score += 8
-    elif side == "Bearish" and rsi <= 45:  score += 8
-    elif side == "Bullish" and rsi <= 40:  score -= 5
-    elif side == "Bearish" and rsi >= 60:  score -= 5
-
-    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+    if side == "Bullish" and rsi >= 55:   score += 8
+    elif side == "Bearish" and rsi <= 45: score += 8
+    elif side == "Bullish" and rsi <= 40: score -= 5
+    elif side == "Bearish" and rsi >= 60: score -= 5
+    if ("\u25b2" in hma and side == "Bullish") or ("\u25bc" in hma and side == "Bearish"):
         score += 10
-
-    if "✅" in vol: score += 8
-
+    if "\u2705" in vol: score += 8
     if   "30m" in tf_tag: score += 15
     elif "1h"  in tf_tag: score += 8
     elif "15m" in tf_tag: score += 5
-
     try:
         return round(score, 2)
     except Exception:
@@ -5583,80 +5572,52 @@ def _signal_rank_score_global(row, tf_tag: str) -> float:
 
 
 def _get_top5_best_trades(market_list: list) -> list:
-    """
-    Scan 15m, 30m, and 1h simultaneously using ThreadPoolExecutor.
-    Returns top 5 unique signals ranked by Frank Ochoa composite score.
-    Deduplicates by symbol — only the best timeframe per symbol is kept.
-    """
     TF_SCAN_CONFIGS = [
-        {"interval": "15m", "period": "10d", "tag": "15m",
-         "label": "⚡ 15 Min", "color": "#7c3aed"},
-        {"interval": "30m", "period": "20d", "tag": "30m",
-         "label": "⏱️ 30 Min", "color": "#ea580c"},
-        {"interval": "1h",  "period": "60d", "tag": "1h",
-         "label": "🕐 1 Hour", "color": "#1d4ed8"},
+        {"interval": "15m", "period": "10d",  "tag": "15m", "label": "\u26a1 15 Min", "color": "#7c3aed"},
+        {"interval": "30m", "period": "20d",  "tag": "30m", "label": "\u23f1\ufe0f 30 Min", "color": "#ea580c"},
+        {"interval": "1h",  "period": "60d",  "tag": "1h",  "label": "\U0001f55010 1 Hour", "color": "#1d4ed8"},
     ]
-
     def _scan_one_tf(cfg):
         try:
             result = scan_cpr_multi_tf(
-                market_list,
-                interval=cfg["interval"],
-                period=cfg["period"],
-                max_stocks=min(len(market_list), 100),
+                market_list, interval=cfg["interval"],
+                period=cfg["period"], max_stocks=min(len(market_list), 100),
             )
-            if result is None or result.empty:
-                return []
-            if "Pattern" not in result.columns:
-                return []
+            if result is None or result.empty: return []
+            if "Pattern" not in result.columns: return []
             directional = result[result["Pattern"] != "Neutral"].copy()
-            if directional.empty:
-                return []
+            if directional.empty: return []
             directional["_tf_tag"]     = cfg["tag"]
             directional["_tf_label"]   = cfg["label"]
             directional["_tf_color"]   = cfg["color"]
             directional["_rank_score"] = directional.apply(
-                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1
-            )
+                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1)
             return directional.to_dict("records")
         except Exception:
             return []
-
     all_signals = []
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
         try:
-            for future in as_completed(futures, timeout=35):  # 35s max — prevents frozen spinner
+            for future in as_completed(futures, timeout=35):
                 try:
                     all_signals.extend(future.result())
                 except Exception:
                     pass
         except TimeoutError:
-            # Some TF scans timed out — use whatever signals came back in time
             for future in futures:
                 if future.done():
-                    try:
-                        all_signals.extend(future.result())
-                    except Exception:
-                        pass
-
-    if not all_signals:
-        return []
-
+                    try: all_signals.extend(future.result())
+                    except Exception: pass
+    if not all_signals: return []
     all_signals.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
-
-    seen_symbols = set()
-    top5 = []
+    seen, top5 = set(), []
     for sig in all_signals:
         sym = sig.get("Symbol", "")
-        if sym and sym not in seen_symbols:
-            seen_symbols.add(sym)
-            top5.append(sig)
-        if len(top5) >= 5:
-            break
-
+        if sym and sym not in seen:
+            seen.add(sym); top5.append(sig)
+        if len(top5) >= 5: break
     return top5
-
 
 def page_scanner_signals(nse500: pd.DataFrame):
     """CPR Scanner + Trade Signals merged."""
@@ -5715,41 +5676,29 @@ def page_scanner_signals(nse500: pd.DataFrame):
             unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════
-        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS ⚡15m · ⏱️30m · 🕐1H
+        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS 15m · 30m · 1H
         # ═══════════════════════════════════════════════════════════════════
         _TOP5_KEY      = "top5_best_trades"
         _TOP5_TIME_KEY = "top5_best_trades_time"
         _top5_age      = time.time() - st.session_state.get(_TOP5_TIME_KEY, 0)
-        _top5_needs    = _top5_age >= 900  # auto-refresh every 15 min
+        _top5_needs    = _top5_age >= 900
 
         _th1, _th2 = st.columns([5, 1])
         with _th1:
-            st.markdown("""
-            <div style="display:flex;align-items:center;gap:10px;
-                        font-family:'IBM Plex Mono',monospace;">
-              <span style="font-size:1.6rem;">🏆</span>
-              <div>
-                <div style="font-size:1.05rem;font-weight:700;color:#1a1f0e;">
-                  Top 5 Best Trades
-                </div>
-                <div style="font-size:0.68rem;color:#5a6a48;letter-spacing:0.06em;
-                            text-transform:uppercase;margin-top:1px;">
-                  Auto-ranked across ⚡ 15 Min · ⏱️ 30 Min · 🕐 1 Hour &nbsp;·&nbsp;
-                  Frank Ochoa Composite Score &nbsp;·&nbsp; Refreshes every 15 min
-                </div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                "<div style='font-family:IBM Plex Mono,monospace;'>"
+                "<span style='font-size:1.5rem;'>🏆</span> "
+                "<b style='font-size:1rem;color:#1a1f0e;'>Top 5 Best Trades</b> "
+                "<span style='font-size:0.68rem;color:#5a6a48;'>"
+                "Auto-ranked across ⚡15m · ⏱️30m · 🕐1H · Frank Ochoa Score · Refreshes every 15 min"
+                "</span></div>", unsafe_allow_html=True)
         with _th2:
-            if st.button("🔄 Refresh Top 5", key="refresh_top5_btn",
-                         use_container_width=True):
+            if st.button("🔄 Refresh Top 5", key="refresh_top5_btn", use_container_width=True):
                 _top5_needs = True
                 st.session_state.pop(_TOP5_KEY, None)
 
         if _top5_needs or _TOP5_KEY not in st.session_state:
-            _mkt_list = get_market_list(
-                st.session_state.get("scanner_market", "🇮🇳 Nifty 100")
-            )
+            _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
             with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
                 _top5_result = _get_top5_best_trades(_mkt_list[:80])
             st.session_state[_TOP5_KEY]      = _top5_result
@@ -5759,159 +5708,109 @@ def page_scanner_signals(nse500: pd.DataFrame):
         _top5_trades = st.session_state.get(_TOP5_KEY, [])
 
         if not _top5_trades:
-            st.info("📡 No top trades found yet — click **🔄 Refresh Top 5** to scan all 3 timeframes.")
+            st.info("📡 No top trades found — click **🔄 Refresh Top 5** to scan all 3 timeframes.")
         else:
-            _scan_age_min = int(_top5_age / 60)
+            _age_min = int(_top5_age / 60)
             st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                f"color:#5a6a48;margin-bottom:0.6rem;'>"
-                f"✅ Last scanned <b>{_scan_age_min} min ago</b> · "
-                f"Showing <b>{len(_top5_trades)}</b> best unique setups across 15m + 30m + 1H</div>",
-                unsafe_allow_html=True,
-            )
+                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#5a6a48;"
+                "margin-bottom:0.6rem;'>✅ Last scanned <b>" + str(_age_min) + " min ago</b> · "
+                "Showing <b>" + str(len(_top5_trades)) + "</b> best unique setups</div>",
+                unsafe_allow_html=True)
 
+            _medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
             _t5cols = st.columns(min(5, len(_top5_trades)))
-            _medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-
             for _idx, _sig in enumerate(_top5_trades):
-                _is_bull  = _sig.get("Pattern", "") == "Bullish"
+                _is_bull  = _sig.get("Pattern","") == "Bullish"
                 _hc       = "#16a34a" if _is_bull else "#dc2626"
                 _hbg      = "#edf7ee" if _is_bull else "#fdf0ee"
                 _hbd      = "#b8dfc0" if _is_bull else "#f0c0b8"
                 _arrow    = "▲" if _is_bull else "▼"
                 _side_lbl = "BUY" if _is_bull else "SELL"
-                _tf_lbl   = _sig.get("_tf_label", "")
-                _tf_color = _sig.get("_tf_color", "#5a6a48")
-                _tf_tag   = _sig.get("_tf_tag", "")
+                _tf_lbl   = _sig.get("_tf_label","")
+                _tf_color = _sig.get("_tf_color","#5a6a48")
+                _tf_tag   = _sig.get("_tf_tag","")
                 _score    = _sig.get("_rank_score", 0)
-                _sym      = _sig.get("Symbol", "")
+                _sym      = _sig.get("Symbol","")
                 _rr       = float(_sig.get("RR1", 0))
                 _str      = int(_sig.get("Strength%", 0))
-                _candle   = _sig.get("Candle", "—")
+                _candle   = _sig.get("Candle","—")
                 _rsi      = float(_sig.get("RSI", 50))
-                _hma      = str(_sig.get("HMA", "—"))
-                _vol      = str(_sig.get("Vol Surge", "—"))
+                _hma      = str(_sig.get("HMA","—"))
+                _vol      = str(_sig.get("Vol Surge","—"))
                 _entry    = float(_sig.get("Entry", 0))
                 _t1       = float(_sig.get("T1", 0))
                 _t2       = float(_sig.get("T2", 0))
                 _sl       = float(_sig.get("SL", 0))
                 _sl_pct   = abs(_entry - _sl) / _entry * 100 if _entry > 0 else 0
-                _day_type = str(_sig.get("Day Type", ""))
+                _day_type = str(_sig.get("Day Type",""))
                 _cpr_w    = float(_sig.get("CPR Width%", 0))
                 _rr_col   = "#16a34a" if _rr >= 2.0 else ("#d97706" if _rr >= 1.5 else "#dc2626")
-                _medal    = _medals[_idx] if _idx < len(_medals) else f"#{_idx+1}"
-
-                if   _score >= 100: _grade, _gc = "A+", "#16a34a"
-                elif _score >= 80:  _grade, _gc = "A",  "#16a34a"
-                elif _score >= 65:  _grade, _gc = "B+", "#d97706"
-                elif _score >= 50:  _grade, _gc = "B",  "#d97706"
-                else:               _grade, _gc = "C",  "#dc2626"
+                _medal    = _medals[_idx] if _idx < 5 else f"#{_idx+1}"
+                if   _score >= 100: _grade, _gc = "A+","#16a34a"
+                elif _score >= 80:  _grade, _gc = "A", "#16a34a"
+                elif _score >= 65:  _grade, _gc = "B+","#d97706"
+                elif _score >= 50:  _grade, _gc = "B", "#d97706"
+                else:               _grade, _gc = "C", "#dc2626"
 
                 with _t5cols[_idx]:
-                    st.markdown(f"""
-                    <div style="background:#fff;border:1.5px solid {_hbd};
-                    border-top:4px solid {_hc};border-radius:10px;
-                    padding:0.75rem 0.8rem;margin-bottom:0.3rem;
-                    box-shadow:0 2px 10px rgba(0,0,0,0.07);">
-                      <div style="display:flex;justify-content:space-between;
-                      align-items:center;margin-bottom:0.4rem;">
-                        <span style="font-size:1.15rem;">{_medal}</span>
-                        <span style="background:{_tf_color}18;color:{_tf_color};
-                        font-family:IBM Plex Mono,monospace;font-size:0.58rem;
-                        font-weight:700;padding:2px 6px;border-radius:4px;
-                        border:1px solid {_tf_color}44;">{_tf_lbl}</span>
-                      </div>
-                      <div style="font-family:'IBM Plex Mono',monospace;
-                      font-size:1rem;font-weight:700;color:#1a1f0e;">
-                        <span style="color:{_hc};">{_arrow}</span> {_sym}
-                      </div>
-                      <div style="font-family:'IBM Plex Mono',monospace;
-                      font-size:0.62rem;color:#5a6a48;margin-bottom:0.4rem;">
-                        {_candle} &nbsp;·&nbsp; RSI {_rsi:.0f} &nbsp;·&nbsp; {_day_type}
-                      </div>
-                      <div style="background:#f1f5f9;border-radius:3px;
-                      height:4px;margin-bottom:0.45rem;">
-                        <div style="background:{_hc};width:{min(_str,100)}%;
-                        height:100%;border-radius:3px;"></div>
-                      </div>
-                      <div style="background:#f7f9f2;border-radius:6px;
-                      padding:0.35rem 0.5rem;font-family:'IBM Plex Mono',monospace;
-                      font-size:0.63rem;margin-bottom:0.4rem;line-height:1.8;">
-                        <div>Entry <b style="color:#1a1f0e;">₹{_entry:,.2f}</b></div>
-                        <div>T1 &nbsp; <b style="color:{_hc};">₹{_t1:,.2f}</b>
-                          &nbsp;·&nbsp; T2 <b style="color:{_hc};">₹{_t2:,.2f}</b></div>
-                        <div>SL &nbsp; <b style="color:#c0392b;">₹{_sl:,.2f}</b>
-                          <span style="color:#e74c3c;font-size:0.58rem;">
-                          &nbsp;({_sl_pct:.2f}%)</span></div>
-                      </div>
-                      <div style="display:flex;flex-wrap:wrap;gap:3px;
-                      font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
-                      margin-bottom:0.3rem;">
-                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
-                        border-radius:3px;padding:1px 5px;color:{_rr_col};font-weight:700;">
-                          R:R {_rr:.1f}x</span>
-                        <span style="background:{_hbg};border:1px solid {_hbd};
-                        border-radius:3px;padding:1px 5px;color:{_hc};font-weight:700;">
-                          {_str}%</span>
-                        <span style="background:#fff8ed;border:1px solid #f0d070;
-                        border-radius:3px;padding:1px 5px;color:{_gc};font-weight:700;">
-                          {_grade}</span>
-                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
-                        border-radius:3px;padding:1px 5px;color:#5a6a48;">
-                          Score {_score:.0f}</span>
-                        <span style="background:#f7f9f2;border:1px solid #dae0cb;
-                        border-radius:3px;padding:1px 5px;color:#5a6a48;">
-                          CPR {_cpr_w:.3f}%</span>
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    _card = (
+                        "<div style='background:#fff;border:1.5px solid " + _hbd + ";"
+                        "border-top:4px solid " + _hc + ";border-radius:10px;"
+                        "padding:0.75rem 0.8rem;margin-bottom:0.3rem;"
+                        "box-shadow:0 2px 10px rgba(0,0,0,0.07);'>"
+                        "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;'>"
+                        "<span style='font-size:1.1rem;'>" + _medal + "</span>"
+                        "<span style='background:" + _tf_color + "18;color:" + _tf_color + ";"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.58rem;font-weight:700;"
+                        "padding:2px 6px;border-radius:4px;border:1px solid " + _tf_color + "44;'>"
+                        + _tf_lbl + "</span></div>"
+                        "<div style='font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a1f0e;'>"
+                        "<span style='color:" + _hc + ";'>" + _arrow + "</span> " + _sym + "</div>"
+                        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;margin-bottom:0.4rem;'>"
+                        + _candle + " · RSI " + str(int(_rsi)) + " · " + _day_type + "</div>"
+                        "<div style='background:#f1f5f9;border-radius:3px;height:4px;margin-bottom:0.45rem;'>"
+                        "<div style='background:" + _hc + ";width:" + str(min(_str,100)) + "%;height:100%;border-radius:3px;'></div></div>"
+                        "<div style='background:#f7f9f2;border-radius:6px;padding:0.35rem 0.5rem;"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.63rem;margin-bottom:0.4rem;line-height:1.8;'>"
+                        "<div>Entry <b style='color:#1a1f0e;'>₹" + f"{_entry:,.2f}" + "</b></div>"
+                        "<div>T1 <b style='color:" + _hc + ";'>₹" + f"{_t1:,.2f}" + "</b>"
+                        " · T2 <b style='color:" + _hc + ";'>₹" + f"{_t2:,.2f}" + "</b></div>"
+                        "<div>SL <b style='color:#c0392b;'>₹" + f"{_sl:,.2f}" + "</b>"
+                        " <span style='color:#e74c3c;font-size:0.58rem;'>(" + f"{_sl_pct:.2f}" + "%)</span></div></div>"
+                        "<div style='display:flex;flex-wrap:wrap;gap:3px;"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.6rem;margin-bottom:0.3rem;'>"
+                        "<span style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;padding:1px 5px;color:" + _rr_col + ";font-weight:700;'>R:R " + f"{_rr:.1f}" + "x</span>"
+                        "<span style='background:" + _hbg + ";border:1px solid " + _hbd + ";border-radius:3px;padding:1px 5px;color:" + _hc + ";font-weight:700;'>" + str(_str) + "%</span>"
+                        "<span style='background:#fff8ed;border:1px solid #f0d070;border-radius:3px;padding:1px 5px;color:" + _gc + ";font-weight:700;'>" + _grade + "</span>"
+                        "<span style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;padding:1px 5px;color:#5a6a48;'>Score " + f"{_score:.0f}" + "</span>"
+                        "</div></div>")
+                    st.markdown(_card, unsafe_allow_html=True)
 
                     _btn_type = "primary" if _idx == 0 else "secondary"
-                    if st.button(
-                        f"➕ {'⭐ Trade' if _idx == 0 else 'Trade'} #{_idx+1} · {_sym}",
-                        key=f"top5_trade_{_idx}_{_sym}_{_tf_tag}",
-                        use_container_width=True,
-                        type=_btn_type,
-                    ):
+                    _btn_lbl  = ("⭐ Trade #1 · " if _idx == 0 else f"Trade #{_idx+1} · ") + _sym
+                    if st.button(_btn_lbl,
+                                 key=f"top5_trade_{_idx}_{_sym}_{_tf_tag}",
+                                 use_container_width=True, type=_btn_type):
                         _msig = {
-                            "symbol":    _sym,
-                            "side":      _side_lbl,
-                            "entry":     _entry,
-                            "sl":        _sl,
-                            "t1":        _t1,
-                            "t2":        _t2,
-                            "rr1":       _rr,
-                            "tf":        _tf_tag,
-                            "strategy":  _sig.get("Strategy", "CPR"),
-                            "strength":  _str,
-                            "candle":    _candle,
-                            "day_type":  _day_type,
-                            "cpr_w":     _cpr_w,
-                            "rsi":       _rsi,
-                            "hma":       _hma,
-                            "vol":       _vol,
-                            "ltp":       _entry,
-                            "rank_score": _score,
-                        }
-                        ft_add_signal(
-                            _msig,
-                            source=f"🏆 Top5·Rank#{_idx+1}·{_tf_tag.upper()}"
-                        )
-                        _tg_payload = {
                             "symbol": _sym, "side": _side_lbl,
-                            "entry": _entry, "target": _t1, "sl": _sl,
-                            "qty": 1, "cost": _entry, "rr": _rr,
-                            "tf": _tf_tag, "pnl": 0,
+                            "entry": _entry, "sl": _sl, "t1": _t1, "t2": _t2,
+                            "rr1": _rr, "tf": _tf_tag,
+                            "strategy": _sig.get("Strategy","CPR"),
+                            "strength": _str, "candle": _candle,
+                            "day_type": _day_type, "cpr_w": _cpr_w,
+                            "rsi": _rsi, "hma": _hma, "vol": _vol,
+                            "ltp": _entry, "rank_score": _score,
                         }
-                        _send_telegram(_tg_trade_msg(_tg_payload, "ENTRY"))
-                        st.success(
-                            f"✅ **{_sym}** ({_tf_lbl}) added to Forward Testing! "
-                            f"Entry ₹{_entry:,.2f} · T1 ₹{_t1:,.2f} · SL ₹{_sl:,.2f}"
-                        )
+                        ft_add_signal(_msig, source=f"🏆 Top5·Rank#{_idx+1}·{_tf_tag.upper()}")
+                        _tg_p = {"symbol":_sym,"side":_side_lbl,"entry":_entry,
+                                 "target":_t1,"sl":_sl,"qty":1,"cost":_entry,
+                                 "rr":_rr,"tf":_tf_tag,"pnl":0}
+                        _send_telegram(_tg_trade_msg(_tg_p,"ENTRY"))
+                        st.success(f"✅ **{_sym}** ({_tf_lbl}) added to Forward Testing!")
 
         st.divider()
 
-        # ── Manual TF scanner continues below ─────────────────────────────────
+        # ── Manual TF scanner continues below ─────────────────────────────
         TF_CONFIG = {
             "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
             "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
@@ -6156,12 +6055,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
                     return round(score, 2)
 
-                # Guard: ensure Pattern column exists (yfinance can return partial data)
+                # Compute rank score for every directional signal
                 if "Pattern"    not in result.columns: result["Pattern"]    = "Neutral"
                 if "Strength%"  not in result.columns: result["Strength%"]  = 0.0
                 if "CPR Width%" not in result.columns: result["CPR Width%"] = 0.0
-
-                # Compute rank score for every directional signal
                 ranked = result[result["Pattern"] != "Neutral"].copy()
                 if not ranked.empty:
                     ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
@@ -6259,9 +6156,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
             # ── Store signals + fire desktop notifications ────────────────────────
             if not result.empty:
-                # Guard: ensure Pattern column exists before filtering
-                if "Pattern" not in result.columns:
-                    result["Pattern"] = "Neutral"
+                if "Pattern" not in result.columns: result["Pattern"] = "Neutral"
                 top3_bull = result[result["Pattern"]=="Bullish"].head(3)
                 top3_bear = result[result["Pattern"]=="Bearish"].head(3)
                 notif_signals = []
@@ -6382,13 +6277,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 st.code("Connect Upstox → ⚙️ Broker Settings → Paste your Access Token → Save")
             pass  # empty state — stay in tab
 
-        # ── Guard: ensure required columns exist before filtering ─────────────────
-        # scan_df can be non-empty but missing columns when yfinance returns partial data
+        # ── All bullish & bearish — no strength cutoff ────────────────────────────
         if "Pattern"    not in scan_df.columns: scan_df["Pattern"]    = "Neutral"
         if "CPR Width%" not in scan_df.columns: scan_df["CPR Width%"] = 0.0
         if "Strength%"  not in scan_df.columns: scan_df["Strength%"]  = 0.0
-
-        # ── All bullish & bearish — no strength cutoff ────────────────────────────
         all_bull = scan_df[scan_df["Pattern"] == "Bullish"].copy()
         all_bear = scan_df[scan_df["Pattern"] == "Bearish"].copy()
 
@@ -9730,16 +9622,39 @@ def render_sidebar():
     Styled as pills via CSS override on radio buttons.
     Zero hidden buttons. Zero JS tricks. Pure Streamlit.
     """
+    # ── All pages (key, label, always-on) ───────────────────────────────
+    ALL_PAGES = [
+        ("Market Snapshot",     "📊 Market",     True),   # always visible — home
+        ("Pivot Boss Analysis", "📈 Pivot Boss",  False),
+        ("Scanner & Signals",   "📡 Scanner",     False),
+        ("Forward Testing",     "🧪 Fwd Test",    False),
+        ("Trade Analysis",      "📊 Analysis",    False),
+        ("Order Execution",     "⚡ Orders",      False),
+        ("Strategy Library",    "📚 Strategy",    False),
+        ("Broker Settings",     "⚙️ Broker",      True),  # always visible — required
+        ("Watchlist",           "⭐ Watchlist",   False),
+    ]
+
+    # ── Load saved tab visibility from session (persisted in creds file) ─
+    _TAB_VIS_KEY = "tab_visibility"
+    if _TAB_VIS_KEY not in st.session_state:
+        # First run: restore from saved creds or use defaults
+        _saved_vis = {}
+        try:
+            import json, os
+            _cf = os.path.join(os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
+            if os.path.exists(_cf):
+                _saved_vis = json.load(open(_cf)).get("tab_visibility", {})
+        except Exception:
+            pass
+        st.session_state[_TAB_VIS_KEY] = _saved_vis
+
+    _tab_vis = st.session_state[_TAB_VIS_KEY]
+
+    # Build active page list — always-on pages + user-enabled pages
     PAGES = [
-        ("Market Snapshot",     "📊 Market"),
-        ("Pivot Boss Analysis", "📈 Pivot Boss"),
-        ("Scanner & Signals",   "📡 Scanner"),
-        ("Forward Testing",     "🧪 Fwd Test"),
-        ("Trade Analysis",      "📊 Analysis"),
-        ("Order Execution",     "⚡ Orders"),
-        ("Strategy Library",    "📚 Strategy"),
-        ("Broker Settings",     "⚙️ Broker"),
-        ("Watchlist",           "⭐ Watchlist"),
+        (k, lbl) for k, lbl, always in ALL_PAGES
+        if always or _tab_vis.get(k, False)
     ]
     PAGE_KEYS   = [p[0] for p in PAGES]
     PAGE_LABELS = [p[1] for p in PAGES]
@@ -9842,7 +9757,7 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
         )
 
     # ── Radio nav (renders as pills via CSS above) ────────────────────────
-    nc, lc2 = st.columns([10, 1])
+    nc, btn1, btn2 = st.columns([10, 1, 1])
     with nc:
         selected = st.radio(
             "nav",
@@ -9852,18 +9767,82 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
             key="main_nav_radio",
             label_visibility="hidden",
         )
-    with lc2:
+    with btn1:
+        _show_tab_mgr = st.button(
+            "🗂️", key="tab_mgr_btn",
+            help="Manage Tabs — turn pages on/off",
+            use_container_width=True,
+        )
+    with btn2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
-            _clear_session()                              # delete session files only
+            _clear_session()
             st.session_state["logged_in"]    = False
             st.session_state["username"]     = ""
             st.session_state["user_email"]   = ""
             st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
-            st.session_state["tg_otp_code"]  = ""       # clear any pending OTP
-            # ── Broker token intentionally NOT cleared ──
-            # Token is pasted once at 9 AM — must survive logout/login all day.
+            st.session_state["tg_otp_code"]  = ""
+            # Broker token intentionally NOT cleared — pasted once at 9 AM
             st.rerun()
+
+    # ── Tab Manager toggle ─────────────────────────────────────────────────
+    if _show_tab_mgr:
+        st.session_state["show_tab_manager"] = not st.session_state.get("show_tab_manager", False)
+
+    if st.session_state.get("show_tab_manager", False):
+        _header_html = (
+            "<div style='background:#f7f9f2;border:1.5px solid #b8c89a;border-radius:10px;"
+            "padding:0.8rem 1rem;margin-bottom:0.6rem;font-family:IBM Plex Mono,monospace;'>"
+            "<div style='font-size:0.85rem;font-weight:700;color:#1a1f0e;margin-bottom:0.4rem;'>"
+            "🗂️ Manage Tabs"
+            "<span style='font-size:0.65rem;font-weight:400;color:#5a6a48;margin-left:8px;'>"
+            "Toggle pages on / off &nbsp;·&nbsp; Market &amp; Broker are always visible"
+            "</span></div></div>"
+        )
+        st.markdown(_header_html, unsafe_allow_html=True)
+
+        _toggleable = [(k, lbl) for k, lbl, always in ALL_PAGES if not always]
+        _cols   = st.columns(3)
+        _changed = False
+        for _ti, (tk, tlbl) in enumerate(_toggleable):
+            with _cols[_ti % 3]:
+                _cur  = _tab_vis.get(tk, False)
+                _new  = st.toggle(tlbl, value=_cur,
+                                  key="tab_tog_" + tk.replace(" ", "_").replace("&",""))
+                if _new != _cur:
+                    st.session_state[_TAB_VIS_KEY][tk] = _new
+                    _changed = True
+
+        if _changed:
+            # Persist tab visibility to creds file
+            try:
+                import json as _json, os as _os
+                _cf = _os.path.join(_os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
+                _cdata = {}
+                if _os.path.exists(_cf):
+                    with open(_cf) as _fh:
+                        _cdata = _json.load(_fh)
+                _cdata["tab_visibility"] = st.session_state[_TAB_VIS_KEY]
+                _os.makedirs(_os.path.dirname(_cf), exist_ok=True)
+                with open(_cf, "w") as _fh:
+                    _json.dump(_cdata, _fh)
+            except Exception:
+                pass
+            # If active page was just disabled, redirect home
+            _active_keys = [
+                k for k, lbl, always in ALL_PAGES
+                if always or st.session_state[_TAB_VIS_KEY].get(k, False)
+            ]
+            if current not in _active_keys:
+                st.session_state["current_page"] = "Market Snapshot"
+            st.rerun()
+
+        _, _done_col = st.columns([4, 1])
+        with _done_col:
+            if st.button("✅ Done", key="tab_mgr_close", use_container_width=True):
+                st.session_state["show_tab_manager"] = False
+                st.rerun()
+        st.divider()
 
     # Update page on selection change
     sel_page = PAGE_KEYS[PAGE_LABELS.index(selected)]
