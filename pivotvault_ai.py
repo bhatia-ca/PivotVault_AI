@@ -1025,32 +1025,57 @@ st.markdown("""
 #  Cleared only when user explicitly logs out.
 # ─────────────────────────────────────────────
 
-# ── Persistent storage paths — multi-location fallback ───────────────────────
-# Primary: app/data/ folder (survives Streamlit Cloud hot reloads)
-# Fallback: home dir, /tmp
+# ── Persistent storage — Streamlit Cloud safe ────────────────────────────────
+# On Streamlit Cloud, /mount/src/<repo>/ is READ-ONLY (git mount).
+# /tmp and ~/ are writable but wiped on every restart/refresh.
+# Solution: use ~/.pivotvault/ as PRIMARY (persists across hot reloads within
+# the same dyno session) and /tmp as fallback. For true cross-restart
+# persistence, st.secrets is used as a read-only config store (tokens etc).
 _APP_DIR   = os.path.dirname(os.path.abspath(__file__))
-_DATA_DIR  = os.path.join(_APP_DIR, "data")
-try:
-    os.makedirs(_DATA_DIR, exist_ok=True)
-except Exception:
-    _DATA_DIR = os.path.expanduser("~")   # fallback to home if data/ not writable
+
+# Find a writable directory — prefer ~/.pivotvault, fallback /tmp
+def _find_writable_dir():
+    candidates = [
+        os.path.join(os.path.expanduser("~"), ".pivotvault"),
+        os.path.join(os.path.expanduser("~")),
+        "/tmp/pivotvault",
+        "/tmp",
+    ]
+    for d in candidates:
+        try:
+            os.makedirs(d, exist_ok=True)
+            test = os.path.join(d, ".write_test")
+            with open(test, "w") as _tf: _tf.write("ok")
+            os.remove(test)
+            return d
+        except Exception:
+            continue
+    return "/tmp"
+
+_DATA_DIR = _find_writable_dir()
 
 _SESSION_FILE = os.path.join(_DATA_DIR, "pivotvault_session.json")
 _CREDS_FILE   = os.path.join(_DATA_DIR, "pivotvault_creds.json")
 
 def _all_creds_paths():
-    return [
+    home = os.path.expanduser("~")
+    return list(dict.fromkeys([          # deduplicate while preserving order
         _CREDS_FILE,
-        os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json"),
+        os.path.join(home, ".pivotvault", "pivotvault_creds.json"),
+        os.path.join(home, ".pivotvault_creds.json"),
+        "/tmp/pivotvault/pivotvault_creds.json",
         "/tmp/pivotvault_creds.json",
-    ]
+    ]))
 
 def _all_session_paths():
-    return [
+    home = os.path.expanduser("~")
+    return list(dict.fromkeys([
         _SESSION_FILE,
-        os.path.join(os.path.expanduser("~"), ".pivotvault_session.json"),
+        os.path.join(home, ".pivotvault", "pivotvault_session.json"),
+        os.path.join(home, ".pivotvault_session.json"),
+        "/tmp/pivotvault/pivotvault_session.json",
         "/tmp/pivotvault_session.json",
-    ]
+    ]))
 
 def _load_credentials():
     """Load credentials from disk — checks all 3 file locations + st.secrets fallback.
@@ -1075,9 +1100,7 @@ def _load_credentials():
                   "broker","broker_connected"]:
             if k in data and not st.session_state.get(k):
                 st.session_state[k] = data[k]
-        # Upstox token — ALWAYS restore from file.
-        # Empty string in session_state (after logout/refresh) must NOT block restore.
-        # Token is pasted once at 9 AM and must survive logout/refresh all day.
+        # Upstox token — ALWAYS restore (empty string must not block restore)
         if data.get("upstox_access_token"):
             st.session_state["upstox_access_token"] = data["upstox_access_token"]
         # Telegram
@@ -1091,7 +1114,7 @@ def _load_credentials():
         for k in ["scanner_market","scanner_market_global"]:
             if k in data and k not in st.session_state:
                 st.session_state[k] = data[k]
-        # Tab visibility — restore which pages are toggled on
+        # Tab visibility
         if data.get("tab_visibility") and "tab_visibility" not in st.session_state:
             st.session_state["tab_visibility"] = data["tab_visibility"]
 
@@ -1152,11 +1175,27 @@ def _load_session():
             continue
 
     if data:
-        # Force-overwrite auth keys — even if defaults already set logged_in=False
+        # ── Auth keys — always restore ────────────────────────────────────────
         for k in ["logged_in", "username", "user_email", "user_phone",
                   "user_id", "current_page"]:
             if k in data:
                 st.session_state[k] = data[k]
+        # ── Watchlist ─────────────────────────────────────────────────────────
+        if data.get("watchlist") and not st.session_state.get("watchlist"):
+            st.session_state["watchlist"] = data["watchlist"]
+        # ── Scanner market preference ─────────────────────────────────────────
+        for k in ["scanner_market", "scanner_market_global"]:
+            if data.get(k) and not st.session_state.get(k):
+                st.session_state[k] = data[k]
+        # ── Tab visibility ────────────────────────────────────────────────────
+        if data.get("tab_visibility") and "tab_visibility" not in st.session_state:
+            st.session_state["tab_visibility"] = data["tab_visibility"]
+        # ── Price alerts ──────────────────────────────────────────────────────
+        if data.get("price_alerts") and not st.session_state.get("price_alerts"):
+            st.session_state["price_alerts"] = data["price_alerts"]
+        # ── Pending signals ───────────────────────────────────────────────────
+        if data.get("pending_signals") and not st.session_state.get("pending_signals"):
+            st.session_state["pending_signals"] = data["pending_signals"]
 
     # Always load broker credentials (persisted permanently)
     _load_credentials()
@@ -1175,11 +1214,11 @@ def _save_credentials():
                  # Scanner market preference
                  "scanner_market","scanner_market_global",
                  ]}
-        # Persist tab visibility toggles so they survive logout/refresh
-        if st.session_state.get("tab_visibility"):
-            data["tab_visibility"] = st.session_state["tab_visibility"]
         if st.session_state.get("telegram_cfg"):
             data["telegram_cfg"] = st.session_state["telegram_cfg"]
+        # Tab visibility toggles
+        if st.session_state.get("tab_visibility"):
+            data["tab_visibility"] = st.session_state["tab_visibility"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         payload = json.dumps(data)
         for path in _all_creds_paths():
@@ -1218,12 +1257,29 @@ def _upstox_token_expired() -> bool:
     return False
 
 def _save_session():
-    """Persist auth state to all 3 storage locations — survives refresh/restart."""
+    """Persist ALL critical session state — survives browser refresh and server restart."""
     try:
-        data = {k: st.session_state.get(k,"") for k in
-                ["logged_in","username","user_email","user_phone",
-                 "user_id","current_page"]}
-        payload = json.dumps(data)
+        data = {k: st.session_state.get(k, "") for k in
+                ["logged_in", "username", "user_email", "user_phone",
+                 "user_id", "current_page"]}
+        # ── Persist watchlist ──────────────────────────────────────────────────
+        if st.session_state.get("watchlist"):
+            data["watchlist"] = st.session_state["watchlist"]
+        # ── Persist scanner market preference ─────────────────────────────────
+        for k in ["scanner_market", "scanner_market_global"]:
+            if st.session_state.get(k):
+                data[k] = st.session_state[k]
+        # ── Persist tab visibility toggles ────────────────────────────────────
+        if st.session_state.get("tab_visibility"):
+            data["tab_visibility"] = st.session_state["tab_visibility"]
+        # ── Persist price alerts ───────────────────────────────────────────────
+        if st.session_state.get("price_alerts"):
+            data["price_alerts"] = st.session_state["price_alerts"]
+        # ── Persist pending signals ────────────────────────────────────────────
+        if st.session_state.get("pending_signals"):
+            data["pending_signals"] = st.session_state["pending_signals"]
+        data["session_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = json.dumps(data, default=str)
         for path in _all_session_paths():
             try:
                 os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -4390,6 +4446,7 @@ def page_watchlist():
                 with rcols[i % 5]:
                     if st.button(f"x {sym}", key=f"rm_{sym}", use_container_width=True):
                         st.session_state["watchlist"].remove(sym)
+                        _save_session()  # persist watchlist change
                         if isinstance(st.session_state.get("wl_data"), dict):
                             st.session_state["wl_data"].pop(sym, None)
                         st.rerun()
@@ -5546,74 +5603,60 @@ def _signal_rank_score_global(row, tf_tag: str) -> float:
     elif dt == "Sideways":  score -= 40
     elif dt == "Volatile":  score -= 5
     if ov: score -= 30
-    _premium = {
-        "Morning Star": 20, "Evening Star": 20,
-        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
-        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
-        "Hammer": 12, "Shooting Star": 12,
-        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
-        "Inside Bar": 5, "Doji at CPR": 3,
-    }
+    _premium = {"Morning Star":20,"Evening Star":20,"Bullish Engulfing":18,
+                "Bearish Engulfing":18,"Bull Pin Bar":15,"Bear Pin Bar":15,
+                "Hammer":12,"Shooting Star":12,"Bullish Marubozu":8,
+                "Bearish Marubozu":8,"Inside Bar":5,"Doji at CPR":3}
     score += _premium.get(cn, 0)
     if side == "Bullish" and rsi >= 55:   score += 8
     elif side == "Bearish" and rsi <= 45: score += 8
     elif side == "Bullish" and rsi <= 40: score -= 5
     elif side == "Bearish" and rsi >= 60: score -= 5
-    if ("\u25b2" in hma and side == "Bullish") or ("\u25bc" in hma and side == "Bearish"):
+    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
         score += 10
-    if "\u2705" in vol: score += 8
+    if "✅" in vol: score += 8
     if   "30m" in tf_tag: score += 15
     elif "1h"  in tf_tag: score += 8
     elif "15m" in tf_tag: score += 5
-    try:
-        return round(score, 2)
-    except Exception:
-        return 0.0
+    try:   return round(score, 2)
+    except: return 0.0
 
 
 def _get_top5_best_trades(market_list: list) -> list:
     TF_SCAN_CONFIGS = [
-        {"interval": "15m", "period": "10d",  "tag": "15m", "label": "\u26a1 15 Min", "color": "#7c3aed"},
-        {"interval": "30m", "period": "20d",  "tag": "30m", "label": "\u23f1\ufe0f 30 Min", "color": "#ea580c"},
-        {"interval": "1h",  "period": "60d",  "tag": "1h",  "label": "\U0001f55010 1 Hour", "color": "#1d4ed8"},
+        {"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min","color":"#7c3aed"},
+        {"interval":"30m","period":"20d", "tag":"30m","label":"⏱️ 30 Min","color":"#ea580c"},
+        {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐0 1 Hour","color":"#1d4ed8"},
     ]
     def _scan_one_tf(cfg):
         try:
-            result = scan_cpr_multi_tf(
-                market_list, interval=cfg["interval"],
-                period=cfg["period"], max_stocks=min(len(market_list), 100),
-            )
+            result = scan_cpr_multi_tf(market_list,interval=cfg["interval"],
+                                       period=cfg["period"],max_stocks=min(len(market_list),100))
             if result is None or result.empty: return []
             if "Pattern" not in result.columns: return []
-            directional = result[result["Pattern"] != "Neutral"].copy()
-            if directional.empty: return []
-            directional["_tf_tag"]     = cfg["tag"]
-            directional["_tf_label"]   = cfg["label"]
-            directional["_tf_color"]   = cfg["color"]
-            directional["_rank_score"] = directional.apply(
-                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1)
-            return directional.to_dict("records")
-        except Exception:
-            return []
+            d = result[result["Pattern"] != "Neutral"].copy()
+            if d.empty: return []
+            d["_tf_tag"]=cfg["tag"]; d["_tf_label"]=cfg["label"]; d["_tf_color"]=cfg["color"]
+            d["_rank_score"]=d.apply(lambda r: _signal_rank_score_global(r,cfg["tag"]),axis=1)
+            return d.to_dict("records")
+        except Exception: return []
     all_signals = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {ex.submit(_scan_one_tf,cfg):cfg for cfg in TF_SCAN_CONFIGS}
         try:
-            for future in as_completed(futures, timeout=35):
-                try:
-                    all_signals.extend(future.result())
-                except Exception:
-                    pass
+            for f in as_completed(futures, timeout=35):
+                try: all_signals.extend(f.result())
+                except: pass
         except TimeoutError:
-            for future in futures:
-                if future.done():
-                    try: all_signals.extend(future.result())
-                    except Exception: pass
+            for f in futures:
+                if f.done():
+                    try: all_signals.extend(f.result())
+                    except: pass
     if not all_signals: return []
-    all_signals.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
+    all_signals.sort(key=lambda x: x.get("_rank_score",0), reverse=True)
     seen, top5 = set(), []
     for sig in all_signals:
-        sym = sig.get("Symbol", "")
+        sym = sig.get("Symbol","")
         if sym and sym not in seen:
             seen.add(sym); top5.append(sig)
         if len(top5) >= 5: break
@@ -8103,14 +8146,14 @@ def page_broker_settings():
 import json as _json, os as _os
 
 # FT persistent storage — triple backup locations
-_FT_FILE = _os.path.join(
-    _os.path.dirname(_os.path.abspath(__file__)), "data", "pivotvault_ft.json"
-)
+# FT file — use same writable-dir discovery as session/creds
+_FT_FILE      = _os.path.join(_os.path.expanduser("~"), ".pivotvault", "pivotvault_ft.json")
 _FT_FILE_HOME = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
-_FT_FILE_TMP  = "/tmp/pivotvault_ft.json"
+_FT_FILE_TMP  = "/tmp/pivotvault/pivotvault_ft.json"
+_FT_FILE_TMP2 = "/tmp/pivotvault_ft.json"
 
 def _all_ft_paths():
-    return [_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP]
+    return list(dict.fromkeys([_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP, _FT_FILE_TMP2]))
 
 # ── Persistence helpers ───────────────────────────────────────────────────
 
@@ -9622,39 +9665,16 @@ def render_sidebar():
     Styled as pills via CSS override on radio buttons.
     Zero hidden buttons. Zero JS tricks. Pure Streamlit.
     """
-    # ── All pages (key, label, always-on) ───────────────────────────────
-    ALL_PAGES = [
-        ("Market Snapshot",     "📊 Market",     True),   # always visible — home
-        ("Pivot Boss Analysis", "📈 Pivot Boss",  False),
-        ("Scanner & Signals",   "📡 Scanner",     False),
-        ("Forward Testing",     "🧪 Fwd Test",    False),
-        ("Trade Analysis",      "📊 Analysis",    False),
-        ("Order Execution",     "⚡ Orders",      False),
-        ("Strategy Library",    "📚 Strategy",    False),
-        ("Broker Settings",     "⚙️ Broker",      True),  # always visible — required
-        ("Watchlist",           "⭐ Watchlist",   False),
-    ]
-
-    # ── Load saved tab visibility from session (persisted in creds file) ─
-    _TAB_VIS_KEY = "tab_visibility"
-    if _TAB_VIS_KEY not in st.session_state:
-        # First run: restore from saved creds or use defaults
-        _saved_vis = {}
-        try:
-            import json, os
-            _cf = os.path.join(os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
-            if os.path.exists(_cf):
-                _saved_vis = json.load(open(_cf)).get("tab_visibility", {})
-        except Exception:
-            pass
-        st.session_state[_TAB_VIS_KEY] = _saved_vis
-
-    _tab_vis = st.session_state[_TAB_VIS_KEY]
-
-    # Build active page list — always-on pages + user-enabled pages
     PAGES = [
-        (k, lbl) for k, lbl, always in ALL_PAGES
-        if always or _tab_vis.get(k, False)
+        ("Market Snapshot",     "📊 Market"),
+        ("Pivot Boss Analysis", "📈 Pivot Boss"),
+        ("Scanner & Signals",   "📡 Scanner"),
+        ("Forward Testing",     "🧪 Fwd Test"),
+        ("Trade Analysis",      "📊 Analysis"),
+        ("Order Execution",     "⚡ Orders"),
+        ("Strategy Library",    "📚 Strategy"),
+        ("Broker Settings",     "⚙️ Broker"),
+        ("Watchlist",           "⭐ Watchlist"),
     ]
     PAGE_KEYS   = [p[0] for p in PAGES]
     PAGE_LABELS = [p[1] for p in PAGES]
@@ -9757,7 +9777,7 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
         )
 
     # ── Radio nav (renders as pills via CSS above) ────────────────────────
-    nc, btn1, btn2 = st.columns([10, 1, 1])
+    nc, lc2 = st.columns([10, 1])
     with nc:
         selected = st.radio(
             "nav",
@@ -9767,13 +9787,7 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
             key="main_nav_radio",
             label_visibility="hidden",
         )
-    with btn1:
-        _show_tab_mgr = st.button(
-            "🗂️", key="tab_mgr_btn",
-            help="Manage Tabs — turn pages on/off",
-            use_container_width=True,
-        )
-    with btn2:
+    with lc2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
             _clear_session()
             st.session_state["logged_in"]    = False
@@ -9782,72 +9796,14 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
             st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
             st.session_state["tg_otp_code"]  = ""
-            # Broker token intentionally NOT cleared — pasted once at 9 AM
+            # Broker token intentionally NOT cleared — pasted once at 9 AM, valid all day
             st.rerun()
-
-    # ── Tab Manager toggle ─────────────────────────────────────────────────
-    if _show_tab_mgr:
-        st.session_state["show_tab_manager"] = not st.session_state.get("show_tab_manager", False)
-
-    if st.session_state.get("show_tab_manager", False):
-        _header_html = (
-            "<div style='background:#f7f9f2;border:1.5px solid #b8c89a;border-radius:10px;"
-            "padding:0.8rem 1rem;margin-bottom:0.6rem;font-family:IBM Plex Mono,monospace;'>"
-            "<div style='font-size:0.85rem;font-weight:700;color:#1a1f0e;margin-bottom:0.4rem;'>"
-            "🗂️ Manage Tabs"
-            "<span style='font-size:0.65rem;font-weight:400;color:#5a6a48;margin-left:8px;'>"
-            "Toggle pages on / off &nbsp;·&nbsp; Market &amp; Broker are always visible"
-            "</span></div></div>"
-        )
-        st.markdown(_header_html, unsafe_allow_html=True)
-
-        _toggleable = [(k, lbl) for k, lbl, always in ALL_PAGES if not always]
-        _cols   = st.columns(3)
-        _changed = False
-        for _ti, (tk, tlbl) in enumerate(_toggleable):
-            with _cols[_ti % 3]:
-                _cur  = _tab_vis.get(tk, False)
-                _new  = st.toggle(tlbl, value=_cur,
-                                  key="tab_tog_" + tk.replace(" ", "_").replace("&",""))
-                if _new != _cur:
-                    st.session_state[_TAB_VIS_KEY][tk] = _new
-                    _changed = True
-
-        if _changed:
-            # Persist tab visibility to creds file
-            try:
-                import json as _json, os as _os
-                _cf = _os.path.join(_os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
-                _cdata = {}
-                if _os.path.exists(_cf):
-                    with open(_cf) as _fh:
-                        _cdata = _json.load(_fh)
-                _cdata["tab_visibility"] = st.session_state[_TAB_VIS_KEY]
-                _os.makedirs(_os.path.dirname(_cf), exist_ok=True)
-                with open(_cf, "w") as _fh:
-                    _json.dump(_cdata, _fh)
-            except Exception:
-                pass
-            # If active page was just disabled, redirect home
-            _active_keys = [
-                k for k, lbl, always in ALL_PAGES
-                if always or st.session_state[_TAB_VIS_KEY].get(k, False)
-            ]
-            if current not in _active_keys:
-                st.session_state["current_page"] = "Market Snapshot"
-            st.rerun()
-
-        _, _done_col = st.columns([4, 1])
-        with _done_col:
-            if st.button("✅ Done", key="tab_mgr_close", use_container_width=True):
-                st.session_state["show_tab_manager"] = False
-                st.rerun()
-        st.divider()
 
     # Update page on selection change
     sel_page = PAGE_KEYS[PAGE_LABELS.index(selected)]
     if sel_page != current:
         st.session_state["current_page"] = sel_page
+        _save_session()  # persist current page so refresh lands on same tab
         st.rerun()
 
     return sel_page
@@ -10113,6 +10069,13 @@ def main():
     if not st.session_state["logged_in"]:
         page_login()
         return
+
+    # ── Periodic session save — every 5th run (approx every interaction) ──
+    # Ensures watchlist, alerts, page choice are always persisted to disk
+    _run_count = st.session_state.get("_run_count", 0) + 1
+    st.session_state["_run_count"] = _run_count
+    if _run_count % 5 == 0:
+        _save_session()
 
     page = render_sidebar()
     render_market_header()
