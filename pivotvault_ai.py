@@ -1025,57 +1025,32 @@ st.markdown("""
 #  Cleared only when user explicitly logs out.
 # ─────────────────────────────────────────────
 
-# ── Persistent storage — Streamlit Cloud safe ────────────────────────────────
-# On Streamlit Cloud, /mount/src/<repo>/ is READ-ONLY (git mount).
-# /tmp and ~/ are writable but wiped on every restart/refresh.
-# Solution: use ~/.pivotvault/ as PRIMARY (persists across hot reloads within
-# the same dyno session) and /tmp as fallback. For true cross-restart
-# persistence, st.secrets is used as a read-only config store (tokens etc).
+# ── Persistent storage paths — multi-location fallback ───────────────────────
+# Primary: app/data/ folder (survives Streamlit Cloud hot reloads)
+# Fallback: home dir, /tmp
 _APP_DIR   = os.path.dirname(os.path.abspath(__file__))
-
-# Find a writable directory — prefer ~/.pivotvault, fallback /tmp
-def _find_writable_dir():
-    candidates = [
-        os.path.join(os.path.expanduser("~"), ".pivotvault"),
-        os.path.join(os.path.expanduser("~")),
-        "/tmp/pivotvault",
-        "/tmp",
-    ]
-    for d in candidates:
-        try:
-            os.makedirs(d, exist_ok=True)
-            test = os.path.join(d, ".write_test")
-            with open(test, "w") as _tf: _tf.write("ok")
-            os.remove(test)
-            return d
-        except Exception:
-            continue
-    return "/tmp"
-
-_DATA_DIR = _find_writable_dir()
+_DATA_DIR  = os.path.join(_APP_DIR, "data")
+try:
+    os.makedirs(_DATA_DIR, exist_ok=True)
+except Exception:
+    _DATA_DIR = os.path.expanduser("~")   # fallback to home if data/ not writable
 
 _SESSION_FILE = os.path.join(_DATA_DIR, "pivotvault_session.json")
 _CREDS_FILE   = os.path.join(_DATA_DIR, "pivotvault_creds.json")
 
 def _all_creds_paths():
-    home = os.path.expanduser("~")
-    return list(dict.fromkeys([          # deduplicate while preserving order
+    return [
         _CREDS_FILE,
-        os.path.join(home, ".pivotvault", "pivotvault_creds.json"),
-        os.path.join(home, ".pivotvault_creds.json"),
-        "/tmp/pivotvault/pivotvault_creds.json",
+        os.path.join(os.path.expanduser("~"), ".pivotvault_creds.json"),
         "/tmp/pivotvault_creds.json",
-    ]))
+    ]
 
 def _all_session_paths():
-    home = os.path.expanduser("~")
-    return list(dict.fromkeys([
+    return [
         _SESSION_FILE,
-        os.path.join(home, ".pivotvault", "pivotvault_session.json"),
-        os.path.join(home, ".pivotvault_session.json"),
-        "/tmp/pivotvault/pivotvault_session.json",
+        os.path.join(os.path.expanduser("~"), ".pivotvault_session.json"),
         "/tmp/pivotvault_session.json",
-    ]))
+    ]
 
 def _load_credentials():
     """Load credentials from disk — checks all 3 file locations + st.secrets fallback.
@@ -1156,48 +1131,57 @@ def _load_credentials():
 
 def _load_session():
     """
-    Load persisted session from disk on every app startup/refresh.
-    Force-restores auth state so browser refresh never logs the user out.
-    Reads from all 3 storage locations and picks the freshest valid session.
+    Restore session on every refresh using st.query_params (URL-encoded token).
+    st.query_params survives browser refresh, mobile switches, and Streamlit Cloud restarts.
+    Falls back to disk files for backward compatibility.
     """
-    data = {}
-    # Try all session file locations — pick freshest valid one
-    for path in _all_session_paths():
-        try:
-            if os.path.exists(path):
-                mtime = os.path.getmtime(path)
-                with open(path) as f:
-                    d = json.load(f)
-                if d and d.get("logged_in"):  # only restore if it was a logged-in session
-                    data = d
-                    break
-        except Exception:
-            continue
+    # ── 1. PRIMARY: st.query_params — survives every refresh on Streamlit Cloud ──
+    _restored = False
+    try:
+        _qp = st.query_params
+        _tok = _qp.get("_s", "")
+        if _tok:
+            import base64 as _b64
+            _raw  = _b64.b64decode(_tok.encode()).decode()
+            _data = json.loads(_raw)
+            if _data.get("logged_in") and _data.get("username"):
+                for k in ["logged_in","username","user_email","user_phone",
+                          "user_id","current_page"]:
+                    if k in _data:
+                        st.session_state[k] = _data[k]
+                # Restore extras saved in token
+                for k in ["watchlist","price_alerts","pending_signals",
+                          "tab_visibility","scanner_market","scanner_market_global"]:
+                    if _data.get(k) and not st.session_state.get(k):
+                        st.session_state[k] = _data[k]
+                _restored = True
+    except Exception:
+        pass
 
-    if data:
-        # ── Auth keys — always restore ────────────────────────────────────────
-        for k in ["logged_in", "username", "user_email", "user_phone",
-                  "user_id", "current_page"]:
-            if k in data:
-                st.session_state[k] = data[k]
-        # ── Watchlist ─────────────────────────────────────────────────────────
-        if data.get("watchlist") and not st.session_state.get("watchlist"):
-            st.session_state["watchlist"] = data["watchlist"]
-        # ── Scanner market preference ─────────────────────────────────────────
-        for k in ["scanner_market", "scanner_market_global"]:
-            if data.get(k) and not st.session_state.get(k):
-                st.session_state[k] = data[k]
-        # ── Tab visibility ────────────────────────────────────────────────────
-        if data.get("tab_visibility") and "tab_visibility" not in st.session_state:
-            st.session_state["tab_visibility"] = data["tab_visibility"]
-        # ── Price alerts ──────────────────────────────────────────────────────
-        if data.get("price_alerts") and not st.session_state.get("price_alerts"):
-            st.session_state["price_alerts"] = data["price_alerts"]
-        # ── Pending signals ───────────────────────────────────────────────────
-        if data.get("pending_signals") and not st.session_state.get("pending_signals"):
-            st.session_state["pending_signals"] = data["pending_signals"]
+    # ── 2. FALLBACK: disk files (local dev / first load) ──────────────────────
+    if not _restored:
+        data = {}
+        for path in _all_session_paths():
+            try:
+                if os.path.exists(path):
+                    with open(path) as f:
+                        d = json.load(f)
+                    if d and d.get("logged_in"):
+                        data = d
+                        break
+            except Exception:
+                continue
+        if data:
+            for k in ["logged_in","username","user_email","user_phone",
+                      "user_id","current_page"]:
+                if k in data:
+                    st.session_state[k] = data[k]
+            for k in ["watchlist","price_alerts","pending_signals",
+                      "tab_visibility","scanner_market","scanner_market_global"]:
+                if data.get(k) and not st.session_state.get(k):
+                    st.session_state[k] = data[k]
 
-    # Always load broker credentials (persisted permanently)
+    # Always load broker credentials
     _load_credentials()
 
 
@@ -1257,28 +1241,33 @@ def _upstox_token_expired() -> bool:
     return False
 
 def _save_session():
-    """Persist ALL critical session state — survives browser refresh and server restart."""
+    """
+    Persist session to BOTH st.query_params (URL) AND disk.
+    st.query_params is the primary store — survives Streamlit Cloud restarts and refresh.
+    Disk is the fallback for local dev.
+    """
     try:
         data = {k: st.session_state.get(k, "") for k in
-                ["logged_in", "username", "user_email", "user_phone",
-                 "user_id", "current_page"]}
-        # ── Persist watchlist ──────────────────────────────────────────────────
-        if st.session_state.get("watchlist"):
-            data["watchlist"] = st.session_state["watchlist"]
-        # ── Persist scanner market preference ─────────────────────────────────
-        for k in ["scanner_market", "scanner_market_global"]:
-            if st.session_state.get(k):
-                data[k] = st.session_state[k]
-        # ── Persist tab visibility toggles ────────────────────────────────────
-        if st.session_state.get("tab_visibility"):
-            data["tab_visibility"] = st.session_state["tab_visibility"]
-        # ── Persist price alerts ───────────────────────────────────────────────
-        if st.session_state.get("price_alerts"):
-            data["price_alerts"] = st.session_state["price_alerts"]
-        # ── Persist pending signals ────────────────────────────────────────────
-        if st.session_state.get("pending_signals"):
-            data["pending_signals"] = st.session_state["pending_signals"]
-        data["session_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ["logged_in","username","user_email","user_phone",
+                 "user_id","current_page"]}
+        # Include all critical state so it survives refresh
+        for k in ["watchlist","price_alerts","pending_signals",
+                  "tab_visibility","scanner_market","scanner_market_global"]:
+            v = st.session_state.get(k)
+            if v:
+                data[k] = v
+        data["_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # ── PRIMARY: encode into URL query param ──────────────────────────────
+        # st.query_params survives refresh and Streamlit Cloud restarts
+        try:
+            import base64 as _b64
+            _tok = _b64.b64encode(json.dumps(data, default=str).encode()).decode()
+            st.query_params["_s"] = _tok
+        except Exception:
+            pass
+
+        # ── FALLBACK: disk files (local dev) ──────────────────────────────────
         payload = json.dumps(data, default=str)
         for path in _all_session_paths():
             try:
@@ -1292,7 +1281,13 @@ def _save_session():
         pass
 
 def _clear_session():
-    """Delete persisted session from ALL 3 storage locations on logout."""
+    """Delete session from disk AND clear the URL query param token on logout."""
+    # Clear query param token (primary store)
+    try:
+        st.query_params.pop("_s", None)
+    except Exception:
+        pass
+    # Clear disk files (fallback store)
     for path in _all_session_paths():
         try:
             if os.path.exists(path):
@@ -4446,7 +4441,6 @@ def page_watchlist():
                 with rcols[i % 5]:
                     if st.button(f"x {sym}", key=f"rm_{sym}", use_container_width=True):
                         st.session_state["watchlist"].remove(sym)
-                        _save_session()  # persist watchlist change
                         if isinstance(st.session_state.get("wl_data"), dict):
                             st.session_state["wl_data"].pop(sym, None)
                         st.rerun()
@@ -5576,90 +5570,71 @@ buildCards();
 
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TOP 5 BEST TRADES ENGINE
-# ══════════════════════════════════════════════════════════════════════════════
-
 def _signal_rank_score_global(row, tf_tag: str) -> float:
     try:
-        s    = float(row.get("Strength%",   0) or 0)
-        rr   = float(row.get("RR1",         1.0) or 1.0)
-        cw   = float(row.get("CPR Width%",  1.0) or 1.0)
-        dt   = str(row.get("Day Type",      ""))
-        ov   = bool(row.get("CPR Overlap",  False))
-        cn   = str(row.get("Candle",        ""))
-        rsi  = float(row.get("RSI",         50) or 50)
-        hma  = str(row.get("HMA",           ""))
-        vol  = str(row.get("Vol Surge",     ""))
-        side = str(row.get("Pattern",       ""))
-    except Exception:
-        return 0.0
-    score = (s * 0.35) + (rr * 15)
-    if cw < 0.25:   score += 20
-    elif cw < 0.5:  score += 10
-    elif cw > 1.0:  score -= 10
-    if dt == "Trending":    score += 25
-    elif dt == "Moderate":  score += 10
-    elif dt == "Sideways":  score -= 40
-    elif dt == "Volatile":  score -= 5
-    if ov: score -= 30
-    _premium = {"Morning Star":20,"Evening Star":20,"Bullish Engulfing":18,
-                "Bearish Engulfing":18,"Bull Pin Bar":15,"Bear Pin Bar":15,
-                "Hammer":12,"Shooting Star":12,"Bullish Marubozu":8,
-                "Bearish Marubozu":8,"Inside Bar":5,"Doji at CPR":3}
-    score += _premium.get(cn, 0)
-    if side == "Bullish" and rsi >= 55:   score += 8
-    elif side == "Bearish" and rsi <= 45: score += 8
-    elif side == "Bullish" and rsi <= 40: score -= 5
-    elif side == "Bearish" and rsi >= 60: score -= 5
-    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
-        score += 10
-    if "✅" in vol: score += 8
-    if   "30m" in tf_tag: score += 15
-    elif "1h"  in tf_tag: score += 8
-    elif "15m" in tf_tag: score += 5
-    try:   return round(score, 2)
+        s=float(row.get("Strength%",0) or 0); rr=float(row.get("RR1",1.0) or 1.0)
+        cw=float(row.get("CPR Width%",1.0) or 1.0); dt=str(row.get("Day Type",""))
+        ov=bool(row.get("CPR Overlap",False)); cn=str(row.get("Candle",""))
+        rsi=float(row.get("RSI",50) or 50); hma=str(row.get("HMA",""))
+        vol=str(row.get("Vol Surge","")); side=str(row.get("Pattern",""))
+    except: return 0.0
+    score=(s*0.35)+(rr*15)
+    if cw<0.25: score+=20
+    elif cw<0.5: score+=10
+    elif cw>1.0: score-=10
+    if dt=="Trending": score+=25
+    elif dt=="Moderate": score+=10
+    elif dt=="Sideways": score-=40
+    elif dt=="Volatile": score-=5
+    if ov: score-=30
+    score+={"Morning Star":20,"Evening Star":20,"Bullish Engulfing":18,"Bearish Engulfing":18,
+            "Bull Pin Bar":15,"Bear Pin Bar":15,"Hammer":12,"Shooting Star":12,
+            "Bullish Marubozu":8,"Bearish Marubozu":8,"Inside Bar":5,"Doji at CPR":3}.get(cn,0)
+    if side=="Bullish" and rsi>=55: score+=8
+    elif side=="Bearish" and rsi<=45: score+=8
+    elif side=="Bullish" and rsi<=40: score-=5
+    elif side=="Bearish" and rsi>=60: score-=5
+    if ("▲" in hma and side=="Bullish") or ("▼" in hma and side=="Bearish"): score+=10
+    if "✅" in vol: score+=8
+    if "30m" in tf_tag: score+=15
+    elif "1h" in tf_tag: score+=8
+    elif "15m" in tf_tag: score+=5
+    try: return round(score,2)
     except: return 0.0
 
-
-def _get_top5_best_trades(market_list: list) -> list:
-    TF_SCAN_CONFIGS = [
-        {"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min","color":"#7c3aed"},
-        {"interval":"30m","period":"20d", "tag":"30m","label":"⏱️ 30 Min","color":"#ea580c"},
-        {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐0 1 Hour","color":"#1d4ed8"},
-    ]
-    def _scan_one_tf(cfg):
+def _get_top5_best_trades(market_list:list)->list:
+    TF=[{"interval":"15m","period":"10d","tag":"15m","label":"⚡ 15 Min","color":"#7c3aed"},
+        {"interval":"30m","period":"20d","tag":"30m","label":"⏱️ 30 Min","color":"#ea580c"},
+        {"interval":"1h","period":"60d","tag":"1h","label":"🕐0 1 Hour","color":"#1d4ed8"}]
+    def _scan(cfg):
         try:
-            result = scan_cpr_multi_tf(market_list,interval=cfg["interval"],
-                                       period=cfg["period"],max_stocks=min(len(market_list),100))
-            if result is None or result.empty: return []
-            if "Pattern" not in result.columns: return []
-            d = result[result["Pattern"] != "Neutral"].copy()
+            r=scan_cpr_multi_tf(market_list,interval=cfg["interval"],period=cfg["period"],max_stocks=min(len(market_list),100))
+            if r is None or r.empty or "Pattern" not in r.columns: return []
+            d=r[r["Pattern"]!="Neutral"].copy()
             if d.empty: return []
             d["_tf_tag"]=cfg["tag"]; d["_tf_label"]=cfg["label"]; d["_tf_color"]=cfg["color"]
-            d["_rank_score"]=d.apply(lambda r: _signal_rank_score_global(r,cfg["tag"]),axis=1)
+            d["_rank_score"]=d.apply(lambda row:_signal_rank_score_global(row,cfg["tag"]),axis=1)
             return d.to_dict("records")
-        except Exception: return []
-    all_signals = []
+        except: return []
+    sigs=[]
     with ThreadPoolExecutor(max_workers=3) as ex:
-        futures = {ex.submit(_scan_one_tf,cfg):cfg for cfg in TF_SCAN_CONFIGS}
+        fs={ex.submit(_scan,c):c for c in TF}
         try:
-            for f in as_completed(futures, timeout=35):
-                try: all_signals.extend(f.result())
+            for f in as_completed(fs,timeout=35):
+                try: sigs.extend(f.result())
                 except: pass
         except TimeoutError:
-            for f in futures:
+            for f in fs:
                 if f.done():
-                    try: all_signals.extend(f.result())
+                    try: sigs.extend(f.result())
                     except: pass
-    if not all_signals: return []
-    all_signals.sort(key=lambda x: x.get("_rank_score",0), reverse=True)
-    seen, top5 = set(), []
-    for sig in all_signals:
-        sym = sig.get("Symbol","")
-        if sym and sym not in seen:
-            seen.add(sym); top5.append(sig)
-        if len(top5) >= 5: break
+    if not sigs: return []
+    sigs.sort(key=lambda x:x.get("_rank_score",0),reverse=True)
+    seen,top5=[],[]
+    for s in sigs:
+        sym=s.get("Symbol","")
+        if sym and sym not in seen: seen.append(sym); top5.append(s)
+        if len(top5)>=5: break
     return top5
 
 def page_scanner_signals(nse500: pd.DataFrame):
@@ -8146,14 +8121,14 @@ def page_broker_settings():
 import json as _json, os as _os
 
 # FT persistent storage — triple backup locations
-# FT file — use same writable-dir discovery as session/creds
-_FT_FILE      = _os.path.join(_os.path.expanduser("~"), ".pivotvault", "pivotvault_ft.json")
+_FT_FILE = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "data", "pivotvault_ft.json"
+)
 _FT_FILE_HOME = _os.path.join(_os.path.expanduser("~"), ".pivotvault_ft.json")
-_FT_FILE_TMP  = "/tmp/pivotvault/pivotvault_ft.json"
-_FT_FILE_TMP2 = "/tmp/pivotvault_ft.json"
+_FT_FILE_TMP  = "/tmp/pivotvault_ft.json"
 
 def _all_ft_paths():
-    return list(dict.fromkeys([_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP, _FT_FILE_TMP2]))
+    return [_FT_FILE, _FT_FILE_HOME, _FT_FILE_TMP]
 
 # ── Persistence helpers ───────────────────────────────────────────────────
 
@@ -9789,21 +9764,21 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
         )
     with lc2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
-            _clear_session()
+            _clear_session()                  # clears URL token + disk files
             st.session_state["logged_in"]    = False
             st.session_state["username"]     = ""
             st.session_state["user_email"]   = ""
             st.session_state["user_id"]      = None
             st.session_state["current_page"] = "Market Snapshot"
             st.session_state["tg_otp_code"]  = ""
-            # Broker token intentionally NOT cleared — pasted once at 9 AM, valid all day
+            # Upstox token intentionally NOT cleared — pasted once at 9 AM, valid all day
             st.rerun()
 
     # Update page on selection change
     sel_page = PAGE_KEYS[PAGE_LABELS.index(selected)]
     if sel_page != current:
         st.session_state["current_page"] = sel_page
-        _save_session()  # persist current page so refresh lands on same tab
+        _save_session()   # update URL token with new page — survives next refresh
         st.rerun()
 
     return sel_page
@@ -10070,11 +10045,11 @@ def main():
         page_login()
         return
 
-    # ── Periodic session save — every 5th run (approx every interaction) ──
-    # Ensures watchlist, alerts, page choice are always persisted to disk
+    # ── Ensure URL session token is always fresh (catches first load after login) ──
     _run_count = st.session_state.get("_run_count", 0) + 1
     st.session_state["_run_count"] = _run_count
-    if _run_count % 5 == 0:
+    if _run_count == 1 or _run_count % 10 == 0:
+        # Save on first run (ensures token in URL immediately) and every 10th interaction
         _save_session()
 
     page = render_sidebar()
