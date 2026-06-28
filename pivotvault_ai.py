@@ -3798,7 +3798,7 @@ def send_report_email(to_email: str, smtp_host: str, smtp_port: int,
 
 def page_pivot_boss(nse500: pd.DataFrame):
     """★  Full Frank Ochoa / Pivot Boss analysis page."""
-    _n200 = fetch_nifty200_list()
+    _nse500_df = fetch_nse500_list()
     st.markdown(
         '<div class="title-bar"><span class="live-dot"></span>'
         '<h1>Pivot Boss Analysis</h1>'
@@ -3808,7 +3808,7 @@ def page_pivot_boss(nse500: pd.DataFrame):
         unsafe_allow_html=True,
     )
 
-    symbols = sorted(_n200)
+    symbols = sorted(_nse500_df["Symbol"].dropna().tolist())
 
     # ── Controls ─────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1])
@@ -4182,15 +4182,15 @@ def page_watchlist():
     </div>
     """, unsafe_allow_html=True)
 
-    nifty200 = sorted(fetch_nifty200_list())
+    _nse500_wl = sorted(fetch_nse500_list()["Symbol"].dropna().tolist())
     wl       = st.session_state.get("watchlist", [])
 
     # ── Always-visible stock selector ────────────────────────────────────
-    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from Nifty 200</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;margin-bottom:4px;'>Select stocks from NSE 500</div>", unsafe_allow_html=True)
     selected = st.multiselect(
         "wl_stocks",
-        options=nifty200,
-        default=[s for s in wl if s in nifty200],
+        options=_nse500_wl,
+        default=[s for s in wl if s in _nse500_wl],
         placeholder="Search — RELIANCE, TCS, INFY…",
         label_visibility="collapsed",
         key="wl_multiselect",
@@ -5837,7 +5837,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                             font-weight:700;color:#1a1f0e;">CPR Scanner</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                             color:#5a6a48;letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;">
-                    Nifty 200 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
+                    NSE 500 · All CPR Setups · Best 10 Bullish + 10 Bearish · Pivot-Based Targets
                 </div>
             </div>
             <div id="countdown-wrap" style="text-align:right;font-family:'IBM Plex Mono',monospace;">
@@ -5969,7 +5969,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
                 try:
                     result = scan_cpr_multi_tf(
-                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200")),
+                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 NSE 500")),
                         interval=cfg["interval"],
                         period=cfg["period"],
                         max_stocks=n_stocks,
@@ -6656,7 +6656,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         🕐 1 Hour chart → refreshes every <b>1 hour</b> &nbsp;|&nbsp;
         📅 1 Day chart → refreshes every <b>4 hours</b> &nbsp;|&nbsp;
         📆 1 Week / 🗓️ 1 Month → refresh every <b>24 hours</b><br>
-        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · Nifty 200 only
+        <b style="color:#1a1f0e;">Filter:</b> Narrow CPR &lt; 0.25% · Strength 85–100% · Top 10 per direction · NSE 500
         </div>
         """, unsafe_allow_html=True)
 
