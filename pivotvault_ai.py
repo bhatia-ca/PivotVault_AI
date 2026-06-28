@@ -5926,42 +5926,25 @@ def _signal_rank_score_global(row, tf_tag: str) -> float:
     except: return 0.0
 
 
-def _get_top5_best_trades(market_list: list) -> list:
-    """Scan 15m+30m+1h simultaneously, return top 5 by score (deduped by symbol)."""
-    TF = [{"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min","color":"#7c3aed"},
-          {"interval":"30m","period":"20d", "tag":"30m","label":"⏱️ 30 Min","color":"#ea580c"},
-          {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐0 1 Hour","color":"#1d4ed8"}]
-    def _scan(cfg):
-        try:
-            r = scan_cpr_multi_tf(market_list, interval=cfg["interval"],
-                                  period=cfg["period"], max_stocks=min(len(market_list),100))
-            if r is None or r.empty or "Pattern" not in r.columns: return []
-            d = r[r["Pattern"] != "Neutral"].copy()
-            if d.empty: return []
-            d["_tf_tag"]=cfg["tag"]; d["_tf_label"]=cfg["label"]; d["_tf_color"]=cfg["color"]
-            d["_rank_score"] = d.apply(lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1)
-            return d.to_dict("records")
-        except Exception: return []
-    sigs = []
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        fs = {ex.submit(_scan, c): c for c in TF}
-        try:
-            for f in as_completed(fs, timeout=35):
-                try: sigs.extend(f.result())
-                except: pass
-        except TimeoutError:
-            for f in fs:
-                if f.done():
-                    try: sigs.extend(f.result())
-                    except: pass
-    if not sigs: return []
-    sigs.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
+def _get_top5_best_trades(market_list: list = None) -> list:
+    """
+    Return top 5 signals by rank score from the unified bg scan cache.
+    Previously ran its own independent 15m+30m+1h scan — now reads from
+    st.session_state[_BG_SCAN_KEY] so no data is fetched a third time.
+    market_list param kept for backward compatibility but is no longer used.
+    """
+    cached = st.session_state.get(_BG_SCAN_KEY, [])
+    if not cached:
+        return []
+    # Deduplicate by symbol — keep highest-scored TF per symbol
     seen, top5 = set(), []
-    for s in sigs:
-        sym = s.get("Symbol","")
+    for sig in cached:   # already sorted by rank score desc
+        sym = sig.get("Symbol", "")
         if sym and sym not in seen:
-            seen.add(sym); top5.append(s)
-        if len(top5) >= 5: break
+            seen.add(sym)
+            top5.append(sig)
+        if len(top5) >= 5:
+            break
     return top5
 
 
@@ -5973,48 +5956,149 @@ _BG_SCAN_INTERVAL = 300                 # run every 5 minutes
 _BG_SCORE_CUTOFF  = 80                  # only keep signals with score >= 80
 
 _BG_ALL_TF = [
-    {"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min","color":"#7c3aed"},
-    {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐0 1 Hour","color":"#1d4ed8"},
-    {"interval":"1d", "period":"120d","tag":"1d", "label":"📅 1 Day","color":"#1a6b3c"},
-    {"interval":"1wk","period":"2y",  "tag":"1wk","label":"🗓 1 Week","color":"#d97706"},
+    {"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min", "color":"#7c3aed"},
+    {"interval":"30m","period":"20d", "tag":"30m","label":"⏱️ 30 Min", "color":"#ea580c"},  # PRIMARY auto-trade TF — was missing
+    {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐 1 Hour", "color":"#1d4ed8"},
+    {"interval":"1d", "period":"120d","tag":"1d", "label":"📅 1 Day",  "color":"#1a6b3c"},
+    {"interval":"1wk","period":"2y",  "tag":"1wk","label":"🗓 1 Week", "color":"#d97706"},
     {"interval":"1mo","period":"5y",  "tag":"1mo","label":"🗓 1 Month","color":"#dc2626"},
 ]
 
 
 def _run_bg_scan(market_list: list) -> list:
     """
-    Scan ALL 5 timeframes (15m 1h 1d 1wk 1mo) in parallel.
-    Returns only signals with rank score >= 80 — these are high-conviction setups.
-    Deduplicates by symbol+TF so same stock can appear on different TFs.
+    Unified scan engine — scans ALL 6 TFs (15m 30m 1h 1d 1wk 1mo) in parallel.
+
+    Changes from original:
+    - 30m is now included (was missing — it's the primary auto-trade TF)
+    - Uses _signal_rank_score_global() — single scorer, no drift vs manual scanner
+    - Stock cap raised from 80 → 200 (batch yfinance handles this efficiently)
+    - Auto-trade gate (7 conditions) applied here — not duplicated in manual scanner
+    - Results tagged with auto-trade eligibility so UI can read it directly
+    - Deduplicates by symbol+TF so same stock can appear on multiple TFs
     """
+    from datetime import datetime as _dt
+
+    # Build the "already traded today" set once for the whole scan
+    _today       = _dt.now().strftime("%Y-%m-%d")
+    _ft_evts     = _ft_state().get("events", [])
+    _traded_today = set(
+        e.get("symbol", "") for e in _ft_evts
+        if e.get("type", "") == "ENTRY"
+        and str(e.get("time", "")).startswith(_today)
+    )
+
+    # Market hours gate — only auto-trade within 09:45–14:45 IST
+    _now_ist      = _dt.utcnow().replace(tzinfo=None)
+    _ist_hour     = (_now_ist.hour + 5) % 24
+    _ist_min      = (_now_ist.minute + 30) % 60
+    _ist_minutes  = _ist_hour * 60 + _ist_min
+    _in_mkt_hours = (9 * 60 + 45) <= _ist_minutes <= (14 * 60 + 45)
+
     def _scan_tf(cfg):
         try:
-            r = scan_cpr_multi_tf(market_list, interval=cfg["interval"],
-                                  period=cfg["period"], max_stocks=min(len(market_list),100))
-            if r is None or r.empty or "Pattern" not in r.columns: return []
+            r = scan_cpr_multi_tf(
+                market_list,
+                interval   = cfg["interval"],
+                period     = cfg["period"],
+                max_stocks = min(len(market_list), 200),   # raised from 80
+            )
+            if r is None or r.empty or "Pattern" not in r.columns:
+                return []
             d = r[r["Pattern"] != "Neutral"].copy()
-            if d.empty: return []
-            d["_tf_tag"]=cfg["tag"]; d["_tf_label"]=cfg["label"]; d["_tf_color"]=cfg["color"]
-            d["_rank_score"] = d.apply(lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1)
-            # Filter score >= 80
-            d = d[d["_rank_score"] >= _BG_SCORE_CUTOFF]
+            if d.empty:
+                return []
+
+            # Tag with TF metadata
+            d["_tf_tag"]   = cfg["tag"]
+            d["_tf_label"] = cfg["label"]
+            d["_tf_color"] = cfg["color"]
+
+            # Score every signal using the single shared scorer
+            d["_rank_score"] = d.apply(
+                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1
+            )
+
+            # Apply auto-trade gate — tag each signal with its eligibility
+            def _auto_gate(row):
+                sym       = str(row.get("Symbol", ""))
+                strength  = float(row.get("Strength%", 0) or 0)
+                rr        = float(row.get("RR1", 0) or 0)
+                overlap   = bool(row.get("CPR Overlap", False))
+                day_type  = str(row.get("Day Type", ""))
+                entry_px  = float(row.get("Entry", 0) or 0)
+                sl_px     = float(row.get("SL", 0) or 0)
+                sl_pct    = abs(entry_px - sl_px) / entry_px * 100 if entry_px > 0 else 0
+                tf        = cfg["tag"]
+
+                if tf not in ("30m", "1h"):          return "—"        # TF gate
+                if not _in_mkt_hours:                return "⏰ Off Hrs" # hours gate
+                if strength < 75:                    return "—"        # strength gate
+                if rr < 2.0:                         return "—"        # RR gate
+                if overlap and day_type == "Sideways": return "—"      # sideways gate
+                if sl_pct < 0.50:                    return "—"        # SL% gate
+                if sym in _traded_today:             return "⏭ Done"   # dedup gate
+                return "🤖 Auto"
+
+            d["_auto_gate"] = d.apply(_auto_gate, axis=1)
+
+            # Keep signals with score >= 80, plus any auto-eligible regardless of score
+            d = d[(d["_rank_score"] >= _BG_SCORE_CUTOFF) | (d["_auto_gate"] == "🤖 Auto")]
             return d.to_dict("records")
-        except Exception: return []
+        except Exception:
+            return []
 
     all_sigs = []
-    with ThreadPoolExecutor(max_workers=5) as ex:
+    with ThreadPoolExecutor(max_workers=6) as ex:   # one worker per TF
         fs = {ex.submit(_scan_tf, cfg): cfg for cfg in _BG_ALL_TF}
         try:
-            for f in as_completed(fs, timeout=90):
-                try: all_sigs.extend(f.result())
-                except: pass
+            for f in as_completed(fs, timeout=120):
+                try:
+                    all_sigs.extend(f.result())
+                except Exception:
+                    pass
         except TimeoutError:
             for f in fs:
                 if f.done():
-                    try: all_sigs.extend(f.result())
-                    except: pass
+                    try:
+                        all_sigs.extend(f.result())
+                    except Exception:
+                        pass
 
-    # Sort by score desc
+    # Execute auto-trades from bg scan (max 3 per cycle, deduped by symbol)
+    _auto_count = 0
+    for sig_row in sorted(all_sigs, key=lambda x: x.get("_rank_score", 0), reverse=True):
+        if sig_row.get("_auto_gate") != "🤖 Auto":
+            continue
+        if _auto_count >= 3:
+            break
+        sym = sig_row.get("Symbol", "")
+        if not sym or sym in _traded_today:
+            continue
+        try:
+            ft_add_signal({
+                "symbol":    sym,
+                "side":      "BUY" if sig_row.get("Pattern", "") == "Bullish" else "SELL",
+                "entry":     sig_row.get("Entry",    sig_row.get("LTP", 0)),
+                "sl":        sig_row.get("SL",       0),
+                "t1":        sig_row.get("T1",       0),
+                "t2":        sig_row.get("T2",       0),
+                "rr1":       sig_row.get("RR1",      2.0),
+                "tf":        sig_row.get("_tf_tag",  ""),
+                "rationale": sig_row.get("Rationale", sig_row.get("Strategy", "CPR")),
+                "strategy":  sig_row.get("Strategy", "CPR"),
+                "strength":  sig_row.get("Strength%", 0),
+                "candle":    sig_row.get("Candle",   "—"),
+                "day_type":  sig_row.get("Day Type", ""),
+                "rsi":       sig_row.get("RSI",      50),
+                "rank_score":sig_row.get("_rank_score", 0),
+            }, source=f"🤖 Auto·BG · {sig_row.get('_tf_tag','').upper()}")
+            _traded_today.add(sym)
+            _auto_count += 1
+        except Exception:
+            pass
+
+    # Sort final list by rank score desc
     all_sigs.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
     return all_sigs
 
@@ -6125,7 +6209,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # Kick off background scan (non-blocking thread, runs every 5 min)
         _mkt_list_bg = get_market_list(_market)
-        _maybe_run_bg_scan(_mkt_list_bg[:80])
+        _maybe_run_bg_scan(_mkt_list_bg[:200])   # raised from 80 — batch yfinance handles this
 
         # Header row
         _bh1, _bh2, _bh3 = st.columns([5, 2, 1])
@@ -6311,34 +6395,28 @@ def page_scanner_signals(nse500: pd.DataFrame):
         st.divider()
 
         # ═══════════════════════════════════════════════════════════════════
-        #  🏆 TOP 5 BEST TRADES — 15m + 30m + 1H ranked
+        #  🏆 TOP 5 BEST TRADES — read from unified bg scan cache
+        #  Previously ran its own 15m+30m+1h scan independently.
+        #  Now reads _BG_SCAN_KEY — zero extra data fetches.
         # ═══════════════════════════════════════════════════════════════════
-        _TOP5_KEY      = "top5_best_trades"
-        _TOP5_TIME_KEY = "top5_best_trades_time"
-        _top5_age      = time.time() - st.session_state.get(_TOP5_TIME_KEY, 0)
-        _top5_needs    = _top5_age >= 900
-
         _t5h1, _t5h2 = st.columns([5, 1])
         with _t5h1:
+            _bg_age_min = int((time.time() - st.session_state.get(_BG_SCAN_TIME_KEY, 0)) / 60)
             st.markdown(
                 "<div style='font-family:IBM Plex Mono,monospace;'>"
                 "<b style='font-size:1rem;color:#1a1f0e;'>🏆 Top 5 Best Trades</b> "
                 "<span style='font-size:0.68rem;color:#5a6a48;'>"
-                "Auto-ranked across ⚡15m · ⏱️30m · 🕐1H · Frank Ochoa Score · Refreshes every 15 min"
+                f"Ranked from unified scan · All 6 TFs · Data age: {_bg_age_min} min"
                 "</span></div>", unsafe_allow_html=True)
         with _t5h2:
             if st.button("🔄 Refresh", key="refresh_top5_btn", use_container_width=True):
-                _top5_needs = True
-                st.session_state.pop(_TOP5_KEY, None)
+                # Force the bg scanner to re-run immediately
+                st.session_state[_BG_SCAN_TIME_KEY] = 0
+                st.session_state.pop(_BG_SCAN_KEY, None)
+                st.rerun()
 
-        if _top5_needs or _TOP5_KEY not in st.session_state:
-            _mkt_top5 = get_market_list(_market)
-            with st.spinner("⚡ Scanning 15m · 30m · 1H for top 5 setups…"):
-                st.session_state[_TOP5_KEY]      = _get_top5_best_trades(_mkt_top5[:80])
-                st.session_state[_TOP5_TIME_KEY] = time.time()
-                _top5_age = 0
-
-        _top5_trades = st.session_state.get(_TOP5_KEY, [])
+        # Read top 5 directly from bg scan cache — no new scan
+        _top5_trades = _get_top5_best_trades()
 
         if not _top5_trades:
             st.info("📡 No top trades found — click 🔄 Refresh to scan.")
@@ -6587,241 +6665,89 @@ def page_scanner_signals(nse500: pd.DataFrame):
         age           = now - last_scan
         needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
 
-        # ── Run scan only for selected timeframe ──────────────────────────────────
+        # ── Run scan ─────────────────────────────────────────────────────────────
+        # "Scan Now" forces the unified bg scanner to re-run immediately.
+        # The manual TF selector is now a VIEW FILTER over the bg scan cache —
+        # no new data fetch happens when the user changes timeframe.
         if needs_refresh:
-            # Warn if Upstox not connected — yfinance may be blocked on Streamlit Cloud
+            if manual_btn:
+                # Force the bg scanner to re-run right now
+                st.session_state[_BG_SCAN_TIME_KEY] = 0
+                st.session_state.pop(_BG_SCAN_KEY, None)
+                _mkt_list_bg = get_market_list(_market)
+                _maybe_run_bg_scan(_mkt_list_bg[:200])
+                st.rerun()
+
+            # Warn if Upstox not connected
             if not _upstox_connected():
                 st.info(
                     "💡 **Tip:** Connect your Upstox API token in ⚙️ Broker Settings for reliable data. "
-                    "yfinance may be rate-limited on Streamlit Cloud.",
-                    icon="ℹ️",
+                    "yfinance may be rate-limited on Streamlit Cloud.", icon="ℹ️",
                 )
-            upstox_live  = _upstox_connected()
-            has_creds    = _upstox_has_credentials()
-            n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
-
-            if has_creds and not upstox_live:
+            if _upstox_has_credentials() and not _upstox_connected():
                 st.warning(
                     "⚠️ Upstox token expired — scanner will use yfinance. "
-                    "Paste today's token above to restore Upstox live feed.",
-                    icon="🔑",
+                    "Paste today's token above to restore Upstox live feed.", icon="🔑",
                 )
 
-            src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
+        # ── Read results from unified bg scan cache filtered by selected TF ──────
+        _all_bg  = st.session_state.get(_BG_SCAN_KEY, [])
+        _tf_sigs = [s for s in _all_bg if s.get("_tf_tag") == tf_tag]
 
-            # Cap scan count for large universes on slow connections
-            _mkt_sym_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200"))
-            if _market == "🌐 All NSE (~1800)":
-                n_stocks = min(n_stocks, 400)   # cap All-NSE at 400 for speed
-            else:
-                n_stocks = min(n_stocks, len(_mkt_sym_list))
+        # Convert filtered signal list to DataFrame for compatibility with display code
+        if _tf_sigs:
+            result = pd.DataFrame(_tf_sigs)
+            # Apply _rank_score_global consistently (already stored as _rank_score)
+            if "_rank_score" not in result.columns:
+                result["_rank_score"] = result.apply(
+                    lambda r: _signal_rank_score_global(r, tf_tag), axis=1
+                )
+        else:
+            result = pd.DataFrame()
 
-            # Optional F&O filter
-            _fo_only = st.session_state.get("scanner_fo_only", False)
-            if _fo_only:
-                _fo_set = fetch_fo_stocks()
-                _scan_syms = [s for s in _mkt_sym_list[:n_stocks] if s in _fo_set]
-                if not _scan_syms:
-                    _scan_syms = _mkt_sym_list[:n_stocks]
-            else:
-                _scan_syms = _mkt_sym_list[:n_stocks]
+        st.session_state[scan_key]      = result
+        st.session_state[scan_time_key] = time.time()
 
-            with st.spinner(f"Scanning {len(_scan_syms)} stocks · {tf_tag.upper()} · {src_label}…"):
-                try:
-                    result = scan_cpr_multi_tf(
-                        _scan_syms,
-                        interval=cfg["interval"],
-                        period=cfg["period"],
-                        max_stocks=len(_scan_syms),
-                    )
-                    if result.empty:
-                        st.warning(
-                            f"⚠️ No setups found on {tf_tag.upper()}. "
-                            f"{'Market may be closed — data is from last session.' if not is_market_open('us' if st.session_state.get('scanner_market','') in ('🇺🇸 Dow 30','🇺🇸 Nasdaq 100') else 'india') else 'All stocks filtered out — try a different timeframe.'}"
+        if result.empty and not st.session_state.get(_BG_SCAN_RUNNING, False):
+            st.info(
+                f"📡 No signals for {tf_tag.upper()} in current scan. "
+                f"Click 🔄 Scan Now to force a fresh scan, or wait for the auto-refresh."
+            )
+        elif result.empty:
+            st.info("🔄 Background scan in progress — results will appear shortly.")
+
+        # ── Rank + auto-trade tag for display (using shared scorer) ──────────────
+        if not result.empty and "Pattern" in result.columns:
+            ranked = result[result["Pattern"] != "Neutral"].copy()
+            if not ranked.empty:
+                # Use _rank_score from bg cache (already computed by global scorer)
+                ranked["🏆 Rank Score"] = ranked.get("_rank_score",
+                    ranked.apply(lambda r: _signal_rank_score_global(r, tf_tag), axis=1))
+                # Auto-gate tag already computed in _run_bg_scan
+                ranked["🤖 Auto"] = ranked.get("_auto_gate", "—")
+                ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
+                ranked.index = ranked.index + 1
+                st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+                # Sync canonical keys read by Trade Signals tab
+                if tf_tag in ("15m", "30m", "1h"):
+                    st.session_state[f"cpr_scan_{tf_tag}"]      = result
+                    st.session_state[f"cpr_scan_time_{tf_tag}"] = time.time()
+
+                # Telegram top 3 on 15m / 30m
+                if tf_tag in ("15m", "30m") and st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
+                    _tl = [f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(ranked)} setups</b>"]
+                    for _, _r in ranked.head(3).iterrows():
+                        _se = "🟢" if _r.get("Pattern", "") == "Bullish" else "🔴"
+                        _tl.append(
+                            f"{_se} <b>{_r.get('Symbol','')}</b> · "
+                            f"₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · "
+                            f"SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%"
                         )
-                    else:
-                        st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
-                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
-                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
-                            for _,_r in result.head(3).iterrows():
-                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
-                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
-                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
-                            _send_telegram("\n".join(_tl))
-                except Exception as e:
-                    st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
-                    result = pd.DataFrame()
-            st.session_state[scan_key]      = result
-            st.session_state[scan_time_key] = now
-
-            # ── Rank signals & Auto-trade BEST 3 only ────────────────────
-            if not result.empty and tf_tag in ("15m","30m","1h"):
-
-                def _signal_rank_score(row):
-                    """
-                    Composite rank score — Frank Ochoa weighted.
-                    Higher score = better quality signal.
-                    """
-                    s   = float(row.get("Strength%",   0))
-                    rr  = float(row.get("RR1",         1.0))
-                    cw  = float(row.get("CPR Width%",  1.0))
-                    dt  = str(row.get("Day Type",      ""))
-                    ov  = bool(row.get("CPR Overlap",  False))
-                    cn  = str(row.get("Candle",        ""))
-                    rsi = float(row.get("RSI",         50))
-                    hma = str(row.get("HMA",           ""))
-                    vol = str(row.get("Vol Surge",     ""))
-                    side= str(row.get("Pattern",       ""))
-
-                    score = (s * 0.35) + (rr * 15)
-
-                    # CPR Width — narrower = better (trending day)
-                    if cw < 0.25:   score += 20
-                    elif cw < 0.5:  score += 10
-                    elif cw > 1.0:  score -= 10
-
-                    # Day Type bonus/penalty (Ochoa Two-Day CPR)
-                    if dt == "Trending":    score += 25
-                    elif dt == "Moderate":  score += 10
-                    elif dt == "Sideways":  score -= 40
-                    elif dt == "Volatile":  score -= 5
-
-                    # Overlap heavy penalty
-                    if ov: score -= 30
-
-                    # Candle quality bonus
-                    _premium = {
-                        "Morning Star": 20, "Evening Star": 20,
-                        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
-                        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
-                        "Hammer": 12, "Shooting Star": 12,
-                        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
-                        "Inside Bar": 5, "Doji at CPR": 3,
-                    }
-                    score += _premium.get(cn, 0)
-
-                    # RSI alignment
-                    if side == "Bullish" and rsi >= 55:    score += 8
-                    elif side == "Bearish" and rsi <= 45:  score += 8
-                    elif side == "Bullish" and rsi <= 40:  score -= 5
-                    elif side == "Bearish" and rsi >= 60:  score -= 5
-
-                    # HMA alignment
-                    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
-                        score += 10
-
-                    # Volume surge
-                    if "✅" in vol: score += 8
-
-                    # Timeframe bonus — 30M is primary (highest quality CPR signals)
-                    _tf = str(row.get("tf",""))
-                    if   "30m" in _tf or "30M" in _tf: score += 15  # primary TF
-                    elif "1h"  in _tf or "1H"  in _tf: score += 8   # swing TF
-                    elif "15m" in _tf or "15M" in _tf: score += 5   # scalp TF
-
-                    return round(score, 2)
-
-                # Compute rank score for every directional signal
-                if "Pattern" not in result.columns: result["Pattern"] = "Neutral"
-                if "Strength%" not in result.columns: result["Strength%"] = 0.0
-                if "CPR Width%" not in result.columns: result["CPR Width%"] = 0.0
-                ranked = result[result["Pattern"] != "Neutral"].copy()
-                if not ranked.empty:
-                    ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
-                    ranked["🤖 Auto"]        = ""   # will be filled below
-                    ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
-                    ranked.index = ranked.index + 1  # rank 1 = best
-
-                    # Store ranked result for scanner UI display
-                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
-
-                    # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
-                    # Max 1 trade per symbol per day — no duplicate entries
-                    _today   = datetime.now().strftime("%Y-%m-%d")
-                    _ft_evts = _ft_state().get("events", [])
-                    _traded_today = set(
-                        e.get("symbol","") for e in _ft_evts
-                        if e.get("type","") == "ENTRY"
-                        and str(e.get("time","")).startswith(_today)
-                    )
-                    auto_traded = 0
-                    for _ri, row in ranked.iterrows():
-                        sig = {
-                            "symbol":     row.get("Symbol",""),
-                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
-                            "entry":      row.get("Entry",   row.get("LTP",0)),
-                            "sl":         row.get("SL",      0),
-                            "t1":         row.get("T1",      0),
-                            "t2":         row.get("T2",      0),
-                            "rr1":        row.get("RR1",     2.0),
-                            "tf":         tf_tag,
-                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
-                            "strategy":   row.get("Strategy","CPR"),
-                            "strength":   row.get("Strength%",0),
-                            "candle":     row.get("Candle","—"),
-                            "day_type":   row.get("Day Type",""),
-                            "cpr_overlap":row.get("CPR Overlap", False),
-                            "rsi":        row.get("RSI", 50),
-                            "hma":        row.get("HMA","—"),
-                            "vol":        row.get("Vol Surge","—"),
-                            "cprw":       row.get("CPR Width%", 1.0),
-                            "ltp":        row.get("LTP", 0),
-                            "rank_score": row.get("🏆 Rank Score", 0),
-                        }
-                        _strength = float(sig.get("strength", 0))
-                        _rr       = float(sig.get("rr1", 0))
-                        _overlap  = sig.get("cpr_overlap", False)
-                        _day_type = sig.get("day_type", "")
-
-                        # Block sideways + enforce quality gate
-                        if _overlap and _day_type == "Sideways":
-                            continue
-                        # Frank Ochoa optimal params:
-                        # Strength >= 75%, RR >= 2.0, Non-sideways day
-                        if not (_strength >= 75 and _rr >= 2.0):
-                            continue
-
-                        # ── MIN SL DISTANCE FILTER (0.50%) ──────────────────
-                        # Prevents noise-triggered SL hits on tight stops
-                        # Based on forward test analysis: 17/18 SL hits had SL% < 0.50%
-                        _entry_px = float(sig.get("entry", 0))
-                        _sl_px    = float(sig.get("sl",    0))
-                        _sl_pct   = abs(_entry_px - _sl_px) / _entry_px * 100 if _entry_px > 0 else 0
-                        if _sl_pct < 0.50:
-                            continue   # SL too tight — skip, noise will hit it
-
-                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
-                            continue
-
-                        # Skip if this symbol already traded today
-                        if sig["symbol"] in _traded_today:
-                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
-                            continue
-
-                        if auto_traded < 3:
-                            # ── AUTO-TRADE GATE: Only 30m + 1h timeframes ──
-                            # 15m excluded — too noisy, tight SL, high false signals
-                            if tf_tag not in ("30m", "1h"):
-                                continue
-                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
-                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
-                            _traded_today.add(sig["symbol"])
-                            auto_traded += 1
-                        # Rest are available for manual trade — marked in ranked table
-
-                    # Update stored ranked result with Auto markers
-                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
-
-            last_scan = now
-
-            # ── Always sync canonical keys read by Trade Signals tab ──────────────
-            # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
-            if tf_tag in ("15m", "30m", "1h"):
-                st.session_state[f"cpr_scan_{tf_tag}"]      = result
-                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
-
-            # ── Store signals + fire desktop notifications ────────────────────────
-            if not result.empty:
+                    _tl.append("<i>PivotVault AI · Unified Scanner</i>")
+                    _send_telegram("\n".join(_tl))
+        # ── Desktop notifications — fires from cache result ───────────────────────
+        if not result.empty:
                 if "Pattern" not in result.columns: result["Pattern"] = "Neutral"
                 if "Strength%" not in result.columns: result["Strength%"] = 0.0
                 if "CPR Width%" not in result.columns: result["CPR Width%"] = 0.0
@@ -6831,23 +6757,18 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 for _, r in top3_bull.iterrows():
                     notif_signals.append({
                         "symbol": r["Symbol"], "side": "BUY",
-                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
-                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "entry": r.get("Entry",0), "t1": r.get("T1",0), "sl": r.get("SL",0),
+                        "rr": r.get("RR1",0), "strength": int(r.get("Strength%",0)),
                         "candle": r.get("Candle","—"),
                     })
                 for _, r in top3_bear.iterrows():
                     notif_signals.append({
                         "symbol": r["Symbol"], "side": "SELL",
-                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
-                        "rr": r["RR1"], "strength": int(r["Strength%"]),
+                        "entry": r.get("Entry",0), "t1": r.get("T1",0), "sl": r.get("SL",0),
+                        "rr": r.get("RR1",0), "strength": int(r.get("Strength%",0)),
                         "candle": r.get("Candle","—"),
                     })
                 st.session_state["pending_signals"] = notif_signals
-                # Also update the per-tag scan time key used by Trade Signals tab
-                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
-
-                # ── Fire desktop notifications via window.parent ──────────────────
-                # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
                 notif_js_list = json.dumps([
                     {"sym": s["symbol"], "side": s["side"],
                      "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
@@ -6860,16 +6781,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         var sigs = {notif_js_list};
         var w    = window.parent || window;
         if (!("Notification" in w)) return;
-        if (w.Notification.permission !== "granted") {{
-            // Flash the allow button if not granted
-            var btn = document.getElementById("pv-allow-btn");
-            if (btn) {{
-                btn.style.animation = "none";
-                btn.style.background = "#c0392b";
-                btn.innerText = "⚠️ Allow Notifications!";
-            }}
-            return;
-        }}
+        if (w.Notification.permission !== "granted") return;
         sigs.forEach(function(s, i) {{
             setTimeout(function() {{
                 var emoji = s.side === "BUY" ? "🟢" : "🔴";
@@ -6878,7 +6790,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     "Entry ₹" + s.entry + "  |  T1 ₹" + s.t1 + "  |  SL ₹" + s.sl + "  |  R:R " + s.rr + "x",
                     "pv-" + s.sym
                 );
-            }}, i * 800);  // Stagger by 800ms so they don't all fire at once
+            }}, i * 800);
         }});
     }})();
     </script>
