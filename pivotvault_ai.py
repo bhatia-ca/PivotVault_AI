@@ -5587,7 +5587,7 @@ def _get_top5_best_trades(market_list: list) -> list:
         try:
             result = scan_cpr_multi_tf(
                 market_list, interval=cfg["interval"],
-                period=cfg["period"], max_stocks=min(len(market_list), 100),
+                period=cfg["period"], max_stocks=len(market_list),
             )
             if result is None or result.empty: return []
             if "Pattern" not in result.columns: return []
@@ -5706,7 +5706,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         if _top5_needs or _TOP5_KEY not in st.session_state:
             _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 NSE 500"))
             with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
-                _top5_result = _get_top5_best_trades(_mkt_list[:80])
+                _top5_result = _get_top5_best_trades(_mkt_list)
             st.session_state[_TOP5_KEY]      = _top5_result
             st.session_state[_TOP5_TIME_KEY] = time.time()
             _top5_age = 0
@@ -5956,7 +5956,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 )
             upstox_live  = _upstox_connected()
             has_creds    = _upstox_has_credentials()
-            n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
+            n_stocks     = 500 if upstox_live else (500 if has_creds else 500)
 
             if has_creds and not upstox_live:
                 st.warning(
