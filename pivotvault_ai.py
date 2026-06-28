@@ -70,15 +70,6 @@ from email.mime.text import MIMEText
 import streamlit.components.v1 as _stc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Scanner Optimization Imports
-from queue import Queue
-import threading
-
-# Global queue for thread-safe background scanning
-_SCAN_QUEUE = Queue()
-_SCAN_LOCK = threading.Lock()
-
-
 # ══════════════════════════════════════════════════════════════
 #  STRATEGY NAMING ENGINE
 #  Generates a unique, readable strategy name from signal params
@@ -204,914 +195,6 @@ def _strategy_short_id(s: dict) -> str:
 
     parts = [p for p in [cpr_part, c_tag, rsi_tag] if p]
     return f"{side[:1]}-{'-'.join(parts)}"
-
-
-# ==============================================================================
-#  OPTIMIZED SCANNER FUNCTIONS (INTEGRATED)
-# ==============================================================================
-
-def _signal_rank_score_global_v2(row: dict, tf_tag: str) -> float:
-    """
-    Improved scoring with balanced weights:
-    - Strength%: 0-100 pts (direct mapping)
-    - R:R: 0-50 pts (capped & scaled)
-    - CPR Width: 0-30 pts (narrow CPR = trending)
-    - Patterns: ±20 pts (strong patterns)
-    - Indicators: 0-40 pts (HMA, RSI, Volume)
-    - Timeframe: 0-20 pts (higher TF = more weight)
-    Total Range: 0-260 pts
-    """
-    score = 0.0
-    
-    try:
-        # 1. STRENGTH (0-100 pts) - Primary factor
-        strength = float(row.get("Strength%", 0) or 0)
-        score += strength  # Direct 1:1 mapping
-        
-        # 2. REWARD:RISK (0-50 pts) - Capped & scaled
-        rr = float(row.get("RR1", 1.0) or 1.0)
-        score += min(rr * 10, 50)  # Cap at 50 points (5:1 R:R)
-        
-        # 3. CPR WIDTH (0-30 pts) - Narrow = trending
-        cpr_w = float(row.get("CPR Width%", 1.0) or 1.0)
-        if cpr_w < 0.15:      score += 30  # Ultra-narrow
-        elif cpr_w < 0.25:    score += 25  # Narrow
-        elif cpr_w < 0.50:    score += 15  # Moderate
-        elif cpr_w > 1.5:     score -= 20  # Wide (range-bound)
-        
-        # 4. TREND DAY TYPE (+25 pts for trending)
-        if row.get("Day Type") == "Trending":
-            score += 25
-        elif row.get("CPR Overlap") is True:  # Penalty for overlap
-            score -= 30
-        
-        # 5. CANDLESTICK PATTERNS (±20 pts)
-        pattern = row.get("Pattern", "")
-        bullish_patterns = ["Bullish Engulfing", "Morning Star", "Hammer", "Piercing", "Inverted Hammer"]
-        bearish_patterns = ["Bearish Engulfing", "Evening Star", "Shooting Star", "Dark Cloud", "Hanging Man"]
-        
-        if any(p in pattern for p in bullish_patterns):
-            score += 20
-        elif any(p in pattern for p in bearish_patterns):
-            score += 20  # Bearish patterns also valid if aligned with bias
-        
-        # 6. RSI ALIGNMENT (0-15 pts)
-        rsi = float(row.get("RSI", 50) or 50)
-        side = row.get("side", "BUY")
-        if side == "BUY" and 55 <= rsi <= 70:    score += 15
-        elif side == "SELL" and 30 <= rsi <= 45: score += 15
-        elif side == "BUY" and 30 <= rsi <= 40:  score += 10  # Oversold bounce
-        elif side == "SELL" and 60 <= rsi <= 70: score += 10  # Overbought rejection
-        
-        # 7. HMA TREND CONFIRMATION (+15 pts)
-        hma = row.get("HMA", "")
-        if ("▲" in hma or "Rising" in hma) and side == "BUY":
-            score += 15
-        elif ("▼" in hma or "Falling" in hma) and side == "SELL":
-            score += 15
-        
-        # 8. VOLUME SURGE (+10 pts)
-        vol_surge = row.get("Vol Surge", "")
-        if "✅" in vol_surge or "High" in vol_surge or "Surge" in vol_surge:
-            score += 10
-        
-        # 9. TIMEFRAME MULTIPLIER (higher TF = more reliable)
-        tf_bonus = {
-            "15m": 0, "30m": 5, "1h": 10,
-            "1d": 15, "1wk": 18, "1mo": 20
-        }.get(tf_tag, 0)
-        score += tf_bonus
-        
-        # 10. VIRGIN CPR BONUS (+15 pts)
-        virgin_cpr = row.get("Virgin CPR", "")
-        if "⭐" in virgin_cpr or "Yes" in virgin_cpr:
-            score += 15
-        
-        # 11. OSCILLATOR CONFIRMATION (+10 pts)
-        osc = row.get("Osc Cross", "")
-        if "▲" in osc and side == "BUY":
-            score += 10
-        elif "▼" in osc and side == "SELL":
-            score += 10
-        
-        return round(score, 2)
-    
-    except Exception as e:
-        print(f"Scoring error: {e}")
-        return 0.0
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  2. IMPROVED CPR CALCULATION WITH EDGE CASE HANDLING
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def compute_cpr_safe(df: pd.DataFrame) -> dict:
-    """
-    Enhanced CPR calculation with:
-    - Input validation
-    - Edge case handling
-    - More granular classification
-    """
-    if df.empty or len(df) < 2:
-        return {}
-    
-    try:
-        ref = df.iloc[-2]
-        H = float(ref["High"])
-        L = float(ref["Low"])
-        C = float(ref["Close"])
-        
-        # Validate inputs
-        if H <= 0 or L <= 0 or C <= 0:
-            return {}
-        
-        if H < L:  # Invalid candle
-            return {}
-        
-        # Calculate CPR levels
-        P = round((H + L + C) / 3, 2)
-        BC = round((H + L) / 2, 2)
-        TC = round((P - BC) + P, 2)
-        
-        # Safe division for width percentage
-        width_pct = round(abs(TC - BC) / max(P, 1) * 100, 3)
-        
-        # Classification with more granular thresholds
-        if width_pct < 0.15:
-            bias = "Ultra-Narrow — Very Strong Trending Day Expected"
-            color = "bull"
-            day_type = "Trending"
-        elif width_pct < 0.25:
-            bias = "Narrow — Strong Trending Day Expected"
-            color = "bull"
-            day_type = "Trending"
-        elif width_pct < 0.50:
-            bias = "Moderate — Mild Trend Possible"
-            color = "neut"
-            day_type = "Trending"
-        elif width_pct < 1.0:
-            bias = "Wide — Range-Bound or Choppy"
-            color = "bear"
-            day_type = "Sideways"
-        else:
-            bias = "Very Wide — High Volatility / Sideways"
-            color = "bear"
-            day_type = "Sideways"
-        
-        return {
-            "Pivot": P,
-            "TC": TC,
-            "BC": BC,
-            "Width%": width_pct,
-            "Bias": bias,
-            "Color": color,
-            "Range": round(TC - BC, 2),
-            "Day Type": day_type
-        }
-    
-    except Exception as e:
-        print(f"CPR calculation error: {e}")
-        return {}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  3. BATCH FETCHING WITH PARALLEL PROCESSING
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def batch_fetch_ohlcv(symbols: List[str], interval: str, period: str) -> Dict[str, pd.DataFrame]:
-    """
-    Fetch OHLCV data for multiple symbols in parallel.
-    
-    Args:
-        symbols: List of stock symbols
-        interval: Timeframe (e.g., "15m", "1h", "1d")
-        period: Lookback period (e.g., "5d", "30d", "1y")
-    
-    Returns:
-        Dictionary mapping symbol -> DataFrame
-    """
-    results = {}
-    
-    # Map Streamlit interval to yfinance interval
-    interval_map = {
-        "15m": "15m", "30m": "30m", "1h": "60m",
-        "1d": "1d", "1wk": "1wk", "1mo": "1mo"
-    }
-    yf_interval = interval_map.get(interval, interval)
-    
-    # Fetch in parallel using ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_symbol = {
-            executor.submit(_fetch_single_ohlcv, symbol, yf_interval, period): symbol
-            for symbol in symbols
-        }
-        
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                df = future.result(timeout=10)
-                if not df.empty and len(df) >= 20:
-                    results[symbol] = df
-            except Exception:
-                continue  # Skip failed fetches silently
-    
-    return results
-
-
-def _fetch_single_ohlcv(symbol: str, interval: str, period: str) -> pd.DataFrame:
-    """Fetch OHLCV for a single symbol with error handling"""
-    try:
-        # Try Upstox first (if available in your setup)
-        # For now, using yfinance as fallback
-        ticker = yf.Ticker(f"{symbol}.NS")
-        df = ticker.history(period=period, interval=interval)
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        # Standardize column names
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        df.columns = [str(c).strip().title() for c in df.columns]
-        
-        # Ensure required columns exist
-        required = ["Open", "High", "Low", "Close", "Volume"]
-        if all(col in df.columns for col in required):
-            df.index = pd.to_datetime(df.index).tz_localize(None)
-            return df[required]
-        
-        return pd.DataFrame()
-    
-    except Exception:
-        return pd.DataFrame()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  4. OPTIMIZED CORE SCANNER FUNCTION
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def scan_cpr_multi_tf_optimized(
-    symbols: List[str],
-    interval: str,
-    period: str,
-    max_stocks: int = 200,
-    min_strength: int = 60,
-    progress_callback=None
-) -> pd.DataFrame:
-    """
-    Optimized CPR scanner with:
-    - Batch data fetching
-    - Parallel processing
-    - Progress tracking
-    - Early filtering
-    
-    Args:
-        symbols: List of symbols to scan
-        interval: Timeframe (15m, 30m, 1h, 1d, etc.)
-        period: Historical period
-        max_stocks: Maximum stocks to scan
-        min_strength: Minimum strength threshold (60-100)
-        progress_callback: Function to update progress
-    
-    Returns:
-        DataFrame with scan results
-    """
-    results = []
-    symbols = symbols[:max_stocks]
-    
-    # Step 1: Batch fetch OHLCV data
-    if progress_callback:
-        progress_callback(0.1, "Fetching market data...")
-    
-    ohlcv_data = batch_fetch_ohlcv(symbols, interval, period)
-    
-    if not ohlcv_data:
-        return pd.DataFrame()
-    
-    # Step 2: Process each symbol
-    total = len(ohlcv_data)
-    for idx, (symbol, df) in enumerate(ohlcv_data.items()):
-        try:
-            if progress_callback and idx % 10 == 0:
-                progress = 0.1 + (0.8 * idx / total)
-                progress_callback(progress, f"Analyzing {symbol}...")
-            
-            # Run full analysis
-            signal = _analyze_single_stock(symbol, df, interval)
-            
-            if signal and signal.get("Strength%", 0) >= min_strength:
-                results.append(signal)
-        
-        except Exception:
-            continue
-    
-    if progress_callback:
-        progress_callback(1.0, "Scan complete!")
-    
-    return pd.DataFrame(results) if results else pd.DataFrame()
-
-
-def _analyze_single_stock(symbol: str, df: pd.DataFrame, interval: str) -> Optional[Dict]:
-    """
-    Analyze a single stock and generate signal dictionary.
-    
-    This is a simplified version - you should integrate with your existing
-    full_pivot_boss_analysis() function for complete analysis.
-    """
-    try:
-        # Get current price
-        ltp = float(df["Close"].iloc[-1])
-        
-        # Calculate CPR
-        cpr = compute_cpr_safe(df)
-        if not cpr:
-            return None
-        
-        # Calculate indicators (simplified - use your existing compute_indicators)
-        close = df["Close"]
-        high = df["High"]
-        low = df["Low"]
-        
-        # RSI
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = gain / loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        rsi_val = round(float(rsi.iloc[-1]), 1) if not np.isnan(rsi.iloc[-1]) else 50.0
-        
-        # ATR
-        tr = pd.concat([
-            high - low,
-            (high - close.shift()).abs(),
-            (low - close.shift()).abs()
-        ], axis=1).max(axis=1)
-        atr = float(tr.rolling(14).mean().iloc[-1])
-        
-        # Volume analysis
-        avg_vol = float(df["Volume"].rolling(20).mean().iloc[-1])
-        curr_vol = float(df["Volume"].iloc[-1])
-        vol_surge = "✅" if curr_vol > avg_vol * 1.5 else "—"
-        
-        # Determine bias
-        tc, bc, pivot = cpr["TC"], cpr["BC"], cpr["Pivot"]
-        
-        if ltp > tc:
-            side = "BUY"
-            bias = "Bullish"
-        elif ltp < bc:
-            side = "SELL"
-            bias = "Bearish"
-        else:
-            side = "NEUTRAL"
-            bias = "Neutral"
-        
-        # Calculate entry, SL, targets
-        if side == "BUY":
-            entry = round(ltp, 2)
-            sl = round(max(bc, ltp - (atr * 0.8)), 2)
-            t1 = round(min(tc + (tc - bc), ltp + (atr * 2)), 2)
-            t2 = round(ltp + (atr * 3), 2)
-        elif side == "SELL":
-            entry = round(ltp, 2)
-            sl = round(min(tc, ltp + (atr * 0.8)), 2)
-            t1 = round(max(bc - (tc - bc), ltp - (atr * 2)), 2)
-            t2 = round(ltp - (atr * 3), 2)
-        else:
-            return None  # Skip neutral signals
-        
-        risk = abs(entry - sl)
-        reward = abs(t1 - entry)
-        rr = round(reward / risk, 2) if risk > 0 else 0
-        
-        # Simple candlestick pattern detection
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
-        body_size = abs(last["Close"] - last["Open"])
-        range_size = last["High"] - last["Low"]
-        
-        if body_size / range_size > 0.7 and last["Close"] > last["Open"]:
-            pattern = "Bullish Engulfing"
-        elif body_size / range_size > 0.7 and last["Close"] < last["Open"]:
-            pattern = "Bearish Engulfing"
-        elif body_size / range_size < 0.3:
-            pattern = "Doji"
-        else:
-            pattern = "—"
-        
-        # Calculate strength score (simplified)
-        strength = 50
-        if cpr["Width%"] < 0.25: strength += 20
-        if vol_surge == "✅": strength += 10
-        if (side == "BUY" and rsi_val > 50) or (side == "SELL" and rsi_val < 50): strength += 15
-        if rr >= 2.0: strength += 10
-        strength = min(strength, 100)
-        
-        # Build signal dictionary
-        signal = {
-            "Symbol": symbol,
-            "LTP": ltp,
-            "side": side,
-            "Pattern": pattern,
-            "Candle": pattern,
-            "Entry": entry,
-            "SL": sl,
-            "T1": t1,
-            "T2": t2,
-            "RR1": rr,
-            "RR2": round((t2 - entry) / risk, 2) if risk > 0 else 0,
-            "Strength%": strength,
-            "RSI": rsi_val,
-            "HMA": "▲" if side == "BUY" else "▼",
-            "Vol Surge": vol_surge,
-            "CPR Width%": cpr["Width%"],
-            "CPR Type": cpr["Bias"].split("—")[0].strip(),
-            "Day Type": cpr["Day Type"],
-            "Virgin CPR": "—",
-            "TC": tc,
-            "BC": bc,
-            "Pivot P": pivot,
-            "ATR": round(atr, 2),
-            "CPR Overlap": False,
-            "Osc Cross": "▲" if side == "BUY" else "▼",
-            "Avg Vol(20)": int(avg_vol),
-            "Rationale": f"{bias} setup · CPR {cpr['Bias'].split('—')[0].strip()} · RSI {rsi_val:.0f}"
-        }
-        
-        return signal
-    
-    except Exception as e:
-        print(f"Analysis error for {symbol}: {e}")
-        return None
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  5. BACKGROUND SCANNER WITH THREAD-SAFE QUEUE
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def _run_bg_scan_optimized(market_list: List[str], timeframes: List[Tuple[str, str, str, str]]):
-    """
-    Background scanner that runs in a separate thread.
-    
-    Args:
-        market_list: List of symbols to scan
-        timeframes: List of (tf_tag, tf_label, interval, period) tuples
-    """
-    with _SCAN_LOCK:
-        if st.session_state.get("_bg_scan_running"):
-            return  # Already running
-        st.session_state["_bg_scan_running"] = True
-    
-    def _scan_worker():
-        """Worker function that runs in background thread"""
-        try:
-            all_signals = []
-            
-            for tf_tag, tf_label, interval, period in timeframes:
-                try:
-                    df_signals = scan_cpr_multi_tf_optimized(
-                        market_list[:100],  # Limit for BG scan
-                        interval, period, max_stocks=100, min_strength=60
-                    )
-                    
-                    if not df_signals.empty:
-                        df_signals["_tf_tag"] = tf_tag
-                        df_signals["_tf_label"] = tf_label
-                        
-                        # Calculate rank scores
-                        df_signals["_rank_score"] = df_signals.apply(
-                            lambda row: _signal_rank_score_global_v2(row.to_dict(), tf_tag),
-                            axis=1
-                        )
-                        
-                        all_signals.append(df_signals)
-                
-                except Exception as e:
-                    print(f"TF scan error ({tf_tag}): {e}")
-                    continue
-            
-            # Combine and rank all signals
-            if all_signals:
-                combined = pd.concat(all_signals, ignore_index=True)
-                combined = combined.sort_values("_rank_score", ascending=False)
-                
-                # Put results in thread-safe queue
-                _SCAN_QUEUE.put({
-                    "signals": combined.to_dict("records"),
-                    "timestamp": datetime.now(),
-                    "count": len(combined),
-                    "top_score": float(combined["_rank_score"].max()) if not combined.empty else 0
-                })
-        
-        except Exception as e:
-            print(f"Background scan error: {e}")
-        
-        finally:
-            with _SCAN_LOCK:
-                st.session_state["_bg_scan_running"] = False
-    
-    # Start background thread
-    thread = threading.Thread(target=_scan_worker, daemon=True)
-    thread.start()
-
-
-def maybe_run_bg_scan_optimized(market_list: List[str]):
-    """
-    Check if background scan should run, trigger if needed.
-    Scans every 5 minutes during market hours.
-    """
-    last_run = st.session_state.get("_bg_scan_last_run", 0)
-    now = time.time()
-    
-    # Check if market is open (9:15 AM - 3:30 PM IST)
-    ist_hour = (datetime.now().hour + 5) % 24  # Rough IST conversion
-    ist_minute = datetime.now().minute
-    market_open = (9 <= ist_hour < 15) or (ist_hour == 15 and ist_minute <= 30)
-    
-    # Run every 5 minutes (300 seconds) during market hours
-    if market_open and (now - last_run > 300):
-        st.session_state["_bg_scan_last_run"] = now
-        
-        # Define timeframes to scan
-        timeframes = [
-            ("15m", "⚡ 15 Min", "15m", "5d"),
-            ("30m", "⏱️ 30 Min", "30m", "10d"),
-            ("1h", "🕐 1 Hour", "1h", "30d"),
-            ("1d", "📅 1 Day", "1d", "90d"),
-        ]
-        
-        _run_bg_scan_optimized(market_list, timeframes)
-    
-    # Check for completed scan results
-    if not _SCAN_QUEUE.empty():
-        scan_data = _SCAN_QUEUE.get()
-        st.session_state["_bg_scan_results"] = scan_data["signals"]
-        st.session_state["_bg_scan_timestamp"] = scan_data["timestamp"]
-        st.session_state["_bg_scan_count"] = scan_data["count"]
-        
-        # Trigger alert for high-score signals
-        if scan_data["top_score"] >= 180:
-            st.session_state["_high_score_alert"] = True
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  6. SCANNER PRESETS
-# ══════════════════════════════════════════════════════════════════════════════
-
-SCANNER_PRESETS = {
-    "🚀 Intraday Momentum": {
-        "timeframes": ["⚡ 15 Min", "⏱️ 30 Min"],
-        "min_strength": 75,
-        "min_rr": 2.0,
-        "cpr_width_max": 0.3,
-        "patterns": ["Bullish Engulfing", "Bearish Engulfing", "Hammer"],
-        "description": "High-momentum intraday setups with tight CPR and strong patterns"
-    },
-    "📈 Swing Breakouts": {
-        "timeframes": ["🕐 1 Hour", "📅 1 Day"],
-        "min_strength": 70,
-        "min_rr": 2.5,
-        "cpr_width_max": 0.5,
-        "patterns": ["Morning Star", "Evening Star", "Bullish Engulfing"],
-        "description": "Multi-day swing trades with strong trend potential"
-    },
-    "💎 Virgin CPR Plays": {
-        "timeframes": ["📅 1 Day", "📆 1 Week"],
-        "min_strength": 65,
-        "min_rr": 2.0,
-        "cpr_width_max": 1.0,
-        "require_virgin_cpr": True,
-        "description": "Price approaching untouched CPR levels (high conviction)"
-    },
-    "⚡ Scalping Opportunities": {
-        "timeframes": ["⚡ 15 Min"],
-        "min_strength": 80,
-        "min_rr": 1.5,
-        "cpr_width_max": 0.2,
-        "require_volume_surge": True,
-        "description": "Ultra-short-term trades with narrow CPR and volume confirmation"
-    },
-    "🎯 High Probability": {
-        "timeframes": ["⚡ 15 Min", "⏱️ 30 Min", "🕐 1 Hour", "📅 1 Day"],
-        "min_strength": 85,
-        "min_rr": 3.0,
-        "cpr_width_max": 0.25,
-        "description": "Only the highest-scoring signals across all timeframes"
-    }
-}
-
-
-def apply_scanner_preset(preset_name: str, scan_results: pd.DataFrame) -> pd.DataFrame:
-    """Apply a preset filter to scan results"""
-    if preset_name not in SCANNER_PRESETS or scan_results.empty:
-        return scan_results
-    
-    preset = SCANNER_PRESETS[preset_name]
-    filtered = scan_results.copy()
-    
-    # Apply filters
-    if "timeframes" in preset:
-        filtered = filtered[filtered["_tf_label"].isin(preset["timeframes"])]
-    
-    if "min_strength" in preset:
-        filtered = filtered[filtered["Strength%"] >= preset["min_strength"]]
-    
-    if "min_rr" in preset:
-        filtered = filtered[filtered["RR1"] >= preset["min_rr"]]
-    
-    if "cpr_width_max" in preset:
-        filtered = filtered[filtered["CPR Width%"] <= preset["cpr_width_max"]]
-    
-    if preset.get("require_virgin_cpr"):
-        filtered = filtered[filtered["Virgin CPR"].str.contains("⭐|Yes", na=False)]
-    
-    if preset.get("require_volume_surge"):
-        filtered = filtered[filtered["Vol Surge"].str.contains("✅", na=False)]
-    
-    if "patterns" in preset:
-        filtered = filtered[filtered["Pattern"].isin(preset["patterns"])]
-    
-    return filtered
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  7. ALERT SYSTEM
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def check_high_score_alerts(scan_results: pd.DataFrame, score_threshold: int = 180) -> List[Dict]:
-    """
-    Check for high-scoring signals and generate alerts.
-    
-    Args:
-        scan_results: DataFrame with scan results
-        score_threshold: Minimum score to trigger alert (default: 180)
-    
-    Returns:
-        List of alert dictionaries
-    """
-    if scan_results.empty:
-        return []
-    
-    alerts = []
-    high_score_signals = scan_results[scan_results["_rank_score"] >= score_threshold]
-    
-    for _, row in high_score_signals.iterrows():
-        alert = {
-            "symbol": row["Symbol"],
-            "score": row["_rank_score"],
-            "timeframe": row["_tf_label"],
-            "side": row["side"],
-            "entry": row["Entry"],
-            "target": row["T1"],
-            "sl": row["SL"],
-            "rr": row["RR1"],
-            "strength": row["Strength%"],
-            "message": f"🚨 HIGH-SCORE SIGNAL: {row['Symbol']} [{row['_tf_label']}] "
-                      f"Score: {row['_rank_score']:.0f} | {row['side']} @ ₹{row['Entry']:.2f} "
-                      f"| T1: ₹{row['T1']:.2f} | SL: ₹{row['SL']:.2f} | R:R {row['RR1']}:1",
-            "timestamp": datetime.now()
-        }
-        alerts.append(alert)
-    
-    return alerts
-
-
-def display_alerts(alerts: List[Dict]):
-    """Display alerts in the UI"""
-    if not alerts:
-        return
-    
-    st.markdown("""
-    <div style='background:#fff3cd;border:2px solid #ffc107;border-radius:10px;
-                padding:1rem;margin-bottom:1rem;animation:pulse 2s infinite;'>
-        <div style='font-family:DM Sans,sans-serif;font-size:1.1rem;font-weight:700;
-                    color:#856404;margin-bottom:0.5rem;'>
-            🚨 HIGH-SCORE ALERTS ({})
-        </div>
-    </div>
-    """.format(len(alerts)), unsafe_allow_html=True)
-    
-    for alert in alerts:
-        st.warning(alert["message"])
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  8. EXPORT FUNCTIONALITY
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def export_scan_results_csv(scan_results: pd.DataFrame) -> bytes:
-    """Export scan results to CSV"""
-    if scan_results.empty:
-        return b""
-    
-    # Select key columns for export
-    export_cols = [
-        "Symbol", "LTP", "side", "Pattern", "Entry", "SL", "T1", "T2",
-        "RR1", "Strength%", "RSI", "HMA", "Vol Surge",
-        "CPR Width%", "CPR Type", "Day Type", "Virgin CPR",
-        "_tf_label", "_rank_score", "Rationale"
-    ]
-    
-    export_cols = [col for col in export_cols if col in scan_results.columns]
-    export_df = scan_results[export_cols].copy()
-    
-    # Rename columns for clarity
-    export_df = export_df.rename(columns={
-        "_tf_label": "Timeframe",
-        "_rank_score": "Rank Score"
-    })
-    
-    # Convert to CSV
-    csv_buffer = io.StringIO()
-    export_df.to_csv(csv_buffer, index=False)
-    return csv_buffer.getvalue().encode()
-
-
-def export_scan_results_excel(scan_results: pd.DataFrame) -> bytes:
-    """Export scan results to Excel with formatting"""
-    if scan_results.empty:
-        return b""
-    
-    # Create Excel writer
-    excel_buffer = io.BytesIO()
-    
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        # Main signals sheet
-        export_cols = [
-            "Symbol", "LTP", "side", "Pattern", "Entry", "SL", "T1", "T2",
-            "RR1", "Strength%", "RSI", "HMA", "Vol Surge",
-            "CPR Width%", "CPR Type", "Day Type", "_tf_label", "_rank_score"
-        ]
-        export_cols = [col for col in export_cols if col in scan_results.columns]
-        
-        signals_df = scan_results[export_cols].copy()
-        signals_df = signals_df.rename(columns={
-            "_tf_label": "Timeframe",
-            "_rank_score": "Rank Score"
-        })
-        
-        signals_df.to_excel(writer, sheet_name="Signals", index=False)
-        
-        # Summary sheet
-        summary_data = {
-            "Metric": [
-                "Total Signals",
-                "BUY Signals",
-                "SELL Signals",
-                "Avg Strength%",
-                "Avg R:R",
-                "Avg Rank Score",
-                "High Score Signals (>180)"
-            ],
-            "Value": [
-                len(scan_results),
-                len(scan_results[scan_results["side"] == "BUY"]),
-                len(scan_results[scan_results["side"] == "SELL"]),
-                round(scan_results["Strength%"].mean(), 1),
-                round(scan_results["RR1"].mean(), 2),
-                round(scan_results["_rank_score"].mean(), 1),
-                len(scan_results[scan_results["_rank_score"] >= 180])
-            ]
-        }
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-    
-    excel_buffer.seek(0)
-    return excel_buffer.getvalue()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  9. FILTER PERSISTENCE
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def run_manual_scan(
-    symbols: List[str],
-    timeframes: List[str],
-    market_name: str = "Nifty 500"
-) -> pd.DataFrame:
-    """
-    Run a manual scan with progress indicator.
-    
-    Args:
-        symbols: List of symbols to scan
-        timeframes: List of timeframe labels (e.g., ["⚡ 15 Min", "🕐 1 Hour"])
-        market_name: Display name for the market
-    
-    Returns:
-        Combined DataFrame with all scan results
-    """
-    # Map timeframe labels to intervals
-    tf_map = {
-        "⚡ 15 Min": ("15m", "15m", "5d"),
-        "⏱️ 30 Min": ("30m", "30m", "10d"),
-        "🕐 1 Hour": ("1h", "1h", "30d"),
-        "📅 1 Day": ("1d", "1d", "90d"),
-        "📆 1 Week": ("1wk", "1wk", "1y"),
-        "📆 1 Month": ("1mo", "1mo", "2y")
-    }
-    
-    all_results = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, tf_label in enumerate(timeframes):
-        if tf_label not in tf_map:
-            continue
-        
-        tf_tag, interval, period = tf_map[tf_label]
-        
-        status_text.text(f"Scanning {market_name} — {tf_label}...")
-        
-        def update_progress(pct, msg):
-            overall_progress = (idx / len(timeframes)) + (pct / len(timeframes))
-            progress_bar.progress(min(overall_progress, 0.99))
-            status_text.text(f"{msg} [{tf_label}]")
-        
-        # Run scan for this timeframe
-        df_signals = scan_cpr_multi_tf_optimized(
-            symbols, interval, period,
-            max_stocks=200,
-            progress_callback=update_progress
-        )
-        
-        if not df_signals.empty:
-            df_signals["_tf_tag"] = tf_tag
-            df_signals["_tf_label"] = tf_label
-            
-            # Calculate rank scores
-            df_signals["_rank_score"] = df_signals.apply(
-                lambda row: _signal_rank_score_global_v2(row.to_dict(), tf_tag),
-                axis=1
-            )
-            
-            all_results.append(df_signals)
-    
-    progress_bar.progress(1.0)
-    status_text.text("✅ Scan complete!")
-    time.sleep(0.5)
-    progress_bar.empty()
-    status_text.empty()
-    
-    if all_results:
-        combined = pd.concat(all_results, ignore_index=True)
-        combined = combined.sort_values("_rank_score", ascending=False)
-        return combined
-    
-    return pd.DataFrame()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  END OF OPTIMIZED SCANNER MODULE
-# ══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("✅ Optimized Scanner Module Loaded Successfully")
-    print("📊 All 10 improvements implemented:")
-    print("   1. Balanced scoring algorithm")
-    print("   2. Safe CPR calculation")
-    print("   3. Batch fetching with parallel processing")
-    print("   4. Optimized core scanner")
-    print("   5. Background scanner with thread-safe queue")
-    print("   6. Scanner presets (5 built-in)")
-    print("   7. High-score alert system")
-    print("   8. CSV/Excel export")
-    print("   9. Filter persistence")
-    print("   10. Progress indicators")
-
-
-def save_scanner_filters(filters: Dict):
-    """Save scanner filters to session state"""
-    st.session_state["_scanner_filters_saved"] = filters
-    st.session_state["_scanner_filters_timestamp"] = datetime.now()
-
-
-def load_scanner_filters() -> Dict:
-    """Load saved scanner filters"""
-    return st.session_state.get("_scanner_filters_saved", {
-        "timeframes": ["⚡ 15 Min", "⏱️ 30 Min"],
-        "side": "All",
-        "min_strength": 70,
-        "min_rr": 1.5,
-        "preset": "None"
-    })
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  10. INTEGRATION HELPER FUNCTION
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-
-# Aliases for backward compatibility
-compute_cpr = compute_cpr_safe
-_signal_rank_score_global = _signal_rank_score_global_v2
-scan_cpr_multi_tf = scan_cpr_multi_tf_optimized
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1339,39 +422,34 @@ def upstox_get_funds() -> dict:
 
 def upstox_get_live_ltp_batch(symbols: list) -> dict:
     """
-    Fetch live LTP for multiple symbols via Upstox API.
-    Automatically chunks into batches of 50 (Upstox API limit).
-    Returns {symbol: ltp} dict.
+    Fetch live LTP for multiple symbols in one Upstox API call.
+    Returns {symbol: ltp} dict. Uses market-quote/ltp endpoint for speed.
+    No @st.cache_data — uses session_state for token (can't cache).
     """
     if not _upstox_connected() or not symbols:
         return {}
-    result = {}
-    chunk_size = 50
-    for i in range(0, len(symbols), chunk_size):
-        chunk = symbols[i:i+chunk_size]
-        try:
-            keys = ",".join([_upstox_instrument_key(s) for s in chunk])
-            r = requests.get(
-                f"{UPSTOX_BASE}/market-quote/ltp",
-                headers={
-                    "Authorization": f"Bearer {st.session_state.get('upstox_access_token','')}",
-                    "Accept": "application/json",
-                },
-                params={"instrument_key": keys},
-                timeout=8,
-            )
-            if r.status_code == 200:
-                data = r.json().get("data", {})
-                for key, val in data.items():
-                    sym = key.split(":")[-1].split("|")[-1]
-                    result[sym] = round(float(val.get("last_price", 0)), 2)
-        except Exception:
-            pass
-    return result
-
-def upstox_get_ltp_all(symbols: list) -> dict:
-    """Get LTP for a large list of symbols — wraps batch function with chunking."""
-    return upstox_get_live_ltp_batch(symbols)
+    try:
+        keys = ",".join([_upstox_instrument_key(s) for s in symbols[:50]])
+        r = requests.get(
+            f"{UPSTOX_BASE}/market-quote/ltp",
+            headers={
+                "Authorization": f"Bearer {st.session_state.get('upstox_access_token','')}",
+                "Accept": "application/json",
+            },
+            params={"instrument_key": keys},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            result = {}
+            for key, val in data.items():
+                # key is like "NSE_EQ:RELIANCE"
+                sym = key.split(":")[-1].split("|")[-1]
+                result[sym] = round(float(val.get("last_price", 0)), 2)
+            return result
+    except Exception:
+        pass
+    return {}
 
 def _upstox_connected() -> bool:
     """Return True if a valid Upstox access token is in session state."""
@@ -1486,29 +564,9 @@ UPSTOX_INSTRUMENT_KEYS = {
     "BEL":         "NSE_EQ|INE263A01024",
 }
 
-def _upstox_instrument_key(symbol: str, exchange: str = "NSE") -> str:
-    """
-    Get Upstox instrument key for a symbol.
-    Priority: (1) Dynamic instrument master (full NSE), (2) Hardcoded ISIN map, (3) Symbol fallback.
-    Supports BSE_EQ as well for BSE-primary stocks.
-    """
-    sym = symbol.upper()
-    if exchange == "BSE":
-        return f"BSE_EQ|{sym}"
-    # Try dynamic master first (downloaded from Upstox daily)
-    master = st.session_state.get("_upstox_master", {})
-    if not master:
-        # Lazy-load the master once into session state
-        try:
-            master = fetch_upstox_instrument_master()
-            if master:
-                st.session_state["_upstox_master"] = master
-        except Exception:
-            pass
-    if master and sym in master:
-        return master[sym]
-    # Fallback to hardcoded ISIN map
-    return UPSTOX_INSTRUMENT_KEYS.get(sym, f"NSE_EQ|{sym}")
+def _upstox_instrument_key(symbol: str) -> str:
+    """Get Upstox instrument key for a symbol. Returns ISIN-based key if known."""
+    return UPSTOX_INSTRUMENT_KEYS.get(symbol.upper(), f"NSE_EQ|{symbol.upper()}")
 
 # Correct Upstox interval strings
 UPSTOX_INTERVAL_MAP = {
@@ -2011,22 +1069,29 @@ def _load_credentials():
             continue
 
     if data:
+        # Broker keys (excluding token — handled separately below)
         for k in ["upstox_api_key","upstox_api_secret",
                   "zerodha_api_key","zerodha_api_secret","zerodha_access_token",
                   "broker","broker_connected"]:
             if k in data and not st.session_state.get(k):
                 st.session_state[k] = data[k]
-        # Token always restored — empty string must not block it
+        # Upstox token — ALWAYS restore from file.
+        # Empty string in session_state (after logout/refresh) must NOT block restore.
+        # Token is pasted once at 9 AM and must survive logout/refresh all day.
         if data.get("upstox_access_token"):
             st.session_state["upstox_access_token"] = data["upstox_access_token"]
+        # Telegram
         if "telegram_cfg" in data and not st.session_state.get("telegram_cfg"):
             st.session_state["telegram_cfg"] = data["telegram_cfg"]
+        # SL filter settings
         for k in ["ft_sl_min_pct","ft_sl_max_pct","ft_sl_filter_enabled"]:
             if k in data and k not in st.session_state:
                 st.session_state[k] = data[k]
+        # Scanner market preference
         for k in ["scanner_market","scanner_market_global"]:
             if k in data and k not in st.session_state:
                 st.session_state[k] = data[k]
+        # Tab visibility — restore which pages are toggled on
         if data.get("tab_visibility") and "tab_visibility" not in st.session_state:
             st.session_state["tab_visibility"] = data["tab_visibility"]
 
@@ -2068,45 +1133,32 @@ def _load_credentials():
 
 def _load_session():
     """
-    Restore session using st.query_params (URL token) — survives every Streamlit Cloud
-    refresh and container restart. Falls back to disk for local dev.
+    Load persisted session from disk on every app startup/refresh.
+    Force-restores auth state so browser refresh never logs the user out.
+    Reads from all 3 storage locations and picks the freshest valid session.
     """
-    _restored = False
-    # ── PRIMARY: URL query param — survives refresh on Streamlit Cloud ────────
-    try:
-        _tok = st.query_params.get("_s", "")
-        if _tok:
-            import base64 as _b64
-            _data = json.loads(_b64.b64decode(_tok.encode()).decode())
-            if _data.get("logged_in") and _data.get("username"):
-                for k in ["logged_in","username","user_email","user_phone","user_id","current_page"]:
-                    if k in _data: st.session_state[k] = _data[k]
-                for k in ["watchlist","price_alerts","pending_signals",
-                          "tab_visibility","scanner_market","scanner_market_global"]:
-                    if _data.get(k) and not st.session_state.get(k):
-                        st.session_state[k] = _data[k]
-                _restored = True
-    except Exception:
-        pass
-    # ── FALLBACK: disk (local dev / first run) ────────────────────────────────
-    if not _restored:
-        data = {}
-        for path in _all_session_paths():
-            try:
-                if os.path.exists(path):
-                    with open(path) as f:
-                        d = json.load(f)
-                    if d and d.get("logged_in"):
-                        data = d; break
-            except Exception:
-                continue
-        if data:
-            for k in ["logged_in","username","user_email","user_phone","user_id","current_page"]:
-                if k in data: st.session_state[k] = data[k]
-            for k in ["watchlist","price_alerts","pending_signals",
-                      "tab_visibility","scanner_market","scanner_market_global"]:
-                if data.get(k) and not st.session_state.get(k):
-                    st.session_state[k] = data[k]
+    data = {}
+    # Try all session file locations — pick freshest valid one
+    for path in _all_session_paths():
+        try:
+            if os.path.exists(path):
+                mtime = os.path.getmtime(path)
+                with open(path) as f:
+                    d = json.load(f)
+                if d and d.get("logged_in"):  # only restore if it was a logged-in session
+                    data = d
+                    break
+        except Exception:
+            continue
+
+    if data:
+        # Force-overwrite auth keys — even if defaults already set logged_in=False
+        for k in ["logged_in", "username", "user_email", "user_phone",
+                  "user_id", "current_page"]:
+            if k in data:
+                st.session_state[k] = data[k]
+
+    # Always load broker credentials (persisted permanently)
     _load_credentials()
 
 
@@ -2123,10 +1175,11 @@ def _save_credentials():
                  # Scanner market preference
                  "scanner_market","scanner_market_global",
                  ]}
-        if st.session_state.get("telegram_cfg"):
-            data["telegram_cfg"] = st.session_state["telegram_cfg"]
+        # Persist tab visibility toggles so they survive logout/refresh
         if st.session_state.get("tab_visibility"):
             data["tab_visibility"] = st.session_state["tab_visibility"]
+        if st.session_state.get("telegram_cfg"):
+            data["telegram_cfg"] = st.session_state["telegram_cfg"]
         data["creds_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         payload = json.dumps(data)
         for path in _all_creds_paths():
@@ -2165,28 +1218,17 @@ def _upstox_token_expired() -> bool:
     return False
 
 def _save_session():
-    """Persist session to URL query param (primary) + disk (fallback)."""
+    """Persist auth state to all 3 storage locations — survives refresh/restart."""
     try:
         data = {k: st.session_state.get(k,"") for k in
-                ["logged_in","username","user_email","user_phone","user_id","current_page"]}
-        for k in ["watchlist","price_alerts","pending_signals",
-                  "tab_visibility","scanner_market","scanner_market_global"]:
-            v = st.session_state.get(k)
-            if v: data[k] = v
-        data["_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        # PRIMARY: URL token — survives Streamlit Cloud restarts
-        try:
-            import base64 as _b64
-            st.query_params["_s"] = _b64.b64encode(
-                json.dumps(data, default=str).encode()).decode()
-        except Exception:
-            pass
-        # FALLBACK: disk
-        payload = json.dumps(data, default=str)
+                ["logged_in","username","user_email","user_phone",
+                 "user_id","current_page"]}
+        payload = json.dumps(data)
         for path in _all_session_paths():
             try:
                 os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-                with open(path, "w") as f: f.write(payload)
+                with open(path, "w") as f:
+                    f.write(payload)
             except Exception:
                 pass
         _save_credentials()
@@ -2194,12 +1236,11 @@ def _save_session():
         pass
 
 def _clear_session():
-    """Clear URL token + disk files on logout."""
-    try: st.query_params.pop("_s", None)
-    except Exception: pass
+    """Delete persisted session from ALL 3 storage locations on logout."""
     for path in _all_session_paths():
         try:
-            if os.path.exists(path): os.remove(path)
+            if os.path.exists(path):
+                os.remove(path)
         except Exception:
             pass
 
@@ -2297,7 +1338,7 @@ def fetch_nifty200_list() -> list:
         df.columns = df.columns.str.strip()
         return df["Symbol"].dropna().tolist()
     except Exception:
-        # Hardcoded Nifty 200 fallback (top liquid stocks — verified June 2025)
+        # Hardcoded Nifty 200 fallback (top liquid stocks)
         return [
             "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
             "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
@@ -2307,23 +1348,23 @@ def fetch_nifty200_list() -> list:
             "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","PIDILITIND","SIEMENS",
             "DABUR","GODREJCP","BERGEPAINT","HAVELLS","MUTHOOTFIN","LUPIN","BIOCON","TORNTPHARM",
             "BOSCHLTD","COLPAL","MARICO","ICICIPRULI","SBILIFE","HDFCLIFE",
-            "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHH",
+            "SHREECEM","AMBUJACEM","ACC","VEDL","SAIL","NMDC","IOCL","HINDPETRO","PGHL",
             "TATAPOWER","ADANIENT","ADANITRANS","ADANIGREEN",
-            "NAUKRI","ZOMATO","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
+            "NAUKRI","ZOMATO","PAYTM","DMART","IRCTC","MOTHERSON","BALKRISIND","CONCOR",
             "CHOLAFIN","MANAPPURAM","RECLTD","PFC","CANBK","BANKBARODA","PNB","FEDERALBNK",
-            "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","VOLTAS",
-            "BLUEDART","DELHIVERY","ZYDUSLIFE","ALKEM","AUROPHARMA","GLENMARK","IPCA",
-            "LALPATHLAB","METROPOLIS","FORTIS","MAXHEALTH","NARAYANA",
-            "AARTIIND","DEEPAKNI","SRF","AIAENG","CUMMINSIND",
+            "IDFCFIRSTB","RBLBANK","BANDHANBNK","INDHOTEL","JUBLFOOD","DOMINOS","VOLTAS",
+            "WHIRLPOOL","BLUEDART","DELHIVERY","ZYDUSLIFE","ALKEM","AUROPHARMA","CADILAHC",
+            "GLENMARK","IPCA","LALPATHLAB","METROPOLIS","THYROCARE","FORTIS","MAXHEALTH",
+            "NARAYANA","AARTIIND","DEEPAKNI","SRF","PIDILITIND","AIAENG","CUMMINSIND",
             "THERMAX","ABB","BHEL","BEL","HAL","BEML","MFSL","LICHSGFIN","HDFCAMC","NIPPONLIFE",
             "UTIAMC","ABCAPITAL","ICICIGI","NIACL","GICRE","STARHEALTH","PGHH","EMAMILTD",
             "JYOTHYLAB","VSTIND","RADICO","UNITDSPR","TATACOMM","LTTS","MPHASIS","COFORGE",
-            "PERSISTENT","ZENSARTECH","KPITTECH","TATAELXSI","OFSS",
-            "RAMCOCEM","JKCEMENT","BIRLASOFT","SRF","DEEPAKNI","AARTIIND","CUMMINSIND","THERMAX",
-            "SRTRANSFIN","SUNDARMFIN","AUBANK","UJJIVAN","EQUITAS",
-            "CROMPTON","POLYCAB","KEI","KPIL","NCC",
-            "PNCINFRA","IRB","ASHOKA","KNRCON","GPPL","ADANIPORTS",
-            "RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
+            "PERSISTENT","ZENSARTECH","HEXAWARE","KPITTECH","TATAELXSI","INFY","OFSS",
+            "RAMCOCEM","JKCEMENT","PRISM","HEIDELBERG","BIRLASOFT","MINDTREE","SRTRANSFIN",
+            "SUNDARMFIN","SCUF","AUBANK","UJJIVAN","EQUITAS","SURYODAY","ESAFSFB",
+            "CROMPTON","ORIENTELEC","POLYCAB","FINOLEX","KEI","STERLITE","KPIL","NCC","AHLUCONT",
+            "PNCINFRA","IRB","SADBHAV","ASHOKA","KNRCON","GPPL","ADANIPORTS",
+            "MUNDRAPORT","RITES","IRFC","HUDCO","NBCC","DLF","PRESTIGE","OBEROIRLTY",
             "GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA","SUNTECK","MAHINDCIE","SCHAEFFLER",
         ]
 
@@ -2351,39 +1392,14 @@ _NASDAQ100_SYMBOLS = [
     "AFRM","DASH","MDB","SNOW","BILL","RIVN","LCID","U","TWLO","OKTA",
 ]
 
-@st.cache_data(ttl=3600)
-def fetch_nifty50_live() -> list:
-    """Fetch current Nifty 50 constituents from NSE (live — no hardcoding)."""
-    url = "https://archives.nseindia.com/content/indices/ind_nifty50list.csv"
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        syms = df["Symbol"].dropna().str.strip().tolist()
-        if len(syms) >= 40:
-            return syms
-    except Exception:
-        pass
-    # Fallback — current Nifty 50 (deduplicated, verified June 2025)
-    return [
-        "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
-        "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
-        "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
-        "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
-        "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
-        "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
-        "SBILIFE","SHRIRAMFIN","BEL","TRENT",
-    ]
-
-_NIFTY50_SYMBOLS = fetch_nifty50_live() if False else [
+_NIFTY50_SYMBOLS = [
     "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL",
     "KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI","WIPRO","ULTRACEMCO",
     "BAJFINANCE","NESTLEIND","TITAN","SUNPHARMA","POWERGRID","NTPC","TECHM","HCLTECH",
     "TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS","BAJAJFINSV",
     "HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT","BPCL","HEROMOTOCO",
     "BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM","ADANIENT","HDFCLIFE",
-    "SBILIFE","SHRIRAMFIN","BEL","TRENT",
+    "SBILIFE","SHRIRAMFIN","BEL","TRENT","WIPRO",
 ]
 
 # ── Nifty 100 = Nifty 50 + Next 50 most liquid large-caps ────────────────
@@ -2397,192 +1413,29 @@ _NIFTY100_SYMBOLS = _NIFTY50_SYMBOLS + [
     "TORNTPHARM","AUROPHARMA","IPCA","LALPATHLAB","ABB","BHEL","HAL","NHPC",
 ]
 
-@st.cache_data(ttl=3600)
-def fetch_nifty_midcap150() -> list:
-    """Fetch Nifty Midcap 150 symbols from NSE."""
-    url = "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv"
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        syms = df["Symbol"].dropna().str.strip().tolist()
-        if len(syms) >= 100:
-            return syms
-    except Exception:
-        pass
-    # Hardcoded fallback — verified top Midcap 150 stocks
-    return [
-        "ABFRL","ABIRLANUVO","ALKEM","APLAPOLLO","ASTRAL","AUBANK","BANDHANBNK",
-        "BANKINDIA","BATAINDIA","BHEL","BIOCON","BLUESTARCO","CANBK","CANFINHOME",
-        "CASTROLIND","CESC","CHOLAFIN","COLPAL","CONCOR","CROMPTON","CUMMINSIND",
-        "DABUR","DELHIVERY","EMAMILTD","ESCORTS","EXIDEIND","FEDERALBNK","GAIL",
-        "GLENMARK","GMRINFRA","GODREJCP","GODREJPROP","GRASIM","GSPL","HDFCAMC",
-        "HONAUT","IDFCFIRSTB","IOCL","IPCA","IRFC","JKCEMENT","JUBLFOOD","KAJARIACER",
-        "KANSAINER","KEI","KEC","KINETIC","KPITTECH","L&TFH","LALPATHLAB","LICHSGFIN",
-        "LICI","LTTS","LUPIN","M&MFIN","MANAPPURAM","MARICO","MAXHEALTH","MFSL",
-        "MPHASIS","MRPL","MUTHOOTFIN","NATIONALUM","NAVINFLUOR","NHPC","NMDC","NCC",
-        "OFSS","PAGEIND","PEL","PERSISTENT","PETRONET","PHOENIXLTD","PIDILITIND",
-        "POLICYBZR","POLYCAB","PNB","PRESTIGE","RADICO","RAJESHEXPO","RAMCOCEM",
-        "RECLTD","SAIL","SCHAEFFLER","SHREECEM","SIEMENS","SRF","STARHEALTH",
-        "SUNDARMFIN","SUNTV","SUPREMEIND","SYNGENE","TATACOMM","TATAPOWER","TATACHEM",
-        "THERMAX","TIINDIA","TORNTPHARM","TORNTPOWER","TRENT","TRIDENT","UJJIVAN",
-        "UNITDSPR","VEDL","VOLTAS","WHIRLPOOL","ZYDUSLIFE","ABB","ACC","AEGISCHEM",
-        "AARTIIND","ACCELYA","ADANIGREEN","ADANITRANS","AJANTPHARM","ALKYLAMINE",
-        "AMBUJACEM","APOLLOTYRE","ASAHIINDIA","ASTRAZEN","ATGL","BALKRISIND",
-        "BALRAMCHIN","BAJAJELEC","BASF","BEML","BERGEPAINT","BPCL","BSOFT",
-        "CAMPUS","CARBORUNIV","CCL","CDSL","CENTURYPLY","CGPOWER","CLEAN",
-        "COCHINSHIP","COFORGE","CRAFTSMAN","CREDITACC","CYIENT","DATAPATTNS",
-        "DEEPAKNI","DHANUKA","DIXON","DOMS","EIDPARRY","FIVESTAR","FLUOROCHEM",
-    ]
-
-@st.cache_data(ttl=3600)
-def fetch_nifty_smallcap250() -> list:
-    """Fetch Nifty Smallcap 250 symbols from NSE."""
-    url = "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv"
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        syms = df["Symbol"].dropna().str.strip().tolist()
-        if len(syms) >= 200:
-            return syms
-    except Exception:
-        pass
-    return []   # If fallback needed, rely on live fetch
-
-@st.cache_data(ttl=86400)
-def fetch_all_nse_symbols() -> list:
-    """Fetch complete NSE equity list (~1800+ symbols). Cached for 24h."""
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        col = next((c for c in df.columns if "SYMBOL" in c.upper()), None)
-        if col:
-            syms = df[col].dropna().str.strip().tolist()
-            return [s for s in syms if s and len(s) <= 20]
-    except Exception:
-        pass
-    return []
-
-@st.cache_data(ttl=3600)
-def fetch_fo_stocks() -> set:
-    """Fetch F&O eligible symbols from NSE. Returns a set for O(1) lookup."""
-    url = "https://archives.nseindia.com/content/fo/fo_mktlots.csv"
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        col = next((c for c in df.columns if "SYMBOL" in c.upper()), None)
-        if col:
-            return set(df[col].dropna().str.strip().tolist())
-    except Exception:
-        pass
-    # Fallback: known F&O stocks (top 100 by liquidity)
-    return {
-        "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL","KOTAKBANK",
-        "ITC","LT","AXISBANK","WIPRO","ULTRACEMCO","BAJFINANCE","TITAN","SUNPHARMA",
-        "HCLTECH","TATAMOTORS","ONGC","COALINDIA","JSWSTEEL","TATASTEEL","ADANIPORTS",
-        "BAJAJFINSV","HINDALCO","GRASIM","CIPLA","DIVISLAB","DRREDDY","EICHERMOT",
-        "BPCL","HEROMOTOCO","BRITANNIA","INDUSINDBK","M&M","APOLLOHOSP","TATACONSUM",
-        "ADANIENT","HDFCLIFE","SBILIFE","SHRIRAMFIN","BEL","TRENT","NTPC","POWERGRID",
-        "NESTLEIND","TECHM","MARUTI","ASIANPAINT","BAJAJ-AUTO","PIDILITIND","SIEMENS",
-        "HAVELLS","CHOLAFIN","RECLTD","PFC","BANKBARODA","CANBK","PNB","FEDERALBNK",
-        "IDFCFIRSTB","MUTHOOTFIN","LUPIN","TORNTPHARM","BOSCHLTD","COLPAL","MARICO",
-        "ZOMATO","NAUKRI","DMART","IRCTC","TATAPOWER","ADANIGREEN","VEDL","SAIL","NMDC",
-        "ABB","BHEL","HAL","BEML","BEL","LICHSGFIN","HDFCAMC","ABCAPITAL","ICICIGI",
-        "SRF","DEEPAKNI","CUMMINSIND","THERMAX","CROMPTON","POLYCAB","KEI","KPIL","NCC",
-        "DLF","PRESTIGE","OBEROIRLTY","GODREJPROP","PHOENIXLTD","BRIGADE","SOBHA",
-    }
-
-# ── NSE Sector index URLs for sector-based scanning ──────────────────────────
-SECTOR_INDEX_URLS = {
-    "🏦 Nifty Bank":    "ind_niftybanklist.csv",
-    "💊 Nifty Pharma":  "ind_niftypharmalist.csv",
-    "🖥 Nifty IT":       "ind_niftyitlist.csv",
-    "🚗 Nifty Auto":    "ind_niftyautolist.csv",
-    "🏗 Nifty Realty":  "ind_niftyrealtylist.csv",
-    "⚙️ Nifty Metal":   "ind_niftymetallist.csv",
-    "🛍 Nifty FMCG":    "ind_niftyfmcglist.csv",
-    "⚡ Nifty Energy":  "ind_niftyenergylist.csv",
-    "🏭 Nifty PSE":     "ind_niftypse.csv",
-    "🏠 Nifty Infra":   "ind_niftyinfrastructurelist.csv",
-}
-_NSE_BASE_URL = "https://archives.nseindia.com/content/indices/"
-
-@st.cache_data(ttl=3600)
-def fetch_sector_stocks(sector_key: str) -> list:
-    """Fetch stocks for a given sector index from NSE."""
-    csv_name = SECTOR_INDEX_URLS.get(sector_key, "")
-    if not csv_name:
-        return []
-    try:
-        resp = requests.get(
-            _NSE_BASE_URL + csv_name,
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
-        )
-        resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        df.columns = df.columns.str.strip()
-        return df["Symbol"].dropna().str.strip().tolist()
-    except Exception:
-        return []
-
-# Upstox instrument master — loaded once per day, replaces hardcoded ISIN maps
-@st.cache_data(ttl=86400)
-def fetch_upstox_instrument_master() -> dict:
-    """
-    Download Upstox NSE instrument master CSV (compressed).
-    Returns {trading_symbol: instrument_key} for all NSE EQ stocks.
-    Eliminates dependency on hardcoded UPSTOX_INSTRUMENT_KEYS dict.
-    """
-    import gzip, io as _io
-    url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        df = pd.read_csv(_io.BytesIO(gzip.decompress(r.content)))
-        # Upstox columns: tradingsymbol, instrument_type, instrument_key, ...
-        col_sym = next((c for c in df.columns if "trading" in c.lower() or c.lower() == "symbol"), None)
-        col_key = next((c for c in df.columns if "instrument_key" in c.lower()), None)
-        col_type = next((c for c in df.columns if "instrument_type" in c.lower() or "type" in c.lower()), None)
-        if col_sym and col_key:
-            eq = df[df[col_type] == "EQ"] if col_type else df
-            master = dict(zip(eq[col_sym].str.upper(), eq[col_key]))
-            if len(master) > 100:  # sanity check
-                return master
-    except Exception:
-        pass
-    return {}  # Fall back to hardcoded UPSTOX_INSTRUMENT_KEYS
-
 _US_SET = set(_DOW30_SYMBOLS + _NASDAQ100_SYMBOLS)
 
 def is_us_symbol(sym: str) -> bool:
     """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
     return sym.upper() in _US_SET
 
-def get_market_list(market: str = "🇮🇳 Nifty 500") -> list:
+def get_market_list(market: str) -> list:
+    """Return symbol list for selected market toggle.
+    Default is Nifty 100 (best liquid large-caps, fast scan).
+    Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
     """
-    Return symbol list for the scanner.
-    Only Nifty 500 is exposed in the UI — all other keys kept as internal
-    fallbacks for backward compatibility with any existing session_state values.
-    """
-    # All paths converge on Nifty 500
-    try:
-        df = fetch_nse500_list()
-        if not df.empty and "Symbol" in df.columns:
-            syms = df["Symbol"].dropna().str.strip().tolist()
-            if len(syms) >= 400:
-                return syms
-    except Exception:
-        pass
-    # Fallback to Nifty 200 list if NSE500 fetch fails
-    return fetch_nifty200_list()
+    if market == "🇮🇳 Nifty 50":
+        return _NIFTY50_SYMBOLS
+    elif market == "🇮🇳 Nifty 100":
+        return _NIFTY100_SYMBOLS
+    elif market == "🇺🇸 Dow 30":
+        return _DOW30_SYMBOLS
+    elif market == "🇺🇸 Nasdaq 100":
+        return _NASDAQ100_SYMBOLS
+    elif market == "🇮🇳 Nifty 200":
+        return fetch_nifty200_list()
+    else:
+        return _NIFTY100_SYMBOLS   # default everywhere = Nifty 100
 
 
 @st.cache_data(ttl=3600)
@@ -2857,7 +1710,7 @@ def compute_pivot_points(df: pd.DataFrame, pivot_type: str = "Traditional") -> d
     return pivots
 
 
-def compute_cpr_OLD(df: pd.DataFrame) -> dict:
+def compute_cpr(df: pd.DataFrame) -> dict:
     """
     Central Pivot Range (CPR) — Frank Ochoa's core tool.
     Narrow CPR = trending; Wide CPR = range-bound.
@@ -3777,8 +2630,9 @@ def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    _scan_mkt = "🇮🇳 Nifty 500"
-    _mkt_key  = "india"
+    _scan_mkt = st.session_state.get("scanner_market_global",
+                  st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
     _mkt_status_us    = get_market_status("us")
@@ -5698,66 +4552,15 @@ def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
 
 @st.cache_data(ttl=900)
 
-def batch_fetch_ohlcv(symbols: list, period: str = "5d", interval: str = "15m",
-                      is_us: bool = False) -> dict:
-    """
-    Batch-fetch OHLCV for multiple stocks in a single yfinance call — 10–20× faster
-    than fetching one-by-one. Chunks into groups of 100 to avoid API limits.
-    Returns {symbol: DataFrame} dict.
-    """
-    results = {}
-    chunk_size = 100
-    yf_interval_map = {"15m":"15m","30m":"30m","1h":"60m","1d":"1d","1wk":"1wk","1mo":"1mo"}
-    yf_iv = yf_interval_map.get(interval, interval)
-
-    for i in range(0, len(symbols), chunk_size):
-        chunk = symbols[i:i+chunk_size]
-        tickers = [s if is_us else s + ".NS" for s in chunk]
-        try:
-            raw = yf.download(
-                tickers, period=period, interval=yf_iv,
-                group_by="ticker", auto_adjust=True,
-                progress=False, threads=True,
-            )
-            for sym, ticker in zip(chunk, tickers):
-                try:
-                    sub = raw[ticker] if len(tickers) > 1 else raw
-                    if isinstance(sub, pd.DataFrame):
-                        sub = sub.dropna(how="all")
-                        if not sub.empty:
-                            # Normalise columns
-                            if isinstance(sub.columns, pd.MultiIndex):
-                                sub.columns = [c[0] for c in sub.columns]
-                            sub.columns = [str(c).strip().title() for c in sub.columns]
-                            if hasattr(sub.index, "tz") and sub.index.tz is not None:
-                                try:
-                                    sub.index = sub.index.tz_convert("Asia/Kolkata").tz_localize(None)
-                                except Exception:
-                                    sub.index = sub.index.tz_localize(None)
-                            if {"Open","High","Low","Close","Volume"}.issubset(sub.columns):
-                                results[sym] = sub
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    return results
-
-
-def scan_cpr_multi_tf_OLD(symbols: list, interval: str, period: str,
+def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
     """
-    Frank Ochoa CPR Scanner — Enhanced with batch yfinance + Upstox data.
-    Uses batch_fetch_ohlcv for 10-20× speed improvement over one-by-one fetching.
-    Adds: volume filter, 52-week proximity, F&O flag, market cap tier tag.
+    Frank Ochoa CPR Scanner — Enhanced with Upstox data + strategy rationale.
+    Timeframes: 15m / 30m / 1h / 1d / 1wk / 1mo
+    Upstox used for data if token is active, else yfinance fallback.
+    Each row includes a human-readable strategy rationale for backtest reference.
     """
     rows = []
-    _fo_stocks = st.session_state.get("_fo_stocks_cache", None)
-    if _fo_stocks is None:
-        try:
-            _fo_stocks = fetch_fo_stocks()
-            st.session_state["_fo_stocks_cache"] = _fo_stocks
-        except Exception:
-            _fo_stocks = set()
 
     def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
         """Standardise any OHLCV DataFrame regardless of source/version."""
@@ -5861,34 +4664,13 @@ def scan_cpr_multi_tf_OLD(symbols: list, interval: str, period: str,
 
     sym_list  = symbols[:max_stocks]
     sym_data  = {}
-    _is_us    = all(is_us_symbol(s) for s in sym_list[:5]) if sym_list else False
-
-    # ── PRIMARY: Upstox parallel fetch (when connected) ───────────────────────
-    if _upstox_connected() or _upstox_has_credentials():
-        workers   = min(20, len(sym_list))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_fetch_one, s): s for s in sym_list}
-            for fut in as_completed(futures):
-                s, df = fut.result()
-                if not df.empty and len(df) >= 10:
-                    sym_data[s] = df
-
-    # ── BATCH yfinance for any missing symbols (or when Upstox not connected) ─
-    missing = [s for s in sym_list if s not in sym_data]
-    if missing:
-        batch = batch_fetch_ohlcv(missing, period=period, interval=interval, is_us=_is_us)
-        sym_data.update(batch)
-
-    # Final pass — serial Upstox fallback for any still-missing symbols
-    still_missing = [s for s in sym_list if s not in sym_data]
-    if still_missing and (_upstox_connected() or _upstox_has_credentials()):
-        workers2 = min(10, len(still_missing))
-        with ThreadPoolExecutor(max_workers=workers2) as pool2:
-            futures2 = {pool2.submit(_fetch_one, s): s for s in still_missing}
-            for fut in as_completed(futures2):
-                s, df = fut.result()
-                if not df.empty and len(df) >= 10:
-                    sym_data[s] = df
+    workers   = min(10, len(sym_list))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_fetch_one, s): s for s in sym_list}
+        for fut in as_completed(futures):
+            s, df = fut.result()
+            if not df.empty and len(df) >= 10:   # relax minimum for intraday
+                sym_data[s] = df
 
     for sym in sym_list:
         try:
@@ -6004,21 +4786,21 @@ def scan_cpr_multi_tf_OLD(symbols: list, interval: str, period: str,
             cur_bar    = float(high.iloc[-1] - low_s.iloc[-1])
             bar_mult   = cur_bar / avg_bar if avg_bar > 0 else 0
 
-            _c0 = df.iloc[-1]
-            bull0 = float(_c0["Close"]) > float(_c0["Open"])
-            bear0 = float(_c0["Close"]) < float(_c0["Open"])
-
+            # ── Extreme Reversal (Rubber Band) — Ochoa SPB Setup ─────────────
+            # Price over-extended (bar_mult >= 2×) snapping back toward CPR
             extreme_bull = (bar_mult >= 2.0 and bear0 and ltp < BC and
                             float(low_s.iloc[-1]) < float(low_s.iloc[-5:-2].min()))
             extreme_bear = (bar_mult >= 2.0 and bull0 and ltp > TC and
                             float(high.iloc[-1]) > float(high.iloc[-5:-2].max()))
 
+            # ── Outside Reversal (False Breakout Fade) — Ochoa SPB Setup ─────
+            # Bar sweeps beyond prev H/L then reverses back inside
             outside_bull = (bar_mult >= 1.25 and
                             float(low_s.iloc[-1])  < float(low_s.iloc[-2]) and
-                            float(close.iloc[-1])  > float(df["Open"].iloc[-2]))
+                            float(close.iloc[-1])  > float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
             outside_bear = (bar_mult >= 1.25 and
                             float(high.iloc[-1])   > float(high.iloc[-2]) and
-                            float(close.iloc[-1])  < float(df["Open"].iloc[-2]))
+                            float(close.iloc[-1])  < float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
 
             # ── Frank Ochoa Scoring ──────────────────────────────────────────
             bull_pts = bear_pts = 0
@@ -6252,31 +5034,6 @@ def scan_cpr_multi_tf_OLD(symbols: list, interval: str, period: str,
             # Prepend strategy classification to name
             strat_name = f"{_classify_strategy()} — {strat_name}"
 
-            # ── 52-Week High/Low proximity ─────────────────────────────────
-            # Use daily data for 52w levels when possible; else approximate
-            try:
-                wk52_bars = max(min(252, len(df)), len(df))
-                hi52 = round(float(df["High"].tail(wk52_bars).max()), 2)
-                lo52 = round(float(df["Low"].tail(wk52_bars).min()), 2)
-                near_52h = (ltp / hi52 >= 0.97) if hi52 > 0 else False   # within 3% of 52w high
-                near_52l = (ltp / lo52 <= 1.03) if lo52 > 0 else False   # within 3% of 52w low
-            except Exception:
-                hi52 = lo52 = 0.0
-                near_52h = near_52l = False
-
-            # ── Volume filter — skip illiquid stocks ─────────────────────────
-            avg_vol_20 = float(df["Volume"].tail(20).mean()) if len(df) >= 20 else 0
-            # Min volume thresholds by interval (intraday = tighter, daily = looser)
-            min_vol_threshold = {
-                "15m": 10_000, "30m": 8_000, "1h": 5_000,
-                "1d": 50_000, "1wk": 10_000, "1mo": 5_000,
-            }.get(interval, 5_000)
-            if avg_vol_20 < min_vol_threshold:
-                continue   # Skip illiquid stocks
-
-            # ── F&O eligibility flag ──────────────────────────────────────────
-            is_fo = sym in _fo_stocks
-
             rows.append({
                 "Symbol":     sym,
                 "LTP":        round(ltp,2),
@@ -6298,18 +5055,12 @@ def scan_cpr_multi_tf_OLD(symbols: list, interval: str, period: str,
                 "ATR":        round(atr,2),
                 "Stoch%K":    round(stk,1),
                 "Vol Surge":  "✅" if vol_surge else "—",
-                "Avg Vol(20)":int(avg_vol_20),
                 "Osc Cross":  "🔼" if osc_cross_bull else ("🔽" if osc_cross_bear else "—"),
                 "Entry":      entry,
                 "SL":         sl,
                 "T1":         round(t1,2),  "T2": round(t2,2),  "T3": round(t3,2),
                 "RR1":        rr1,           "RR2": rr2,
                 "Risk Rs":    round(risk,2),
-                "F&O":        "✅" if is_fo else "—",
-                "52w High":   hi52,
-                "52w Low":    lo52,
-                "Near 52wH":  "🔥" if near_52h else "—",
-                "Near 52wL":  "🔻" if near_52l else "—",
             })
         except Exception:
             continue
@@ -6769,11 +5520,10 @@ buildCards();
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RANK SCORER + TOP 5 ENGINE + AUTO BACKGROUND SCANNER
+#  TOP 5 BEST TRADES ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _signal_rank_score_global_OLD(row, tf_tag: str) -> float:
-    """Frank Ochoa composite rank score — callable from any thread."""
+def _signal_rank_score_global(row, tf_tag: str) -> float:
     try:
         s    = float(row.get("Strength%",   0) or 0)
         rr   = float(row.get("RR1",         1.0) or 1.0)
@@ -6796,251 +5546,125 @@ def _signal_rank_score_global_OLD(row, tf_tag: str) -> float:
     elif dt == "Sideways":  score -= 40
     elif dt == "Volatile":  score -= 5
     if ov: score -= 30
-    score += {"Morning Star":20,"Evening Star":20,"Bullish Engulfing":18,
-              "Bearish Engulfing":18,"Bull Pin Bar":15,"Bear Pin Bar":15,
-              "Hammer":12,"Shooting Star":12,"Bullish Marubozu":8,
-              "Bearish Marubozu":8,"Inside Bar":5,"Doji at CPR":3}.get(cn, 0)
+    _premium = {
+        "Morning Star": 20, "Evening Star": 20,
+        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+        "Hammer": 12, "Shooting Star": 12,
+        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+        "Inside Bar": 5, "Doji at CPR": 3,
+    }
+    score += _premium.get(cn, 0)
     if side == "Bullish" and rsi >= 55:   score += 8
     elif side == "Bearish" and rsi <= 45: score += 8
     elif side == "Bullish" and rsi <= 40: score -= 5
     elif side == "Bearish" and rsi >= 60: score -= 5
-    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+    if ("\u25b2" in hma and side == "Bullish") or ("\u25bc" in hma and side == "Bearish"):
         score += 10
-    if "✅" in vol: score += 8
+    if "\u2705" in vol: score += 8
     if   "30m" in tf_tag: score += 15
     elif "1h"  in tf_tag: score += 8
     elif "15m" in tf_tag: score += 5
-    elif "1d"  in tf_tag: score += 12
-    elif "1wk" in tf_tag: score += 18
-    elif "1mo" in tf_tag: score += 22
-    try:    return round(score, 2)
-    except: return 0.0
+    try:
+        return round(score, 2)
+    except Exception:
+        return 0.0
 
 
-def _get_top5_best_trades(market_list: list = None) -> list:
-    """
-    Return top 5 signals by rank score from the unified bg scan cache.
-    Previously ran its own independent 15m+30m+1h scan — now reads from
-    st.session_state[_BG_SCAN_KEY] so no data is fetched a third time.
-    market_list param kept for backward compatibility but is no longer used.
-    """
-    cached = st.session_state.get(_BG_SCAN_KEY, [])
-    if not cached:
-        return []
-    # Deduplicate by symbol — keep highest-scored TF per symbol
-    seen, top5 = set(), []
-    for sig in cached:   # already sorted by rank score desc
-        sym = sig.get("Symbol", "")
-        if sym and sym not in seen:
-            seen.add(sym)
-            top5.append(sig)
-        if len(top5) >= 5:
-            break
-    return top5
-
-
-# ── AUTO BACKGROUND SCANNER STATE KEYS ───────────────────────────────────────
-_BG_SCAN_KEY      = "bg_scan_results"   # list of high-score signals
-_BG_SCAN_TIME_KEY = "bg_scan_last_run"  # epoch of last run
-_BG_SCAN_RUNNING  = "bg_scan_running"   # lock flag
-_BG_SCAN_INTERVAL = 300                 # run every 5 minutes
-_BG_SCORE_CUTOFF  = 80                  # only keep signals with score >= 80
-
-_BG_ALL_TF = [
-    {"interval":"15m","period":"10d", "tag":"15m","label":"⚡ 15 Min", "color":"#7c3aed"},
-    {"interval":"30m","period":"20d", "tag":"30m","label":"⏱️ 30 Min", "color":"#ea580c"},  # PRIMARY auto-trade TF — was missing
-    {"interval":"1h", "period":"60d", "tag":"1h", "label":"🕐 1 Hour", "color":"#1d4ed8"},
-    {"interval":"1d", "period":"120d","tag":"1d", "label":"📅 1 Day",  "color":"#1a6b3c"},
-    {"interval":"1wk","period":"2y",  "tag":"1wk","label":"🗓 1 Week", "color":"#d97706"},
-    {"interval":"1mo","period":"5y",  "tag":"1mo","label":"🗓 1 Month","color":"#dc2626"},
-]
-
-
-def _run_bg_scan(market_list: list) -> list:
-    """
-    Unified scan engine — scans ALL 6 TFs (15m 30m 1h 1d 1wk 1mo) in parallel.
-
-    Changes from original:
-    - 30m is now included (was missing — it's the primary auto-trade TF)
-    - Uses _signal_rank_score_global() — single scorer, no drift vs manual scanner
-    - Stock cap raised from 80 → 200 (batch yfinance handles this efficiently)
-    - Auto-trade gate (7 conditions) applied here — not duplicated in manual scanner
-    - Results tagged with auto-trade eligibility so UI can read it directly
-    - Deduplicates by symbol+TF so same stock can appear on multiple TFs
-    """
-    from datetime import datetime as _dt
-
-    # Build the "already traded today" set once for the whole scan
-    _today       = _dt.now().strftime("%Y-%m-%d")
-    _ft_evts     = _ft_state().get("events", [])
-    _traded_today = set(
-        e.get("symbol", "") for e in _ft_evts
-        if e.get("type", "") == "ENTRY"
-        and str(e.get("time", "")).startswith(_today)
-    )
-
-    # Market hours gate — only auto-trade within 09:45–14:45 IST
-    _now_ist      = _dt.utcnow().replace(tzinfo=None)
-    _ist_hour     = (_now_ist.hour + 5) % 24
-    _ist_min      = (_now_ist.minute + 30) % 60
-    _ist_minutes  = _ist_hour * 60 + _ist_min
-    _in_mkt_hours = (9 * 60 + 45) <= _ist_minutes <= (14 * 60 + 45)
-
-    def _scan_tf(cfg):
+def _get_top5_best_trades(market_list: list) -> list:
+    TF_SCAN_CONFIGS = [
+        {"interval": "15m", "period": "10d",  "tag": "15m", "label": "\u26a1 15 Min", "color": "#7c3aed"},
+        {"interval": "30m", "period": "20d",  "tag": "30m", "label": "\u23f1\ufe0f 30 Min", "color": "#ea580c"},
+        {"interval": "1h",  "period": "60d",  "tag": "1h",  "label": "\U0001f55010 1 Hour", "color": "#1d4ed8"},
+    ]
+    def _scan_one_tf(cfg):
         try:
-            r = scan_cpr_multi_tf(
-                market_list,
-                interval   = cfg["interval"],
-                period     = cfg["period"],
-                max_stocks = min(len(market_list), 200),   # raised from 80
+            result = scan_cpr_multi_tf(
+                market_list, interval=cfg["interval"],
+                period=cfg["period"], max_stocks=min(len(market_list), 100),
             )
-            if r is None or r.empty or "Pattern" not in r.columns:
-                return []
-            d = r[r["Pattern"] != "Neutral"].copy()
-            if d.empty:
-                return []
-
-            # Tag with TF metadata
-            d["_tf_tag"]   = cfg["tag"]
-            d["_tf_label"] = cfg["label"]
-            d["_tf_color"] = cfg["color"]
-
-            # Score every signal using the single shared scorer
-            d["_rank_score"] = d.apply(
-                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1
-            )
-
-            # Apply auto-trade gate — tag each signal with its eligibility
-            def _auto_gate(row):
-                sym       = str(row.get("Symbol", ""))
-                strength  = float(row.get("Strength%", 0) or 0)
-                rr        = float(row.get("RR1", 0) or 0)
-                overlap   = bool(row.get("CPR Overlap", False))
-                day_type  = str(row.get("Day Type", ""))
-                entry_px  = float(row.get("Entry", 0) or 0)
-                sl_px     = float(row.get("SL", 0) or 0)
-                sl_pct    = abs(entry_px - sl_px) / entry_px * 100 if entry_px > 0 else 0
-                tf        = cfg["tag"]
-
-                if tf not in ("30m", "1h"):          return "—"        # TF gate
-                if not _in_mkt_hours:                return "⏰ Off Hrs" # hours gate
-                if strength < 75:                    return "—"        # strength gate
-                if rr < 2.0:                         return "—"        # RR gate
-                if overlap and day_type == "Sideways": return "—"      # sideways gate
-                if sl_pct < 0.50:                    return "—"        # SL% gate
-                if sym in _traded_today:             return "⏭ Done"   # dedup gate
-                return "🤖 Auto"
-
-            d["_auto_gate"] = d.apply(_auto_gate, axis=1)
-
-            # Keep signals with score >= 80, plus any auto-eligible regardless of score
-            d = d[(d["_rank_score"] >= _BG_SCORE_CUTOFF) | (d["_auto_gate"] == "🤖 Auto")]
-            return d.to_dict("records")
+            if result is None or result.empty: return []
+            if "Pattern" not in result.columns: return []
+            directional = result[result["Pattern"] != "Neutral"].copy()
+            if directional.empty: return []
+            directional["_tf_tag"]     = cfg["tag"]
+            directional["_tf_label"]   = cfg["label"]
+            directional["_tf_color"]   = cfg["color"]
+            directional["_rank_score"] = directional.apply(
+                lambda row: _signal_rank_score_global(row, cfg["tag"]), axis=1)
+            return directional.to_dict("records")
         except Exception:
             return []
-
-    all_sigs = []
-    with ThreadPoolExecutor(max_workers=6) as ex:   # one worker per TF
-        fs = {ex.submit(_scan_tf, cfg): cfg for cfg in _BG_ALL_TF}
+    all_signals = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
         try:
-            for f in as_completed(fs, timeout=120):
+            for future in as_completed(futures, timeout=35):
                 try:
-                    all_sigs.extend(f.result())
+                    all_signals.extend(future.result())
                 except Exception:
                     pass
         except TimeoutError:
-            for f in fs:
-                if f.done():
-                    try:
-                        all_sigs.extend(f.result())
-                    except Exception:
-                        pass
-
-    # Execute auto-trades from bg scan (max 3 per cycle, deduped by symbol)
-    _auto_count = 0
-    for sig_row in sorted(all_sigs, key=lambda x: x.get("_rank_score", 0), reverse=True):
-        if sig_row.get("_auto_gate") != "🤖 Auto":
-            continue
-        if _auto_count >= 3:
-            break
-        sym = sig_row.get("Symbol", "")
-        if not sym or sym in _traded_today:
-            continue
-        try:
-            ft_add_signal({
-                "symbol":    sym,
-                "side":      "BUY" if sig_row.get("Pattern", "") == "Bullish" else "SELL",
-                "entry":     sig_row.get("Entry",    sig_row.get("LTP", 0)),
-                "sl":        sig_row.get("SL",       0),
-                "t1":        sig_row.get("T1",       0),
-                "t2":        sig_row.get("T2",       0),
-                "rr1":       sig_row.get("RR1",      2.0),
-                "tf":        sig_row.get("_tf_tag",  ""),
-                "rationale": sig_row.get("Rationale", sig_row.get("Strategy", "CPR")),
-                "strategy":  sig_row.get("Strategy", "CPR"),
-                "strength":  sig_row.get("Strength%", 0),
-                "candle":    sig_row.get("Candle",   "—"),
-                "day_type":  sig_row.get("Day Type", ""),
-                "rsi":       sig_row.get("RSI",      50),
-                "rank_score":sig_row.get("_rank_score", 0),
-            }, source=f"🤖 Auto·BG · {sig_row.get('_tf_tag','').upper()}")
-            _traded_today.add(sym)
-            _auto_count += 1
-        except Exception:
-            pass
-
-    # Sort final list by rank score desc
-    all_sigs.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
-    return all_sigs
-
-
-def _maybe_run_bg_scan(market_list: list):
-    """
-    Called on every page load. Runs _run_bg_scan in a background thread
-    if 5 minutes have passed since last run and a scan isn't already running.
-    Results stored in st.session_state[_BG_SCAN_KEY].
-    """
-    if st.session_state.get(_BG_SCAN_RUNNING, False):
-        return  # already running
-    age = time.time() - st.session_state.get(_BG_SCAN_TIME_KEY, 0)
-    if age < _BG_SCAN_INTERVAL:
-        return  # not time yet
-
-    st.session_state[_BG_SCAN_RUNNING] = True
-
-    def _worker():
-        try:
-            results = _run_bg_scan(market_list)
-            st.session_state[_BG_SCAN_KEY]      = results
-            st.session_state[_BG_SCAN_TIME_KEY] = time.time()
-        except Exception:
-            pass
-        finally:
-            st.session_state[_BG_SCAN_RUNNING] = False
-
-    import threading
-    threading.Thread(target=_worker, daemon=True).start()
+            for future in futures:
+                if future.done():
+                    try: all_signals.extend(future.result())
+                    except Exception: pass
+    if not all_signals: return []
+    all_signals.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
+    seen, top5 = set(), []
+    for sig in all_signals:
+        sym = sig.get("Symbol", "")
+        if sym and sym not in seen:
+            seen.add(sym); top5.append(sig)
+        if len(top5) >= 5: break
+    return top5
 
 def page_scanner_signals(nse500: pd.DataFrame):
     """CPR Scanner + Trade Signals merged."""
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
-        # ── Market is fixed to Nifty 500 ─────────────────────────────────
-        _MARKETS  = ["🇮🇳 Nifty 500"]
-        _market   = "🇮🇳 Nifty 500"
-        st.session_state["scanner_market"]        = _market
-        st.session_state["scanner_market_global"] = _market
-        _is_us = False   # Nifty 500 is always INR / NSE
-        _feed = "yfinance / Upstox fallback"
+        # ── Global Market Toggle (persisted across refresh) ───────────────
+        # Default: Nifty 100. Dow 30 / Nasdaq 100 available for US testing.
+        # Choice is saved to disk so it survives page refresh and mobile switch.
+        _MARKETS     = ["🇮🇳 Nifty 100", 
+                        "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
+        _saved_mkt   = st.session_state.get("scanner_market_global",
+                        st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+        # Migrate legacy values
+        if _saved_mkt not in _MARKETS:
+            _saved_mkt = "🇮🇳 Nifty 100"
+
+        _market = st.radio(
+            "Scan universe",
+            _MARKETS,
+            index=_MARKETS.index(_saved_mkt),
+            horizontal=True,
+            key="mkt_radio_global",
+            label_visibility="collapsed",
+        )
+        # Persist selection immediately so refresh / mobile keeps it
+        if _market != _saved_mkt:
+            st.session_state["scanner_market"]        = _market
+            st.session_state["scanner_market_global"] = _market
+            _save_credentials()   # write to disk right now
+            st.rerun()
+
+        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
+        # US markets only live during US hours (9:30 AM–4:00 PM EST/EDT)
+        if _is_us and not is_market_open("us"):
+            st.warning("🇺🇸 US markets closed — Dow/Nasdaq scanning available 9:30 PM–4:00 AM IST")
+            return
+        _feed  = "yfinance (US, no token needed)" if _is_us else "yfinance / Upstox fallback"
         _sym_count = len(get_market_list(_market))
-        _fo_tag = " · F&O Only" if st.session_state.get("scanner_fo_only") else ""
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"📊 <b>Nifty 500</b> &nbsp;·&nbsp; ~{_sym_count} symbols{_fo_tag} &nbsp;·&nbsp; "
-            f"<b>₹INR</b> · {_feed} &nbsp;·&nbsp; ✅ Data always live via yfinance"
+            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; {_sym_count} symbols &nbsp;·&nbsp; "
+            f"{'<b>$USD</b> · ' if _is_us else '<b>₹INR</b> · '}"
+            f"{_feed} &nbsp;·&nbsp; "
+            f"{'⚠️ US market — yfinance only, no Upstox needed' if _is_us else '✅ Data always live via yfinance'}"
             f"</div>", unsafe_allow_html=True)
         st.divider()
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
@@ -7052,233 +5676,49 @@ def page_scanner_signals(nse500: pd.DataFrame):
             unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════
-        #  🔄 AUTO BACKGROUND SCANNER — All 5 TFs every 5 min, Score ≥ 80
+        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS 15m · 30m · 1H
         # ═══════════════════════════════════════════════════════════════════
+        _TOP5_KEY      = "top5_best_trades"
+        _TOP5_TIME_KEY = "top5_best_trades_time"
+        _top5_age      = time.time() - st.session_state.get(_TOP5_TIME_KEY, 0)
+        _top5_needs    = _top5_age >= 900
 
-        # Kick off background scan (non-blocking thread, runs every 5 min)
-        _mkt_list_bg = get_market_list(_market)
-        _maybe_run_bg_scan(_mkt_list_bg[:200])   # raised from 80 — batch yfinance handles this
-
-        # Header row
-        _bh1, _bh2, _bh3 = st.columns([5, 2, 1])
-        with _bh1:
-            _bg_age = int((time.time() - st.session_state.get(_BG_SCAN_TIME_KEY, 0)) / 60)
-            _is_scanning = st.session_state.get(_BG_SCAN_RUNNING, False)
-            _bg_sigs = st.session_state.get(_BG_SCAN_KEY, [])
-            _status = "🔄 Scanning…" if _is_scanning else f"✅ {_bg_age} min ago"
+        _th1, _th2 = st.columns([5, 1])
+        with _th1:
             st.markdown(
                 "<div style='font-family:IBM Plex Mono,monospace;'>"
-                "<b style='font-size:1rem;color:#1a1f0e;'>🔄 Auto Scanner</b> "
+                "<span style='font-size:1.5rem;'>🏆</span> "
+                "<b style='font-size:1rem;color:#1a1f0e;'>Top 5 Best Trades</b> "
                 "<span style='font-size:0.68rem;color:#5a6a48;'>"
-                f"All 5 TFs · Score ≥ 80 · Every 5 min · Last: {_status}"
+                "Auto-ranked across ⚡15m · ⏱️30m · 🕐1H · Frank Ochoa Score · Refreshes every 15 min"
                 "</span></div>", unsafe_allow_html=True)
-        with _bh2:
-            _tf_filter_opts = ["All TFs","⚡ 15 Min","🕐 1 Hour","📅 1 Day","📆 1 Week","🗓️ 1 Month"]
-            _tf_filter = st.selectbox("Filter TF", _tf_filter_opts,
-                                      key="bg_tf_filter", label_visibility="collapsed")
-        with _bh3:
-            if st.button("🔄", key="bg_force_scan", help="Force rescan now",
-                         use_container_width=True):
-                st.session_state[_BG_SCAN_TIME_KEY] = 0
-                st.session_state.pop(_BG_SCAN_KEY, None)
-                st.rerun()
+        with _th2:
+            if st.button("🔄 Refresh Top 5", key="refresh_top5_btn", use_container_width=True):
+                _top5_needs = True
+                st.session_state.pop(_TOP5_KEY, None)
 
-        # Filter signals
-        _tf_map = {"⚡ 15 Min":"15m","🕐 1 Hour":"1h",
-                   "📅 1 Day":"1d","📆 1 Week":"1wk","🗓️ 1 Month":"1mo"}
-        _disp_sigs = _bg_sigs
-        if _tf_filter != "All TFs" and _tf_filter in _tf_map:
-            _disp_sigs = [s for s in _bg_sigs if s.get("_tf_tag") == _tf_map[_tf_filter]]
+        if _top5_needs or _TOP5_KEY not in st.session_state:
+            _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+            with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
+                _top5_result = _get_top5_best_trades(_mkt_list[:80])
+            st.session_state[_TOP5_KEY]      = _top5_result
+            st.session_state[_TOP5_TIME_KEY] = time.time()
+            _top5_age = 0
 
-        if not _disp_sigs and not _is_scanning:
-            st.info("📡 No signals with score ≥ 80 found yet — scanner runs every 5 min automatically. "
-                    "Click 🔄 to force scan now.")
-        elif _is_scanning and not _disp_sigs:
-            st.info("🔄 First scan in progress across all 5 timeframes… results appear below when ready.")
-        else:
-            # Summary chips
-            _bulls = [s for s in _disp_sigs if s.get("Pattern","") == "Bullish"]
-            _bears = [s for s in _disp_sigs if s.get("Pattern","") == "Bearish"]
-            _tfs_hit = list(dict.fromkeys(s.get("_tf_tag","") for s in _disp_sigs))
-            st.markdown(
-                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                "color:#5a6a48;margin-bottom:0.5rem;display:flex;gap:8px;flex-wrap:wrap;'>"
-                f"<span style='background:#edf7ee;border:1px solid #b8dfc0;border-radius:4px;"
-                f"padding:1px 7px;color:#16a34a;font-weight:700;'>▲ {len(_bulls)} Bullish</span>"
-                f"<span style='background:#fdf0ee;border:1px solid #f0c0b8;border-radius:4px;"
-                f"padding:1px 7px;color:#dc2626;font-weight:700;'>▼ {len(_bears)} Bearish</span>"
-                f"<span style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:4px;"
-                f"padding:1px 7px;color:#5a6a48;'>TFs: {' · '.join(_tfs_hit)}</span>"
-                f"<span style='background:#fff8ed;border:1px solid #f0d070;border-radius:4px;"
-                f"padding:1px 7px;color:#7a5800;'>Total: {len(_disp_sigs)} setups</span>"
-                "</div>", unsafe_allow_html=True)
-
-            # Render cards — up to 10 at a time, paginated
-            _PAGE_SZ = 10
-            _pg_key  = "bg_scan_page"
-            if _pg_key not in st.session_state: st.session_state[_pg_key] = 0
-            _pg      = st.session_state[_pg_key]
-            _chunk   = _disp_sigs[_pg*_PAGE_SZ : (_pg+1)*_PAGE_SZ]
-
-            for _row_start in range(0, len(_chunk), 5):
-                _row = _chunk[_row_start:_row_start+5]
-                _rcols = st.columns(len(_row))
-                for _ci, _sig in enumerate(_row):
-                    _is_bull  = _sig.get("Pattern","") == "Bullish"
-                    _hc       = "#16a34a" if _is_bull else "#dc2626"
-                    _hbg      = "#edf7ee" if _is_bull else "#fdf0ee"
-                    _hbd      = "#b8dfc0" if _is_bull else "#f0c0b8"
-                    _arrow    = "▲" if _is_bull else "▼"
-                    _side_lbl = "BUY" if _is_bull else "SELL"
-                    _tf_lbl   = _sig.get("_tf_label","")
-                    _tf_color = _sig.get("_tf_color","#5a6a48")
-                    _tf_tag   = _sig.get("_tf_tag","")
-                    _score    = _sig.get("_rank_score",0)
-                    _sym      = _sig.get("Symbol","")
-                    _rr       = float(_sig.get("RR1",0))
-                    _str      = int(_sig.get("Strength%",0))
-                    _candle   = _sig.get("Candle","—")
-                    _rsi      = float(_sig.get("RSI",50))
-                    _entry    = float(_sig.get("Entry",0))
-                    _t1       = float(_sig.get("T1",0))
-                    _t2       = float(_sig.get("T2",0))
-                    _sl       = float(_sig.get("SL",0))
-                    _sl_pct   = abs(_entry-_sl)/_entry*100 if _entry>0 else 0
-                    _day_type = str(_sig.get("Day Type",""))
-                    _cpr_w    = float(_sig.get("CPR Width%",0))
-                    _rr_col   = "#16a34a" if _rr>=2.0 else ("#d97706" if _rr>=1.5 else "#dc2626")
-                    if   _score>=100: _grade,_gc="A+","#16a34a"
-                    elif _score>=80:  _grade,_gc="A","#16a34a"
-                    elif _score>=65:  _grade,_gc="B+","#d97706"
-                    else:             _grade,_gc="B","#d97706"
-
-                    with _rcols[_ci]:
-                        st.markdown(
-                            f"<div style='background:#fff;border:1.5px solid {_hbd};"
-                            f"border-top:4px solid {_hc};border-radius:10px;"
-                            f"padding:0.7rem 0.75rem;margin-bottom:0.3rem;"
-                            f"box-shadow:0 2px 8px rgba(0,0,0,0.06);'>"
-                            f"<div style='display:flex;justify-content:space-between;"
-                            f"align-items:center;margin-bottom:0.35rem;'>"
-                            f"<span style='background:{_tf_color}18;color:{_tf_color};"
-                            f"font-family:IBM Plex Mono,monospace;font-size:0.56rem;"
-                            f"font-weight:700;padding:2px 5px;border-radius:3px;"
-                            f"border:1px solid {_tf_color}44;'>{_tf_lbl}</span>"
-                            f"<span style='background:#fff8ed;border:1px solid #f0d070;"
-                            f"border-radius:3px;padding:1px 5px;font-family:IBM Plex Mono,monospace;"
-                            f"font-size:0.58rem;font-weight:700;color:{_gc};'>{_grade} {_score:.0f}</span>"
-                            f"</div>"
-                            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.95rem;"
-                            f"font-weight:700;color:#1a1f0e;'>"
-                            f"<span style='color:{_hc};'>{_arrow}</span> {_sym}</div>"
-                            f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.6rem;"
-                            f"color:#5a6a48;margin-bottom:0.3rem;'>"
-                            f"{_candle} · RSI {_rsi:.0f} · {_day_type}</div>"
-                            f"<div style='background:#f1f5f9;border-radius:3px;height:3px;"
-                            f"margin-bottom:0.35rem;'>"
-                            f"<div style='background:{_hc};width:{min(_str,100)}%;"
-                            f"height:100%;border-radius:3px;'></div></div>"
-                            f"<div style='background:#f7f9f2;border-radius:5px;"
-                            f"padding:0.3rem 0.45rem;font-family:IBM Plex Mono,monospace;"
-                            f"font-size:0.6rem;margin-bottom:0.35rem;line-height:1.8;'>"
-                            f"<div>Entry <b style='color:#1a1f0e;'>₹{_entry:,.2f}</b></div>"
-                            f"<div>T1 <b style='color:{_hc};'>₹{_t1:,.2f}</b>"
-                            f" T2 <b style='color:{_hc};'>₹{_t2:,.2f}</b></div>"
-                            f"<div>SL <b style='color:#c0392b;'>₹{_sl:,.2f}</b>"
-                            f" <span style='color:#e74c3c;font-size:0.56rem;'>({_sl_pct:.2f}%)</span></div>"
-                            f"</div>"
-                            f"<div style='display:flex;gap:3px;flex-wrap:wrap;"
-                            f"font-family:IBM Plex Mono,monospace;font-size:0.58rem;'>"
-                            f"<span style='background:#f7f9f2;border:1px solid #dae0cb;"
-                            f"border-radius:3px;padding:1px 4px;color:{_rr_col};font-weight:700;'>"
-                            f"R:R {_rr:.1f}x</span>"
-                            f"<span style='background:{_hbg};border:1px solid {_hbd};"
-                            f"border-radius:3px;padding:1px 4px;color:{_hc};font-weight:700;'>"
-                            f"{_str}%</span>"
-                            f"<span style='background:#f7f9f2;border:1px solid #dae0cb;"
-                            f"border-radius:3px;padding:1px 4px;color:#5a6a48;'>"
-                            f"CPR {_cpr_w:.3f}%</span>"
-                            f"</div></div>", unsafe_allow_html=True)
-
-                        _gl_idx = _pg*_PAGE_SZ + _row_start + _ci
-                        if st.button(f"➕ {_side_lbl} {_sym}",
-                                     key=f"bg_add_{_gl_idx}_{_sym}_{_tf_tag}",
-                                     use_container_width=True,
-                                     type="primary" if _is_bull else "secondary"):
-                            _msig = {
-                                "symbol":_sym,"side":_side_lbl,
-                                "entry":_entry,"sl":_sl,"t1":_t1,"t2":_t2,
-                                "rr1":_rr,"tf":_tf_tag,
-                                "strategy":_sig.get("Strategy","CPR"),
-                                "strength":_str,"candle":_candle,
-                                "day_type":_day_type,"cpr_w":_cpr_w,
-                                "rsi":_rsi,"ltp":_entry,"rank_score":_score,
-                            }
-                            ft_add_signal(_msig, source=f"🔄 AutoScan·{_tf_tag.upper()}·Score{_score:.0f}")
-                            _send_telegram(_tg_trade_msg({
-                                "symbol":_sym,"side":_side_lbl,"entry":_entry,
-                                "target":_t1,"sl":_sl,"qty":1,"cost":_entry,
-                                "rr":_rr,"tf":_tf_tag,"pnl":0}, "ENTRY"))
-                            st.success(f"✅ {_sym} ({_tf_lbl}) added to Forward Testing!")
-
-            # Pagination
-            _total_pages = max(1, (len(_disp_sigs)-1)//_PAGE_SZ + 1)
-            if _total_pages > 1:
-                _pc1, _pc2, _pc3 = st.columns([1,3,1])
-                with _pc1:
-                    if st.button("◀ Prev", key="bg_prev",
-                                 disabled=_pg==0, use_container_width=True):
-                        st.session_state[_pg_key] -= 1; st.rerun()
-                with _pc2:
-                    st.markdown(
-                        f"<div style='text-align:center;font-family:IBM Plex Mono,monospace;"
-                        f"font-size:0.7rem;color:#5a6a48;padding-top:0.4rem;'>"
-                        f"Page {_pg+1} of {_total_pages} · {len(_disp_sigs)} total signals</div>",
-                        unsafe_allow_html=True)
-                with _pc3:
-                    if st.button("Next ▶", key="bg_next",
-                                 disabled=_pg>=_total_pages-1, use_container_width=True):
-                        st.session_state[_pg_key] += 1; st.rerun()
-
-        st.divider()
-
-        # ═══════════════════════════════════════════════════════════════════
-        #  🏆 TOP 5 BEST TRADES — read from unified bg scan cache
-        #  Previously ran its own 15m+30m+1h scan independently.
-        #  Now reads _BG_SCAN_KEY — zero extra data fetches.
-        # ═══════════════════════════════════════════════════════════════════
-        _t5h1, _t5h2 = st.columns([5, 1])
-        with _t5h1:
-            _bg_age_min = int((time.time() - st.session_state.get(_BG_SCAN_TIME_KEY, 0)) / 60)
-            st.markdown(
-                "<div style='font-family:IBM Plex Mono,monospace;'>"
-                "<b style='font-size:1rem;color:#1a1f0e;'>🏆 Top 5 Best Trades</b> "
-                "<span style='font-size:0.68rem;color:#5a6a48;'>"
-                f"Ranked from unified scan · All 6 TFs · Data age: {_bg_age_min} min"
-                "</span></div>", unsafe_allow_html=True)
-        with _t5h2:
-            if st.button("🔄 Refresh", key="refresh_top5_btn", use_container_width=True):
-                # Force the bg scanner to re-run immediately
-                st.session_state[_BG_SCAN_TIME_KEY] = 0
-                st.session_state.pop(_BG_SCAN_KEY, None)
-                st.rerun()
-
-        # Read top 5 directly from bg scan cache — no new scan
-        _top5_trades = _get_top5_best_trades()
+        _top5_trades = st.session_state.get(_TOP5_KEY, [])
 
         if not _top5_trades:
-            st.info("📡 No top trades found — click 🔄 Refresh to scan.")
+            st.info("📡 No top trades found — click **🔄 Refresh Top 5** to scan all 3 timeframes.")
         else:
             _age_min = int(_top5_age / 60)
             st.markdown(
-                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
-                f"color:#5a6a48;margin-bottom:0.5rem;'>"
-                f"✅ Last scanned <b>{_age_min} min ago</b> · "
-                f"<b>{len(_top5_trades)}</b> best unique setups</div>",
+                "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#5a6a48;"
+                "margin-bottom:0.6rem;'>✅ Last scanned <b>" + str(_age_min) + " min ago</b> · "
+                "Showing <b>" + str(len(_top5_trades)) + "</b> best unique setups</div>",
                 unsafe_allow_html=True)
 
-            _medals  = ["🥇","🥈","🥉","4️⃣","5️⃣"]
-            _t5cols  = st.columns(min(5, len(_top5_trades)))
+            _medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
+            _t5cols = st.columns(min(5, len(_top5_trades)))
             for _idx, _sig in enumerate(_top5_trades):
                 _is_bull  = _sig.get("Pattern","") == "Bullish"
                 _hc       = "#16a34a" if _is_bull else "#dc2626"
@@ -7289,95 +5729,84 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 _tf_lbl   = _sig.get("_tf_label","")
                 _tf_color = _sig.get("_tf_color","#5a6a48")
                 _tf_tag   = _sig.get("_tf_tag","")
-                _score    = _sig.get("_rank_score",0)
+                _score    = _sig.get("_rank_score", 0)
                 _sym      = _sig.get("Symbol","")
-                _rr       = float(_sig.get("RR1",0))
-                _str      = int(_sig.get("Strength%",0))
+                _rr       = float(_sig.get("RR1", 0))
+                _str      = int(_sig.get("Strength%", 0))
                 _candle   = _sig.get("Candle","—")
-                _rsi      = float(_sig.get("RSI",50))
-                _entry    = float(_sig.get("Entry",0))
-                _t1       = float(_sig.get("T1",0))
-                _t2       = float(_sig.get("T2",0))
-                _sl       = float(_sig.get("SL",0))
-                _sl_pct   = abs(_entry-_sl)/_entry*100 if _entry>0 else 0
+                _rsi      = float(_sig.get("RSI", 50))
+                _hma      = str(_sig.get("HMA","—"))
+                _vol      = str(_sig.get("Vol Surge","—"))
+                _entry    = float(_sig.get("Entry", 0))
+                _t1       = float(_sig.get("T1", 0))
+                _t2       = float(_sig.get("T2", 0))
+                _sl       = float(_sig.get("SL", 0))
+                _sl_pct   = abs(_entry - _sl) / _entry * 100 if _entry > 0 else 0
                 _day_type = str(_sig.get("Day Type",""))
-                _cpr_w    = float(_sig.get("CPR Width%",0))
-                _rr_col   = "#16a34a" if _rr>=2.0 else ("#d97706" if _rr>=1.5 else "#dc2626")
+                _cpr_w    = float(_sig.get("CPR Width%", 0))
+                _rr_col   = "#16a34a" if _rr >= 2.0 else ("#d97706" if _rr >= 1.5 else "#dc2626")
                 _medal    = _medals[_idx] if _idx < 5 else f"#{_idx+1}"
-                if   _score>=100: _grade,_gc="A+","#16a34a"
-                elif _score>=80:  _grade,_gc="A","#16a34a"
-                elif _score>=65:  _grade,_gc="B+","#d97706"
-                elif _score>=50:  _grade,_gc="B","#d97706"
-                else:             _grade,_gc="C","#dc2626"
+                if   _score >= 100: _grade, _gc = "A+","#16a34a"
+                elif _score >= 80:  _grade, _gc = "A", "#16a34a"
+                elif _score >= 65:  _grade, _gc = "B+","#d97706"
+                elif _score >= 50:  _grade, _gc = "B", "#d97706"
+                else:               _grade, _gc = "C", "#dc2626"
 
                 with _t5cols[_idx]:
-                    st.markdown(
-                        f"<div style='background:#fff;border:1.5px solid {_hbd};"
-                        f"border-top:4px solid {_hc};border-radius:10px;"
-                        f"padding:0.75rem 0.8rem;margin-bottom:0.3rem;"
-                        f"box-shadow:0 2px 10px rgba(0,0,0,0.07);'>"
-                        f"<div style='display:flex;justify-content:space-between;"
-                        f"align-items:center;margin-bottom:0.4rem;'>"
-                        f"<span style='font-size:1.1rem;'>{_medal}</span>"
-                        f"<span style='background:{_tf_color}18;color:{_tf_color};"
-                        f"font-family:IBM Plex Mono,monospace;font-size:0.58rem;"
-                        f"font-weight:700;padding:2px 6px;border-radius:4px;"
-                        f"border:1px solid {_tf_color}44;'>{_tf_lbl}</span></div>"
-                        f"<div style='font-family:IBM Plex Mono,monospace;font-size:1rem;"
-                        f"font-weight:700;color:#1a1f0e;'>"
-                        f"<span style='color:{_hc};'>{_arrow}</span> {_sym}</div>"
-                        f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.62rem;"
-                        f"color:#5a6a48;margin-bottom:0.4rem;'>"
-                        f"{_candle} · RSI {_rsi:.0f} · {_day_type}</div>"
-                        f"<div style='background:#f1f5f9;border-radius:3px;height:4px;"
-                        f"margin-bottom:0.45rem;'>"
-                        f"<div style='background:{_hc};width:{min(_str,100)}%;"
-                        f"height:100%;border-radius:3px;'></div></div>"
-                        f"<div style='background:#f7f9f2;border-radius:6px;"
-                        f"padding:0.35rem 0.5rem;font-family:IBM Plex Mono,monospace;"
-                        f"font-size:0.63rem;margin-bottom:0.4rem;line-height:1.8;'>"
-                        f"<div>Entry <b style='color:#1a1f0e;'>₹{_entry:,.2f}</b></div>"
-                        f"<div>T1 <b style='color:{_hc};'>₹{_t1:,.2f}</b>"
-                        f" · T2 <b style='color:{_hc};'>₹{_t2:,.2f}</b></div>"
-                        f"<div>SL <b style='color:#c0392b;'>₹{_sl:,.2f}</b>"
-                        f" <span style='color:#e74c3c;font-size:0.58rem;'>({_sl_pct:.2f}%)</span></div>"
-                        f"</div>"
-                        f"<div style='display:flex;flex-wrap:wrap;gap:3px;"
-                        f"font-family:IBM Plex Mono,monospace;font-size:0.6rem;'>"
-                        f"<span style='background:#f7f9f2;border:1px solid #dae0cb;"
-                        f"border-radius:3px;padding:1px 5px;color:{_rr_col};font-weight:700;'>"
-                        f"R:R {_rr:.1f}x</span>"
-                        f"<span style='background:{_hbg};border:1px solid {_hbd};"
-                        f"border-radius:3px;padding:1px 5px;color:{_hc};font-weight:700;'>"
-                        f"{_str}%</span>"
-                        f"<span style='background:#fff8ed;border:1px solid #f0d070;"
-                        f"border-radius:3px;padding:1px 5px;color:{_gc};font-weight:700;'>"
-                        f"{_grade}</span>"
-                        f"<span style='background:#f7f9f2;border:1px solid #dae0cb;"
-                        f"border-radius:3px;padding:1px 5px;color:#5a6a48;'>"
-                        f"Score {_score:.0f}</span>"
-                        f"</div></div>", unsafe_allow_html=True)
+                    _card = (
+                        "<div style='background:#fff;border:1.5px solid " + _hbd + ";"
+                        "border-top:4px solid " + _hc + ";border-radius:10px;"
+                        "padding:0.75rem 0.8rem;margin-bottom:0.3rem;"
+                        "box-shadow:0 2px 10px rgba(0,0,0,0.07);'>"
+                        "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;'>"
+                        "<span style='font-size:1.1rem;'>" + _medal + "</span>"
+                        "<span style='background:" + _tf_color + "18;color:" + _tf_color + ";"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.58rem;font-weight:700;"
+                        "padding:2px 6px;border-radius:4px;border:1px solid " + _tf_color + "44;'>"
+                        + _tf_lbl + "</span></div>"
+                        "<div style='font-family:IBM Plex Mono,monospace;font-size:1rem;font-weight:700;color:#1a1f0e;'>"
+                        "<span style='color:" + _hc + ";'>" + _arrow + "</span> " + _sym + "</div>"
+                        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#5a6a48;margin-bottom:0.4rem;'>"
+                        + _candle + " · RSI " + str(int(_rsi)) + " · " + _day_type + "</div>"
+                        "<div style='background:#f1f5f9;border-radius:3px;height:4px;margin-bottom:0.45rem;'>"
+                        "<div style='background:" + _hc + ";width:" + str(min(_str,100)) + "%;height:100%;border-radius:3px;'></div></div>"
+                        "<div style='background:#f7f9f2;border-radius:6px;padding:0.35rem 0.5rem;"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.63rem;margin-bottom:0.4rem;line-height:1.8;'>"
+                        "<div>Entry <b style='color:#1a1f0e;'>₹" + f"{_entry:,.2f}" + "</b></div>"
+                        "<div>T1 <b style='color:" + _hc + ";'>₹" + f"{_t1:,.2f}" + "</b>"
+                        " · T2 <b style='color:" + _hc + ";'>₹" + f"{_t2:,.2f}" + "</b></div>"
+                        "<div>SL <b style='color:#c0392b;'>₹" + f"{_sl:,.2f}" + "</b>"
+                        " <span style='color:#e74c3c;font-size:0.58rem;'>(" + f"{_sl_pct:.2f}" + "%)</span></div></div>"
+                        "<div style='display:flex;flex-wrap:wrap;gap:3px;"
+                        "font-family:IBM Plex Mono,monospace;font-size:0.6rem;margin-bottom:0.3rem;'>"
+                        "<span style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;padding:1px 5px;color:" + _rr_col + ";font-weight:700;'>R:R " + f"{_rr:.1f}" + "x</span>"
+                        "<span style='background:" + _hbg + ";border:1px solid " + _hbd + ";border-radius:3px;padding:1px 5px;color:" + _hc + ";font-weight:700;'>" + str(_str) + "%</span>"
+                        "<span style='background:#fff8ed;border:1px solid #f0d070;border-radius:3px;padding:1px 5px;color:" + _gc + ";font-weight:700;'>" + _grade + "</span>"
+                        "<span style='background:#f7f9f2;border:1px solid #dae0cb;border-radius:3px;padding:1px 5px;color:#5a6a48;'>Score " + f"{_score:.0f}" + "</span>"
+                        "</div></div>")
+                    st.markdown(_card, unsafe_allow_html=True)
 
-                    if st.button(
-                        f"{'⭐ ' if _idx==0 else ''}➕ #{_idx+1} {_sym}",
-                        key=f"top5_trade_{_idx}_{_sym}_{_tf_tag}",
-                        use_container_width=True,
-                        type="primary" if _idx==0 else "secondary"):
+                    _btn_type = "primary" if _idx == 0 else "secondary"
+                    _btn_lbl  = ("⭐ Trade #1 · " if _idx == 0 else f"Trade #{_idx+1} · ") + _sym
+                    if st.button(_btn_lbl,
+                                 key=f"top5_trade_{_idx}_{_sym}_{_tf_tag}",
+                                 use_container_width=True, type=_btn_type):
                         _msig = {
-                            "symbol":_sym,"side":_side_lbl,
-                            "entry":_entry,"sl":_sl,"t1":_t1,"t2":_t2,
-                            "rr1":_rr,"tf":_tf_tag,
-                            "strategy":_sig.get("Strategy","CPR"),
-                            "strength":_str,"candle":_candle,
-                            "day_type":_day_type,"cpr_w":_cpr_w,
-                            "rsi":_rsi,"ltp":_entry,"rank_score":_score,
+                            "symbol": _sym, "side": _side_lbl,
+                            "entry": _entry, "sl": _sl, "t1": _t1, "t2": _t2,
+                            "rr1": _rr, "tf": _tf_tag,
+                            "strategy": _sig.get("Strategy","CPR"),
+                            "strength": _str, "candle": _candle,
+                            "day_type": _day_type, "cpr_w": _cpr_w,
+                            "rsi": _rsi, "hma": _hma, "vol": _vol,
+                            "ltp": _entry, "rank_score": _score,
                         }
                         ft_add_signal(_msig, source=f"🏆 Top5·Rank#{_idx+1}·{_tf_tag.upper()}")
-                        _send_telegram(_tg_trade_msg({
-                            "symbol":_sym,"side":_side_lbl,"entry":_entry,
-                            "target":_t1,"sl":_sl,"qty":1,"cost":_entry,
-                            "rr":_rr,"tf":_tf_tag,"pnl":0}, "ENTRY"))
-                        st.success(f"✅ {_sym} ({_tf_lbl}) added to Forward Testing!")
+                        _tg_p = {"symbol":_sym,"side":_side_lbl,"entry":_entry,
+                                 "target":_t1,"sl":_sl,"qty":1,"cost":_entry,
+                                 "rr":_rr,"tf":_tf_tag,"pnl":0}
+                        _send_telegram(_tg_trade_msg(_tg_p,"ENTRY"))
+                        st.success(f"✅ **{_sym}** ({_tf_lbl}) added to Forward Testing!")
 
         st.divider()
 
@@ -7484,7 +5913,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
         """, unsafe_allow_html=True)
 
         # ── Timeframe selector ────────────────────────────────────────────────────
-        c1, c2, c3 = st.columns([3, 1, 1])
+        c1, c2 = st.columns([4, 1])
         with c1:
             tf_choice = st.selectbox(
                 "Timeframe",
@@ -7494,9 +5923,6 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 key="scanner_tf",
             )
         with c2:
-            _fo_only_toggle = st.toggle("F&O Only", value=st.session_state.get("scanner_fo_only", False), key="fo_only_toggle")
-            st.session_state["scanner_fo_only"] = _fo_only_toggle
-        with c3:
             manual_btn = st.button("🔄 Scan Now", use_container_width=True, key="run_cpr_scan_btn")
 
         cfg        = TF_CONFIG[tf_choice]
@@ -7513,110 +5939,247 @@ def page_scanner_signals(nse500: pd.DataFrame):
         age           = now - last_scan
         needs_refresh = manual_btn or (age >= refresh_s) or (scan_key not in st.session_state)
 
-        # ── Run scan ─────────────────────────────────────────────────────────────
-        # "Scan Now" forces the unified bg scanner to re-run immediately.
-        # The manual TF selector is now a VIEW FILTER over the bg scan cache —
-        # no new data fetch happens when the user changes timeframe.
+        # ── Run scan only for selected timeframe ──────────────────────────────────
         if needs_refresh:
-            if manual_btn:
-                # Force the bg scanner to re-run right now
-                st.session_state[_BG_SCAN_TIME_KEY] = 0
-                st.session_state.pop(_BG_SCAN_KEY, None)
-                _mkt_list_bg = get_market_list(_market)
-                _maybe_run_bg_scan(_mkt_list_bg[:200])
-                st.rerun()
-
-            # Warn if Upstox not connected
+            # Warn if Upstox not connected — yfinance may be blocked on Streamlit Cloud
             if not _upstox_connected():
                 st.info(
                     "💡 **Tip:** Connect your Upstox API token in ⚙️ Broker Settings for reliable data. "
-                    "yfinance may be rate-limited on Streamlit Cloud.", icon="ℹ️",
+                    "yfinance may be rate-limited on Streamlit Cloud.",
+                    icon="ℹ️",
                 )
-            if _upstox_has_credentials() and not _upstox_connected():
+            upstox_live  = _upstox_connected()
+            has_creds    = _upstox_has_credentials()
+            n_stocks     = 200 if upstox_live else (150 if has_creds else 100)
+
+            if has_creds and not upstox_live:
                 st.warning(
                     "⚠️ Upstox token expired — scanner will use yfinance. "
-                    "Paste today's token above to restore Upstox live feed.", icon="🔑",
+                    "Paste today's token above to restore Upstox live feed.",
+                    icon="🔑",
                 )
 
-        # ── Read results from unified bg scan cache filtered by selected TF ──────
-        _all_bg  = st.session_state.get(_BG_SCAN_KEY, [])
-        _tf_sigs = [s for s in _all_bg if s.get("_tf_tag") == tf_tag]
-
-        # Convert filtered signal list to DataFrame for compatibility with display code
-        if _tf_sigs:
-            result = pd.DataFrame(_tf_sigs)
-            # Apply _rank_score_global consistently (already stored as _rank_score)
-            if "_rank_score" not in result.columns:
-                result["_rank_score"] = result.apply(
-                    lambda r: _signal_rank_score_global(r, tf_tag), axis=1
-                )
-        else:
-            result = pd.DataFrame()
-
-        st.session_state[scan_key]      = result
-        st.session_state[scan_time_key] = time.time()
-
-        if result.empty and not st.session_state.get(_BG_SCAN_RUNNING, False):
-            st.info(
-                f"📡 No signals for {tf_tag.upper()} in current scan. "
-                f"Click 🔄 Scan Now to force a fresh scan, or wait for the auto-refresh."
-            )
-        elif result.empty:
-            st.info("🔄 Background scan in progress — results will appear shortly.")
-
-        # ── Rank + auto-trade tag for display (using shared scorer) ──────────────
-        if not result.empty and "Pattern" in result.columns:
-            ranked = result[result["Pattern"] != "Neutral"].copy()
-            if not ranked.empty:
-                # Use _rank_score from bg cache (already computed by global scorer)
-                ranked["🏆 Rank Score"] = ranked.get("_rank_score",
-                    ranked.apply(lambda r: _signal_rank_score_global(r, tf_tag), axis=1))
-                # Auto-gate tag already computed in _run_bg_scan
-                ranked["🤖 Auto"] = ranked.get("_auto_gate", "—")
-                ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
-                ranked.index = ranked.index + 1
-                st.session_state[f"ranked_scan_{tf_tag}"] = ranked
-
-                # Sync canonical keys read by Trade Signals tab
-                if tf_tag in ("15m", "30m", "1h"):
-                    st.session_state[f"cpr_scan_{tf_tag}"]      = result
-                    st.session_state[f"cpr_scan_time_{tf_tag}"] = time.time()
-
-                # Telegram top 3 on 15m / 30m
-                if tf_tag in ("15m", "30m") and st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
-                    _tl = [f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(ranked)} setups</b>"]
-                    for _, _r in ranked.head(3).iterrows():
-                        _se = "🟢" if _r.get("Pattern", "") == "Bullish" else "🔴"
-                        _tl.append(
-                            f"{_se} <b>{_r.get('Symbol','')}</b> · "
-                            f"₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · "
-                            f"SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%"
+            src_label = "📡 Upstox Live" if upstox_live else "📊 yfinance (15-min delay)"
+            with st.spinner(f"Scanning {n_stocks} stocks · {tf_tag.upper()} · {src_label}…"):
+                try:
+                    result = scan_cpr_multi_tf(
+                        get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 200")),
+                        interval=cfg["interval"],
+                        period=cfg["period"],
+                        max_stocks=n_stocks,
+                    )
+                    if result.empty:
+                        st.warning(
+                            f"⚠️ No setups found on {tf_tag.upper()}. "
+                            f"{'Market may be closed — data is from last session.' if not is_market_open('us' if st.session_state.get('scanner_market','') in ('🇺🇸 Dow 30','🇺🇸 Nasdaq 100') else 'india') else 'All stocks filtered out — try a different timeframe.'}"
                         )
-                    _tl.append("<i>PivotVault AI · Unified Scanner</i>")
-                    _send_telegram("\n".join(_tl))
-        # ── Desktop notifications — fires from cache result ───────────────────────
-        if not result.empty:
-                if "Pattern" not in result.columns: result["Pattern"] = "Neutral"
-                if "Strength%" not in result.columns: result["Strength%"] = 0.0
+                    else:
+                        st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
+                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
+                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
+                            for _,_r in result.head(3).iterrows():
+                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
+                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
+                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
+                            _send_telegram("\n".join(_tl))
+                except Exception as e:
+                    st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
+                    result = pd.DataFrame()
+            st.session_state[scan_key]      = result
+            st.session_state[scan_time_key] = now
+
+            # ── Rank signals & Auto-trade BEST 3 only ────────────────────
+            if not result.empty and tf_tag in ("15m","30m","1h"):
+
+                def _signal_rank_score(row):
+                    """
+                    Composite rank score — Frank Ochoa weighted.
+                    Higher score = better quality signal.
+                    """
+                    s   = float(row.get("Strength%",   0))
+                    rr  = float(row.get("RR1",         1.0))
+                    cw  = float(row.get("CPR Width%",  1.0))
+                    dt  = str(row.get("Day Type",      ""))
+                    ov  = bool(row.get("CPR Overlap",  False))
+                    cn  = str(row.get("Candle",        ""))
+                    rsi = float(row.get("RSI",         50))
+                    hma = str(row.get("HMA",           ""))
+                    vol = str(row.get("Vol Surge",     ""))
+                    side= str(row.get("Pattern",       ""))
+
+                    score = (s * 0.35) + (rr * 15)
+
+                    # CPR Width — narrower = better (trending day)
+                    if cw < 0.25:   score += 20
+                    elif cw < 0.5:  score += 10
+                    elif cw > 1.0:  score -= 10
+
+                    # Day Type bonus/penalty (Ochoa Two-Day CPR)
+                    if dt == "Trending":    score += 25
+                    elif dt == "Moderate":  score += 10
+                    elif dt == "Sideways":  score -= 40
+                    elif dt == "Volatile":  score -= 5
+
+                    # Overlap heavy penalty
+                    if ov: score -= 30
+
+                    # Candle quality bonus
+                    _premium = {
+                        "Morning Star": 20, "Evening Star": 20,
+                        "Bullish Engulfing": 18, "Bearish Engulfing": 18,
+                        "Bull Pin Bar": 15, "Bear Pin Bar": 15,
+                        "Hammer": 12, "Shooting Star": 12,
+                        "Bullish Marubozu": 8, "Bearish Marubozu": 8,
+                        "Inside Bar": 5, "Doji at CPR": 3,
+                    }
+                    score += _premium.get(cn, 0)
+
+                    # RSI alignment
+                    if side == "Bullish" and rsi >= 55:    score += 8
+                    elif side == "Bearish" and rsi <= 45:  score += 8
+                    elif side == "Bullish" and rsi <= 40:  score -= 5
+                    elif side == "Bearish" and rsi >= 60:  score -= 5
+
+                    # HMA alignment
+                    if ("▲" in hma and side == "Bullish") or ("▼" in hma and side == "Bearish"):
+                        score += 10
+
+                    # Volume surge
+                    if "✅" in vol: score += 8
+
+                    # Timeframe bonus — 30M is primary (highest quality CPR signals)
+                    _tf = str(row.get("tf",""))
+                    if   "30m" in _tf or "30M" in _tf: score += 15  # primary TF
+                    elif "1h"  in _tf or "1H"  in _tf: score += 8   # swing TF
+                    elif "15m" in _tf or "15M" in _tf: score += 5   # scalp TF
+
+                    return round(score, 2)
+
+                # Compute rank score for every directional signal
+                if "Pattern"    not in result.columns: result["Pattern"]    = "Neutral"
+                if "Strength%"  not in result.columns: result["Strength%"]  = 0.0
                 if "CPR Width%" not in result.columns: result["CPR Width%"] = 0.0
+                ranked = result[result["Pattern"] != "Neutral"].copy()
+                if not ranked.empty:
+                    ranked["🏆 Rank Score"] = ranked.apply(_signal_rank_score, axis=1)
+                    ranked["🤖 Auto"]        = ""   # will be filled below
+                    ranked = ranked.sort_values("🏆 Rank Score", ascending=False).reset_index(drop=True)
+                    ranked.index = ranked.index + 1  # rank 1 = best
+
+                    # Store ranked result for scanner UI display
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+                    # ── TOP 3 AUTO-TRADE only ──────────────────────────────────
+                    # Max 1 trade per symbol per day — no duplicate entries
+                    _today   = datetime.now().strftime("%Y-%m-%d")
+                    _ft_evts = _ft_state().get("events", [])
+                    _traded_today = set(
+                        e.get("symbol","") for e in _ft_evts
+                        if e.get("type","") == "ENTRY"
+                        and str(e.get("time","")).startswith(_today)
+                    )
+                    auto_traded = 0
+                    for _ri, row in ranked.iterrows():
+                        sig = {
+                            "symbol":     row.get("Symbol",""),
+                            "side":       "BUY" if row.get("Pattern","") == "Bullish" else "SELL",
+                            "entry":      row.get("Entry",   row.get("LTP",0)),
+                            "sl":         row.get("SL",      0),
+                            "t1":         row.get("T1",      0),
+                            "t2":         row.get("T2",      0),
+                            "rr1":        row.get("RR1",     2.0),
+                            "tf":         tf_tag,
+                            "rationale":  row.get("Rationale", row.get("Strategy","CPR")),
+                            "strategy":   row.get("Strategy","CPR"),
+                            "strength":   row.get("Strength%",0),
+                            "candle":     row.get("Candle","—"),
+                            "day_type":   row.get("Day Type",""),
+                            "cpr_overlap":row.get("CPR Overlap", False),
+                            "rsi":        row.get("RSI", 50),
+                            "hma":        row.get("HMA","—"),
+                            "vol":        row.get("Vol Surge","—"),
+                            "cprw":       row.get("CPR Width%", 1.0),
+                            "ltp":        row.get("LTP", 0),
+                            "rank_score": row.get("🏆 Rank Score", 0),
+                        }
+                        _strength = float(sig.get("strength", 0))
+                        _rr       = float(sig.get("rr1", 0))
+                        _overlap  = sig.get("cpr_overlap", False)
+                        _day_type = sig.get("day_type", "")
+
+                        # Block sideways + enforce quality gate
+                        if _overlap and _day_type == "Sideways":
+                            continue
+                        # Frank Ochoa optimal params:
+                        # Strength >= 75%, RR >= 2.0, Non-sideways day
+                        if not (_strength >= 75 and _rr >= 2.0):
+                            continue
+
+                        # ── MIN SL DISTANCE FILTER (0.50%) ──────────────────
+                        # Prevents noise-triggered SL hits on tight stops
+                        # Based on forward test analysis: 17/18 SL hits had SL% < 0.50%
+                        _entry_px = float(sig.get("entry", 0))
+                        _sl_px    = float(sig.get("sl",    0))
+                        _sl_pct   = abs(_entry_px - _sl_px) / _entry_px * 100 if _entry_px > 0 else 0
+                        if _sl_pct < 0.50:
+                            continue   # SL too tight — skip, noise will hit it
+
+                        if not (sig["symbol"] and sig["entry"] and sig["sl"] and sig["t1"]):
+                            continue
+
+                        # Skip if this symbol already traded today
+                        if sig["symbol"] in _traded_today:
+                            ranked.loc[_ri, "🤖 Auto"] = "⏭ Done Today"
+                            continue
+
+                        if auto_traded < 3:
+                            # ── AUTO-TRADE GATE: Only 30m + 1h timeframes ──
+                            # 15m excluded — too noisy, tight SL, high false signals
+                            if tf_tag not in ("30m", "1h"):
+                                continue
+                            ft_add_signal(sig, source=f"🤖 Auto·Top3 · {tf_tag.upper()}")
+                            ranked.loc[_ri, "🤖 Auto"] = "🤖 Auto"
+                            _traded_today.add(sig["symbol"])
+                            auto_traded += 1
+                        # Rest are available for manual trade — marked in ranked table
+
+                    # Update stored ranked result with Auto markers
+                    st.session_state[f"ranked_scan_{tf_tag}"] = ranked
+
+            last_scan = now
+
+            # ── Always sync canonical keys read by Trade Signals tab ──────────────
+            # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
+            if tf_tag in ("15m", "30m", "1h"):
+                st.session_state[f"cpr_scan_{tf_tag}"]      = result
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+            # ── Store signals + fire desktop notifications ────────────────────────
+            if not result.empty:
+                if "Pattern" not in result.columns: result["Pattern"] = "Neutral"
                 top3_bull = result[result["Pattern"]=="Bullish"].head(3)
                 top3_bear = result[result["Pattern"]=="Bearish"].head(3)
                 notif_signals = []
                 for _, r in top3_bull.iterrows():
                     notif_signals.append({
                         "symbol": r["Symbol"], "side": "BUY",
-                        "entry": r.get("Entry",0), "t1": r.get("T1",0), "sl": r.get("SL",0),
-                        "rr": r.get("RR1",0), "strength": int(r.get("Strength%",0)),
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
                         "candle": r.get("Candle","—"),
                     })
                 for _, r in top3_bear.iterrows():
                     notif_signals.append({
                         "symbol": r["Symbol"], "side": "SELL",
-                        "entry": r.get("Entry",0), "t1": r.get("T1",0), "sl": r.get("SL",0),
-                        "rr": r.get("RR1",0), "strength": int(r.get("Strength%",0)),
+                        "entry": r["Entry"], "t1": r["T1"], "sl": r["SL"],
+                        "rr": r["RR1"], "strength": int(r["Strength%"]),
                         "candle": r.get("Candle","—"),
                     })
                 st.session_state["pending_signals"] = notif_signals
+                # Also update the per-tag scan time key used by Trade Signals tab
+                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+
+                # ── Fire desktop notifications via window.parent ──────────────────
+                # window.parent escapes the Streamlit iframe — works on Chrome/Edge/Firefox
                 notif_js_list = json.dumps([
                     {"sym": s["symbol"], "side": s["side"],
                      "entry": s["entry"], "t1": s["t1"], "sl": s["sl"],
@@ -7629,7 +6192,16 @@ def page_scanner_signals(nse500: pd.DataFrame):
         var sigs = {notif_js_list};
         var w    = window.parent || window;
         if (!("Notification" in w)) return;
-        if (w.Notification.permission !== "granted") return;
+        if (w.Notification.permission !== "granted") {{
+            // Flash the allow button if not granted
+            var btn = document.getElementById("pv-allow-btn");
+            if (btn) {{
+                btn.style.animation = "none";
+                btn.style.background = "#c0392b";
+                btn.innerText = "⚠️ Allow Notifications!";
+            }}
+            return;
+        }}
         sigs.forEach(function(s, i) {{
             setTimeout(function() {{
                 var emoji = s.side === "BUY" ? "🟢" : "🔴";
@@ -7638,7 +6210,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     "Entry ₹" + s.entry + "  |  T1 ₹" + s.t1 + "  |  SL ₹" + s.sl + "  |  R:R " + s.rr + "x",
                     "pv-" + s.sym
                 );
-            }}, i * 800);
+            }}, i * 800);  // Stagger by 800ms so they don't all fire at once
         }});
     }})();
     </script>
@@ -11050,24 +9622,40 @@ def render_sidebar():
     Styled as pills via CSS override on radio buttons.
     Zero hidden buttons. Zero JS tricks. Pure Streamlit.
     """
-    # All pages — (key, label, always_visible)
+    # ── All pages (key, label, always-on) ───────────────────────────────
     ALL_PAGES = [
-        ("Market Snapshot",     "📊 Market",    True),   # always on
-        ("Pivot Boss Analysis", "📈 Pivot Boss", False),
-        ("Scanner & Signals",   "📡 Scanner",    False),
-        ("Forward Testing",     "🧪 Fwd Test",   False),
-        ("Trade Analysis",      "📊 Analysis",   False),
-        ("Order Execution",     "⚡ Orders",     False),
-        ("Strategy Library",    "📚 Strategy",   False),
-        ("Broker Settings",     "⚙️ Broker",     True),   # always on
-        ("Watchlist",           "⭐ Watchlist",  False),
+        ("Market Snapshot",     "📊 Market",     True),   # always visible — home
+        ("Pivot Boss Analysis", "📈 Pivot Boss",  False),
+        ("Scanner & Signals",   "📡 Scanner",     False),
+        ("Forward Testing",     "🧪 Fwd Test",    False),
+        ("Trade Analysis",      "📊 Analysis",    False),
+        ("Order Execution",     "⚡ Orders",      False),
+        ("Strategy Library",    "📚 Strategy",    False),
+        ("Broker Settings",     "⚙️ Broker",      True),  # always visible — required
+        ("Watchlist",           "⭐ Watchlist",   False),
     ]
+
+    # ── Load saved tab visibility from session (persisted in creds file) ─
     _TAB_VIS_KEY = "tab_visibility"
     if _TAB_VIS_KEY not in st.session_state:
-        st.session_state[_TAB_VIS_KEY] = {}
+        # First run: restore from saved creds or use defaults
+        _saved_vis = {}
+        try:
+            import json, os
+            _cf = os.path.join(os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
+            if os.path.exists(_cf):
+                _saved_vis = json.load(open(_cf)).get("tab_visibility", {})
+        except Exception:
+            pass
+        st.session_state[_TAB_VIS_KEY] = _saved_vis
+
     _tab_vis = st.session_state[_TAB_VIS_KEY]
 
-    PAGES = [(k,lbl) for k,lbl,always in ALL_PAGES if always or _tab_vis.get(k,False)]
+    # Build active page list — always-on pages + user-enabled pages
+    PAGES = [
+        (k, lbl) for k, lbl, always in ALL_PAGES
+        if always or _tab_vis.get(k, False)
+    ]
     PAGE_KEYS   = [p[0] for p in PAGES]
     PAGE_LABELS = [p[1] for p in PAGES]
 
@@ -11168,64 +9756,98 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p
             unsafe_allow_html=True,
         )
 
-    # ── Radio nav + Tab Manager + Logout ────────────────────────────────
-    nc, b1, b2 = st.columns([10, 1, 1])
+    # ── Radio nav (renders as pills via CSS above) ────────────────────────
+    nc, btn1, btn2 = st.columns([10, 1, 1])
     with nc:
-        selected = st.radio("nav", PAGE_LABELS, index=cur_idx, horizontal=True,
-                            key="main_nav_radio", label_visibility="hidden")
-    with b1:
-        _tmgr_click = st.button("🗂️", key="tab_mgr_btn",
-                                 help="Manage Tabs — toggle pages on/off",
-                                 use_container_width=True)
-    with b2:
+        selected = st.radio(
+            "nav",
+            PAGE_LABELS,
+            index=cur_idx,
+            horizontal=True,
+            key="main_nav_radio",
+            label_visibility="hidden",
+        )
+    with btn1:
+        _show_tab_mgr = st.button(
+            "🗂️", key="tab_mgr_btn",
+            help="Manage Tabs — turn pages on/off",
+            use_container_width=True,
+        )
+    with btn2:
         if st.button("🚪", key="logout_btn", help="Logout", use_container_width=True):
             _clear_session()
-            for _k in ["logged_in","username","user_email","user_id","current_page","tg_otp_code"]:
-                st.session_state[_k] = "" if _k != "logged_in" else False
-            st.session_state["user_id"] = None
-            # Upstox token intentionally NOT cleared — pasted once at 9 AM, valid all day
+            st.session_state["logged_in"]    = False
+            st.session_state["username"]     = ""
+            st.session_state["user_email"]   = ""
+            st.session_state["user_id"]      = None
+            st.session_state["current_page"] = "Market Snapshot"
+            st.session_state["tg_otp_code"]  = ""
+            # Broker token intentionally NOT cleared — pasted once at 9 AM
             st.rerun()
 
-    # ── Tab Manager panel ─────────────────────────────────────────────────
-    if _tmgr_click:
-        st.session_state["_show_tab_mgr"] = not st.session_state.get("_show_tab_mgr", False)
+    # ── Tab Manager toggle ─────────────────────────────────────────────────
+    if _show_tab_mgr:
+        st.session_state["show_tab_manager"] = not st.session_state.get("show_tab_manager", False)
 
-    if st.session_state.get("_show_tab_mgr", False):
-        st.markdown(
+    if st.session_state.get("show_tab_manager", False):
+        _header_html = (
             "<div style='background:#f7f9f2;border:1.5px solid #b8c89a;border-radius:10px;"
-            "padding:0.7rem 1rem;margin-bottom:0.5rem;font-family:IBM Plex Mono,monospace;'>"
-            "<b style='font-size:0.85rem;color:#1a1f0e;'>🗂️ Manage Tabs</b>"
-            "<span style='font-size:0.65rem;color:#5a6a48;margin-left:8px;'>"
-            "Toggle pages on/off · 📊 Market &amp; ⚙️ Broker are always visible</span></div>",
-            unsafe_allow_html=True)
-        _toggleable = [(k,lbl) for k,lbl,always in ALL_PAGES if not always]
-        _cols = st.columns(3)
+            "padding:0.8rem 1rem;margin-bottom:0.6rem;font-family:IBM Plex Mono,monospace;'>"
+            "<div style='font-size:0.85rem;font-weight:700;color:#1a1f0e;margin-bottom:0.4rem;'>"
+            "🗂️ Manage Tabs"
+            "<span style='font-size:0.65rem;font-weight:400;color:#5a6a48;margin-left:8px;'>"
+            "Toggle pages on / off &nbsp;·&nbsp; Market &amp; Broker are always visible"
+            "</span></div></div>"
+        )
+        st.markdown(_header_html, unsafe_allow_html=True)
+
+        _toggleable = [(k, lbl) for k, lbl, always in ALL_PAGES if not always]
+        _cols   = st.columns(3)
         _changed = False
-        for _ti,(tk,tlbl) in enumerate(_toggleable):
+        for _ti, (tk, tlbl) in enumerate(_toggleable):
             with _cols[_ti % 3]:
-                _cur = _tab_vis.get(tk, False)
-                _new = st.toggle(tlbl, value=_cur,
-                                 key="tab_tog_" + tk.replace(" ","_").replace("&",""))
+                _cur  = _tab_vis.get(tk, False)
+                _new  = st.toggle(tlbl, value=_cur,
+                                  key="tab_tog_" + tk.replace(" ", "_").replace("&",""))
                 if _new != _cur:
-                    st.session_state[_TAB_VIS_KEY][tk] = _new; _changed = True
+                    st.session_state[_TAB_VIS_KEY][tk] = _new
+                    _changed = True
+
         if _changed:
-            _save_session()
-            _active = [k for k,lbl,always in ALL_PAGES
-                       if always or st.session_state[_TAB_VIS_KEY].get(k, False)]
-            if current not in _active:
+            # Persist tab visibility to creds file
+            try:
+                import json as _json, os as _os
+                _cf = _os.path.join(_os.path.expanduser("~"), ".pivotvault", "pivotvault_creds.json")
+                _cdata = {}
+                if _os.path.exists(_cf):
+                    with open(_cf) as _fh:
+                        _cdata = _json.load(_fh)
+                _cdata["tab_visibility"] = st.session_state[_TAB_VIS_KEY]
+                _os.makedirs(_os.path.dirname(_cf), exist_ok=True)
+                with open(_cf, "w") as _fh:
+                    _json.dump(_cdata, _fh)
+            except Exception:
+                pass
+            # If active page was just disabled, redirect home
+            _active_keys = [
+                k for k, lbl, always in ALL_PAGES
+                if always or st.session_state[_TAB_VIS_KEY].get(k, False)
+            ]
+            if current not in _active_keys:
                 st.session_state["current_page"] = "Market Snapshot"
             st.rerun()
-        _, _dc = st.columns([4,1])
-        with _dc:
+
+        _, _done_col = st.columns([4, 1])
+        with _done_col:
             if st.button("✅ Done", key="tab_mgr_close", use_container_width=True):
-                st.session_state["_show_tab_mgr"] = False; st.rerun()
+                st.session_state["show_tab_manager"] = False
+                st.rerun()
         st.divider()
 
     # Update page on selection change
     sel_page = PAGE_KEYS[PAGE_LABELS.index(selected)]
     if sel_page != current:
         st.session_state["current_page"] = sel_page
-        _save_session()
         st.rerun()
 
     return sel_page
@@ -11491,28 +10113,6 @@ def main():
     if not st.session_state["logged_in"]:
         page_login()
         return
-
-    # ── Preload Upstox instrument master (once per day, non-blocking) ──────
-    if not st.session_state.get("_upstox_master"):
-        try:
-            master = fetch_upstox_instrument_master()
-            if master:
-                st.session_state["_upstox_master"] = master
-        except Exception:
-            pass
-
-    # ── Preload F&O stocks cache (once per hour, non-blocking) ─────────────
-    if not st.session_state.get("_fo_stocks_cache"):
-        try:
-            st.session_state["_fo_stocks_cache"] = fetch_fo_stocks()
-        except Exception:
-            st.session_state["_fo_stocks_cache"] = set()
-
-    # Ensure URL session token is always fresh
-    _rc = st.session_state.get("_run_count", 0) + 1
-    st.session_state["_run_count"] = _rc
-    if _rc == 1 or _rc % 10 == 0:
-        _save_session()
 
     page = render_sidebar()
     render_market_header()
