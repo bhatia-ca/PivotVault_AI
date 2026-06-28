@@ -1421,7 +1421,7 @@ def is_us_symbol(sym: str) -> bool:
 
 def get_market_list(market: str) -> list:
     """Return symbol list for selected market toggle.
-    Default is Nifty 100 (best liquid large-caps, fast scan).
+    Default is NSE 500 (broadest liquid universe for scanning).
     Dow 30 / Nasdaq 100 are available as testing toggles (yfinance, no .NS suffix).
     """
     if market == "🇮🇳 Nifty 50":
@@ -1434,8 +1434,14 @@ def get_market_list(market: str) -> list:
         return _NASDAQ100_SYMBOLS
     elif market == "🇮🇳 Nifty 200":
         return fetch_nifty200_list()
+    elif market == "🇮🇳 NSE 500":
+        # Fetch live NSE 500 list; fallback handled inside fetch_nse500_list()
+        _df = fetch_nse500_list()
+        return _df["Symbol"].dropna().tolist()
     else:
-        return _NIFTY100_SYMBOLS   # default everywhere = Nifty 100
+        # default everywhere = NSE 500
+        _df = fetch_nse500_list()
+        return _df["Symbol"].dropna().tolist()
 
 
 @st.cache_data(ttl=3600)
@@ -2631,7 +2637,7 @@ def render_market_header():
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     _scan_mkt = st.session_state.get("scanner_market_global",
-                  st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+                  st.session_state.get("scanner_market", "🇮🇳 NSE 500"))
     _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
@@ -5625,15 +5631,15 @@ def page_scanner_signals(nse500: pd.DataFrame):
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
         # ── Global Market Toggle (persisted across refresh) ───────────────
-        # Default: Nifty 100. Dow 30 / Nasdaq 100 available for US testing.
+        # Default: NSE 500. Nifty 100 also available. Dow 30 / Nasdaq 100 for US testing.
         # Choice is saved to disk so it survives page refresh and mobile switch.
-        _MARKETS     = ["🇮🇳 Nifty 100", 
+        _MARKETS     = ["🇮🇳 NSE 500", "🇮🇳 Nifty 100",
                         "🇺🇸 Dow 30", "🇺🇸 Nasdaq 100"]
         _saved_mkt   = st.session_state.get("scanner_market_global",
-                        st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-        # Migrate legacy values
+                        st.session_state.get("scanner_market", "🇮🇳 NSE 500"))
+        # Migrate legacy values (Nifty 100 stays valid; NSE 500 is new default)
         if _saved_mkt not in _MARKETS:
-            _saved_mkt = "🇮🇳 Nifty 100"
+            _saved_mkt = "🇮🇳 NSE 500"
 
         _market = st.radio(
             "Scan universe",
@@ -5698,7 +5704,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 st.session_state.pop(_TOP5_KEY, None)
 
         if _top5_needs or _TOP5_KEY not in st.session_state:
-            _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
+            _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 NSE 500"))
             with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
                 _top5_result = _get_top5_best_trades(_mkt_list[:80])
             st.session_state[_TOP5_KEY]      = _top5_result
