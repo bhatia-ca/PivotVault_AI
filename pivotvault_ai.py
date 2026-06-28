@@ -1649,48 +1649,23 @@ def is_us_symbol(sym: str) -> bool:
     """True if symbol is a US stock (no .NS suffix needed for yfinance)."""
     return sym.upper() in _US_SET
 
-def get_market_list(market: str) -> list:
+def get_market_list(market: str = "🇮🇳 Nifty 500") -> list:
     """
-    Return symbol list for selected market.
-    Supports: Nifty 50/100/200/500, Midcap 150, Smallcap 250, All NSE,
-              sector indices, My Watchlist, Dow 30, Nasdaq 100.
+    Return symbol list for the scanner.
+    Only Nifty 500 is exposed in the UI — all other keys kept as internal
+    fallbacks for backward compatibility with any existing session_state values.
     """
-    if market == "🇮🇳 Nifty 50":
-        return _NIFTY50_SYMBOLS
-    elif market == "🇮🇳 Nifty 100":
-        return list(dict.fromkeys(_NIFTY100_SYMBOLS))     # deduplicated
-    elif market == "🇺🇸 Dow 30":
-        return _DOW30_SYMBOLS
-    elif market == "🇺🇸 Nasdaq 100":
-        return _NASDAQ100_SYMBOLS
-    elif market == "🇮🇳 Nifty 200":
-        return fetch_nifty200_list()
-    elif market == "🇮🇳 Nifty 500":
-        # Use the NSE500 CSV (already fetched in main) — fall back to Nifty 200
-        try:
-            df = fetch_nse500_list()
-            if not df.empty and "Symbol" in df.columns:
-                return df["Symbol"].dropna().str.strip().tolist()
-        except Exception:
-            pass
-        return fetch_nifty200_list()
-    elif market == "📊 Nifty Midcap 150":
-        return fetch_nifty_midcap150()
-    elif market == "📉 Nifty Smallcap 250":
-        sc = fetch_nifty_smallcap250()
-        return sc if sc else fetch_nifty_midcap150()   # fallback to midcap if SC fails
-    elif market == "🌐 All NSE (~1800)":
-        syms = fetch_all_nse_symbols()
-        # Pre-filter: skip penny stocks (need price data) — return all and let scanner filter
-        return syms if syms else fetch_nifty200_list()
-    elif market == "📌 My Watchlist":
-        wl = st.session_state.get("watchlist", [])
-        return wl if wl else _NIFTY50_SYMBOLS
-    elif market in SECTOR_INDEX_URLS:
-        sec = fetch_sector_stocks(market)
-        return sec if sec else _NIFTY50_SYMBOLS
-    else:
-        return list(dict.fromkeys(_NIFTY100_SYMBOLS))   # default = Nifty 100 (deduplicated)
+    # All paths converge on Nifty 500
+    try:
+        df = fetch_nse500_list()
+        if not df.empty and "Symbol" in df.columns:
+            syms = df["Symbol"].dropna().str.strip().tolist()
+            if len(syms) >= 400:
+                return syms
+    except Exception:
+        pass
+    # Fallback to Nifty 200 list if NSE500 fetch fails
+    return fetch_nifty200_list()
 
 
 @st.cache_data(ttl=3600)
@@ -2885,9 +2860,8 @@ def render_market_header():
     from datetime import timezone
     IST    = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-    _scan_mkt = st.session_state.get("scanner_market_global",
-                  st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-    _mkt_key  = "us" if _scan_mkt in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100") else "india"
+    _scan_mkt = "🇮🇳 Nifty 500"
+    _mkt_key  = "india"
     open_  = is_market_open(_mkt_key)
     _mkt_status_india = get_market_status("india")
     _mkt_status_us    = get_market_status("us")
@@ -6135,64 +6109,21 @@ def page_scanner_signals(nse500: pd.DataFrame):
     import json
     tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
-        # ── Global Market Toggle (persisted across refresh) ───────────────
-        # Expanded to include Midcap 150, Smallcap 250, sectors, watchlist, All NSE
-        _MARKETS     = [
-            "🇮🇳 Nifty 50",
-            "🇮🇳 Nifty 100",
-            "🇮🇳 Nifty 200",
-            "🇮🇳 Nifty 500",
-            "📊 Nifty Midcap 150",
-            "📉 Nifty Smallcap 250",
-            "🌐 All NSE (~1800)",
-            "📌 My Watchlist",
-            "🏦 Nifty Bank",
-            "💊 Nifty Pharma",
-            "🖥 Nifty IT",
-            "🚗 Nifty Auto",
-            "🏗 Nifty Realty",
-            "⚙️ Nifty Metal",
-            "🛍 Nifty FMCG",
-            "⚡ Nifty Energy",
-            "🇺🇸 Dow 30",
-            "🇺🇸 Nasdaq 100",
-        ]
-        _saved_mkt   = st.session_state.get("scanner_market_global",
-                        st.session_state.get("scanner_market", "🇮🇳 Nifty 100"))
-        # Migrate legacy values
-        if _saved_mkt not in _MARKETS:
-            _saved_mkt = "🇮🇳 Nifty 100"
-
-        _market = st.selectbox(
-            "Scan universe",
-            _MARKETS,
-            index=_MARKETS.index(_saved_mkt),
-            key="mkt_radio_global",
-            label_visibility="collapsed",
-        )
-        # Persist selection immediately so refresh / mobile keeps it
-        if _market != _saved_mkt:
-            st.session_state["scanner_market"]        = _market
-            st.session_state["scanner_market_global"] = _market
-            _save_credentials()   # write to disk right now
-            st.rerun()
-
-        _is_us = _market in ("🇺🇸 Dow 30", "🇺🇸 Nasdaq 100")
-        # US markets only live during US hours (9:30 AM–4:00 PM EST/EDT)
-        if _is_us and not is_market_open("us"):
-            st.warning("🇺🇸 US markets closed — Dow/Nasdaq scanning available 9:30 PM–4:00 AM IST")
-            return
-        _feed  = "yfinance (US, no token needed)" if _is_us else "yfinance / Upstox fallback"
+        # ── Market is fixed to Nifty 500 ─────────────────────────────────
+        _MARKETS  = ["🇮🇳 Nifty 500"]
+        _market   = "🇮🇳 Nifty 500"
+        st.session_state["scanner_market"]        = _market
+        st.session_state["scanner_market_global"] = _market
+        _is_us = False   # Nifty 500 is always INR / NSE
+        _feed = "yfinance / Upstox fallback"
         _sym_count = len(get_market_list(_market))
         _fo_tag = " · F&O Only" if st.session_state.get("scanner_fo_only") else ""
         st.markdown(
             f"<div style='background:#f0f4e8;border-left:3px solid #4e6130;"
             f"border-radius:6px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;"
             f"font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;'>"
-            f"📊 Scanning <b>{_market}</b> &nbsp;·&nbsp; ~{_sym_count} symbols{_fo_tag} &nbsp;·&nbsp; "
-            f"{'<b>$USD</b> · ' if _is_us else '<b>₹INR</b> · '}"
-            f"{_feed} &nbsp;·&nbsp; "
-            f"{'⚠️ US market — yfinance only, no Upstox needed' if _is_us else '✅ Data always live via yfinance'}"
+            f"📊 <b>Nifty 500</b> &nbsp;·&nbsp; ~{_sym_count} symbols{_fo_tag} &nbsp;·&nbsp; "
+            f"<b>₹INR</b> · {_feed} &nbsp;·&nbsp; ✅ Data always live via yfinance"
             f"</div>", unsafe_allow_html=True)
         st.divider()
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
