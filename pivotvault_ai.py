@@ -37,6 +37,138 @@ def _tg_trade_msg(pos: dict, event_type: str = "ENTRY") -> str:
             f"🏁 Exit  : ₹{pos.get('exit_px',0):,.2f}\n{pe} P&L   : ₹{pnl:,.2f}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n<i>PivotVault AI · Forward Testing</i>")
 
+
+def _tg_signal_msg(r, tf_tag: str, source: str = "Scanner") -> str:
+    """
+    Build a rich Telegram message for a single CPR signal.
+    Accepts both DataFrame rows (Title-case keys) and Top5 dicts (lowercase keys).
+    """
+    # Key aliases: scan DataFrames use Title case, Top5 dicts use lowercase
+    _ALIASES = {
+        "Pattern":   ["Pattern",   "side"],
+        "Symbol":    ["Symbol",    "symbol"],
+        "Entry":     ["Entry",     "entry",  "ltp"],
+        "T1":        ["T1",        "t1"],
+        "T2":        ["T2",        "t2"],
+        "SL":        ["SL",        "sl"],
+        "RR1":       ["RR1",       "rr1"],
+        "Strength%": ["Strength%", "strength"],
+        "Candle":    ["Candle",    "candle"],
+        "RSI":       ["RSI",       "rsi"],
+        "HMA":       ["HMA",       "hma"],
+        "Vol Surge": ["Vol Surge", "vol"],
+        "CPR Width%":["CPR Width%","cpr_w",  "cprw"],
+        "Day Type":  ["Day Type",  "day_type"],
+        "Rationale": ["Rationale", "rationale"],
+    }
+    def _g(key, default=0):
+        for k in _ALIASES.get(key, [key]):
+            try:
+                v = r[k] if hasattr(r, "__getitem__") else getattr(r, k, None)
+                if v is not None:
+                    return v
+            except Exception:
+                pass
+        return default
+
+    # Determine side — Top5 dicts have "BUY"/"SELL" in "side"; DataFrames have "Bullish"/"Bearish" in "Pattern"
+    _raw_side = None
+    try:
+        _raw_side = r.get("side") if hasattr(r, "get") else None
+    except Exception:
+        pass
+    pattern = str(_g("Pattern", ""))
+    if _raw_side in ("BUY", "SELL"):
+        side = _raw_side
+    elif pattern == "Bullish":
+        side = "BUY"
+    else:
+        side = "SELL"
+
+    emoji    = "🟢" if side == "BUY" else "🔴"
+    sym      = str(_g("Symbol",    ""))
+    entry    = float(_g("Entry",   0))
+    t1       = float(_g("T1",      0))
+    t2       = float(_g("T2",      0))
+    sl       = float(_g("SL",      0))
+    rr1      = float(_g("RR1",     0))
+    strength = float(_g("Strength%", 0))
+    candle   = str(_g("Candle",   "—"))
+    rsi      = float(_g("RSI",     0))
+    hma      = str(_g("HMA",      "—"))
+    vol      = str(_g("Vol Surge", "—"))
+    cpr_w    = float(_g("CPR Width%", 0))
+    day_type = str(_g("Day Type", "—"))
+    rationale= str(_g("Rationale", ""))
+
+    tf_map = {
+        "15m": "⚡ 15 Min", "30m": "⏱️ 30 Min", "1h": "🕐 1 Hour",
+        "1d":  "📅 Daily",  "1wk": "📆 Weekly",  "1mo": "🗓️ Monthly",
+    }
+    tf_label = tf_map.get(tf_tag, tf_tag.upper())
+    sl_pct   = abs(entry - sl) / entry * 100 if entry > 0 else 0
+    rr_emoji = "🏆" if rr1 >= 3 else ("✅" if rr1 >= 2 else "⚠️")
+
+    msg_lines = [
+        f"{emoji} <b>{side} SIGNAL — {sym}</b>  [{tf_label}]  📡 {source}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"💰 Entry   : ₹{entry:,.2f}",
+        f"🎯 T1      : ₹{t1:,.2f}",
+        f"🎯 T2      : ₹{t2:,.2f}",
+        f"🛑 SL      : ₹{sl:,.2f}  ({sl_pct:.2f}%)",
+        f"{rr_emoji} R:R     : {rr1:.1f}x",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📊 Strength: {strength:.0f}%",
+        f"🕯️ Candle  : {candle}",
+        f"📈 RSI     : {rsi:.1f}   HMA: {hma}",
+        f"📦 Volume  : {vol}",
+        f"📐 CPR W   : {cpr_w:.2f}%   Day: {day_type}",
+    ]
+    if rationale:
+        msg_lines.append(f"💡 {rationale[:80]}")
+    msg_lines.append("━━━━━━━━━━━━━━━━━━━━")
+    msg_lines.append("<i>PivotVault AI · CPR Scanner</i>")
+    return "\n".join(msg_lines)
+
+
+def _tg_send_scan_signals(result, tf_tag: str, source: str = "Scanner"):
+    """
+    Send a Telegram notification for EVERY non-neutral signal in a scan result.
+    Called after every manual or auto scan regardless of timeframe.
+    Respects the notify_signals setting in Telegram config.
+    """
+    if not st.session_state.get("telegram_cfg", {}).get("notify_signals", True):
+        return
+    if result is None or (hasattr(result, "empty") and result.empty):
+        return
+    try:
+        directional = result[result["Pattern"] != "Neutral"] if "Pattern" in result.columns else result
+        if directional.empty:
+            return
+        total = len(directional)
+        bull  = (directional["Pattern"] == "Bullish").sum() if "Pattern" in directional.columns else 0
+        bear  = total - bull
+        tf_map = {
+            "15m": "⚡ 15 Min", "30m": "⏱️ 30 Min", "1h": "🕐 1 Hour",
+            "1d": "📅 Daily",  "1wk": "📆 Weekly",  "1mo": "🗓️ Monthly",
+        }
+        tf_label = tf_map.get(tf_tag, tf_tag.upper())
+        # ── Summary message ────────────────────────────────────────────────
+        summary = (
+            f"📡 <b>CPR SCAN COMPLETE — {tf_label}</b>  [{source}]\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🟢 Bullish: {bull}   🔴 Bearish: {bear}   Total: {total}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Individual signals follow below ↓</i>"
+        )
+        _send_telegram(summary)
+        # ── Per-signal messages ────────────────────────────────────────────
+        for _, row in directional.iterrows():
+            msg = _tg_signal_msg(row, tf_tag, source)
+            _send_telegram(msg)
+    except Exception:
+        pass
+
 import numpy as np
 import secrets
 import re
@@ -4602,34 +4734,65 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
         except Exception:
             return pd.DataFrame()
 
-    def _fetch_yfinance(sym: str) -> pd.DataFrame:
-        """Fetch from yfinance with full error handling."""
+    yf_interval_map = {
+        "15m":"15m","30m":"30m","1h":"60m",
+        "1d":"1d","1wk":"1wk","1mo":"1mo"
+    }
+    yf_iv = yf_interval_map.get(interval, interval)
+
+    def _batch_fetch_yfinance(sym_batch: list) -> dict:
+        """
+        Fetch OHLCV for a batch of symbols in ONE yfinance call.
+        yf.download() fetches an entire chunk in parallel internally -- much
+        faster than one Ticker.history() call per symbol.
+        Returns {symbol: DataFrame} for symbols with enough data.
+        """
+        result = {}
+        if not sym_batch:
+            return result
         try:
-            # Map interval for yfinance (it uses different strings)
-            yf_interval_map = {
-                "15m":"15m","30m":"30m","1h":"60m",
-                "1d":"1d","1wk":"1wk","1mo":"1mo"
+            ticker_map = {
+                (s if is_us_symbol(s) else s + ".NS"): s
+                for s in sym_batch
             }
-            yf_iv = yf_interval_map.get(interval, interval)
-            # US stocks use ticker as-is; Indian stocks need .NS suffix
-            ticker_sym = sym if is_us_symbol(sym) else sym + ".NS"
-            ticker = yf.Ticker(ticker_sym)
-            df = ticker.history(
+            tickers_str = " ".join(ticker_map.keys())
+            raw = yf.download(
+                tickers_str,
                 period=period,
                 interval=yf_iv,
                 auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=True,
                 repair=False,
-                raise_errors=False,
             )
-            return _normalise_df(df)
+            if raw is None or raw.empty:
+                return result
+            if len(sym_batch) == 1:
+                df = _normalise_df(raw.copy())
+                sym = sym_batch[0]
+                if not df.empty and len(df) >= 10:
+                    result[sym] = df
+            else:
+                top_level = raw.columns.get_level_values(0).unique().tolist() if isinstance(raw.columns, pd.MultiIndex) else []
+                for ticker_sym, sym in ticker_map.items():
+                    try:
+                        if ticker_sym in top_level:
+                            df = _normalise_df(raw[ticker_sym].copy())
+                        else:
+                            continue
+                        if not df.empty and len(df) >= 10:
+                            result[sym] = df
+                    except Exception:
+                        pass
         except Exception:
-            return pd.DataFrame()
+            pass
+        return result
 
     def _fetch_upstox(sym: str) -> pd.DataFrame:
-        """Fetch from Upstox historical API — NSE stocks only; skip US symbols."""
-        if is_us_symbol(sym):  # Upstox is NSE-only — US stocks use yfinance
+        """Fetch from Upstox historical API -- NSE stocks only; skip US symbols."""
+        if is_us_symbol(sym):
             return pd.DataFrame()
-        # Use Upstox if token present (connected) OR if creds saved (try anyway)
         if not _upstox_connected() and not _upstox_has_credentials():
             return pd.DataFrame()
         try:
@@ -4643,40 +4806,33 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
         except Exception:
             return pd.DataFrame()
 
-    def _fetch_one(sym):
-        """
-        Dual data feed with intelligent fallback:
-        1. Upstox (whenever credentials/token available — no cloud rate limits)
-        2. yfinance (automatic fallback if Upstox fails or no creds)
-        Whichever gives more data wins.
-        """
-        df     = pd.DataFrame()
-        has_up = _upstox_connected() or _upstox_has_credentials()
+    sym_list = symbols[:max_stocks]
+    sym_data = {}
 
-        # Primary: Upstox (reliable, no NSE rate limits on Streamlit Cloud)
-        if has_up:
-            df = _fetch_upstox(sym)
+    # Step 1: Batch-fetch ALL symbols via yfinance in chunks of 100 tickers.
+    # yf.download() fetches a whole chunk in one HTTP session -- ~10-20x faster
+    # than one Ticker.history() call per symbol.
+    CHUNK = 100
+    for i in range(0, len(sym_list), CHUNK):
+        batch = sym_list[i:i + CHUNK]
+        sym_data.update(_batch_fetch_yfinance(batch))
 
-        # Fallback/supplement: yfinance
-        if df.empty or len(df) < 10:
-            yf_df = _fetch_yfinance(sym)
-            if not yf_df.empty and len(yf_df) > len(df):
-                df = yf_df
+    # Step 2: Fill gaps with Upstox for symbols that yfinance missed.
+    if _upstox_connected() or _upstox_has_credentials():
+        missing = [s for s in sym_list if s not in sym_data]
+        if missing:
+            workers = min(30, len(missing))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_fetch_upstox, s): s for s in missing}
+                for fut in as_completed(futures):
+                    sym = futures[fut]
+                    try:
+                        df = fut.result()
+                        if not df.empty and len(df) >= 10:
+                            sym_data[sym] = df
+                    except Exception:
+                        pass
 
-        if df.empty or len(df) < 10:
-            return sym, pd.DataFrame()
-
-        return sym, df
-
-    sym_list  = symbols[:max_stocks]
-    sym_data  = {}
-    workers   = min(10, len(sym_list))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_fetch_one, s): s for s in sym_list}
-        for fut in as_completed(futures):
-            s, df = fut.result()
-            if not df.empty and len(df) >= 10:   # relax minimum for intraday
-                sym_data[s] = df
 
     for sym in sym_list:
         try:
@@ -5710,6 +5866,29 @@ def page_scanner_signals(nse500: pd.DataFrame):
             st.session_state[_TOP5_KEY]      = _top5_result
             st.session_state[_TOP5_TIME_KEY] = time.time()
             _top5_age = 0
+            # ── Telegram: notify every Top 5 signal ──────────────────────
+            if _top5_result:
+                _tg_cfg = st.session_state.get("telegram_cfg", {})
+                if _tg_cfg.get("notify_signals", True):
+                    _tf_grp = {}
+                    for _ts in _top5_result:
+                        _ttag = _ts.get("_tf_tag", "—")
+                        _tf_grp.setdefault(_ttag, []).append(_ts)
+                    for _ttag, _tsigs in _tf_grp.items():
+                        _tf_map = {"15m":"⚡ 15 Min","30m":"⏱️ 30 Min","1h":"🕐 1 Hour"}
+                        _tf_lbl = _tf_map.get(_ttag, _ttag.upper())
+                        _summary = (
+                            f"🏆 <b>TOP SIGNALS — {_tf_lbl}</b>  [Auto Scan · Top 5]\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🟢 Bullish: {sum(1 for x in _tsigs if x.get('Pattern','')=='Bullish')}   "
+                            f"🔴 Bearish: {sum(1 for x in _tsigs if x.get('Pattern','')=='Bearish')}   "
+                            f"Total: {len(_tsigs)}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"<i>Individual signals follow below ↓</i>"
+                        )
+                        _send_telegram(_summary)
+                        for _ts2 in _tsigs:
+                            _send_telegram(_tg_signal_msg(_ts2, _ttag, "Top 5 Auto Scan"))
 
         _top5_trades = st.session_state.get(_TOP5_KEY, [])
 
@@ -5981,13 +6160,9 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         )
                     else:
                         st.toast(f"✅ {len(result)} setups found · {src_label}", icon="📡")
-                        if tf_tag in ("15m","30m") and st.session_state.get("telegram_cfg",{}).get("notify_signals",True):
-                            _tl=[f"📡 <b>CPR Scanner — {tf_tag.upper()} | {len(result)} setups</b>"]
-                            for _,_r in result.head(3).iterrows():
-                                _se="🟢" if _r.get("Pattern","")=="Bullish" else "🔴"
-                                _tl.append(f"{_se} <b>{_r.get('Symbol','')}</b> · ₹{_r.get('Entry',0):,.2f} → T1 ₹{_r.get('T1',0):,.2f} · SL ₹{_r.get('SL',0):,.2f} · {_r.get('Strength%',0):.0f}%")
-                            _tl.append("<i>PivotVault AI · CPR Scanner</i>")
-                            _send_telegram("\n".join(_tl))
+                        # ── Send Telegram for ALL signals, ALL timeframes ──
+                        _src = "Auto Scan" if not manual_btn else "Manual Scan"
+                        _tg_send_scan_signals(result, tf_tag, source=_src)
                 except Exception as e:
                     st.error(f"Scanner error: {str(e)[:150]}. Check your connection or try a different timeframe.")
                     result = pd.DataFrame()
@@ -6154,11 +6329,10 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
             last_scan = now
 
-            # ── Always sync canonical keys read by Trade Signals tab ──────────────
-            # Trade signals reads cpr_scan_15m / cpr_scan_1h directly
-            if tf_tag in ("15m", "30m", "1h"):
-                st.session_state[f"cpr_scan_{tf_tag}"]      = result
-                st.session_state[f"cpr_scan_time_{tf_tag}"] = now
+            # ── Always sync ALL timeframes to canonical keys for Trade Signals tab ──
+            # Includes manual scans (1d/1wk/1mo) so every scan appears in signals
+            st.session_state[f"cpr_scan_{tf_tag}"]      = result
+            st.session_state[f"cpr_scan_time_{tf_tag}"] = now
 
             # ── Store signals + fire desktop notifications ────────────────────────
             if not result.empty:
@@ -6664,8 +6838,9 @@ def page_scanner_signals(nse500: pd.DataFrame):
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.75rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>AUTO</b> (15m/30m) = Forward Test auto-executes &nbsp;|&nbsp; "
-            "🖐 <b>MANUAL</b> (1h+) = Click Fwd Test or Broker button &nbsp;|&nbsp; "
+            "⚡ All scans (manual + auto, all timeframes) appear here &nbsp;|&nbsp; "
+            "🧪 <b>Fwd Test</b> = paper trade &nbsp;|&nbsp; "
+            "🤖 <b>Auto Trade</b> = instant FT entry + Upstox order &nbsp;|&nbsp; "
             "🕐 Auto window: <b>9:45–14:45 IST</b> · Str≥75% · RR≥2.0</div>",
             unsafe_allow_html=True)
         import json
@@ -6735,13 +6910,15 @@ def page_scanner_signals(nse500: pd.DataFrame):
             st.session_state['cpr_scan_time_30m'] = 0
 
         # ── Pull data from CPR scanner session state ──────────────────────────
-        # Only use 15Min and 1Hour scans as requested
-        # ── Only 30m + 1h in Trade Signals tab ──────────────────────────────
-        # 15m excluded: too noisy, tight SL, not auto-traded
-        # tf_filter_key must match the multiselect options exactly (no " · AUTO" suffix)
+        # ── Pull signals from ALL scans (auto + manual) ────────────────────────
+        # tf_filter_key must match the multiselect options exactly
         TF_LABELS = {
-            "cpr_scan_30m":  ("⏱️ 30 Min · AUTO",  "#ea580c", "30m", "⏱️ 30 Min"),
-            "cpr_scan_1h":   ("🕐 1 Hour · AUTO",   "#1d4ed8", "1h",  "🕐 1 Hour"),
+            "cpr_scan_15m":  ("⚡ 15 Min",  "#7c3aed", "15m",  "⚡ 15 Min"),
+            "cpr_scan_30m":  ("⏱️ 30 Min",  "#ea580c", "30m",  "⏱️ 30 Min"),
+            "cpr_scan_1h":   ("🕐 1 Hour",  "#1d4ed8", "1h",   "🕐 1 Hour"),
+            "cpr_scan_1d":   ("📅 Daily",   "#0f766e", "1d",   "📅 Daily"),
+            "cpr_scan_1wk":  ("📆 Weekly",  "#b45309", "1wk",  "📆 Weekly"),
+            "cpr_scan_1mo":  ("🗓️ Monthly", "#be185d", "1mo",  "🗓️ Monthly"),
         }
 
         all_signals = []
@@ -6795,9 +6972,9 @@ def page_scanner_signals(nse500: pd.DataFrame):
                     No signals yet
                 </div>
                 <div style="font-size:0.82rem;color:#5a6a48;">
-                    Go to <b>📡 CPR Scanner</b> → select <b>15 Min</b> or <b>1 Hour</b>
+                    Go to <b>📡 CPR Scanner</b> → select any timeframe
                     → click <b>🔄 Scan Now</b><br>
-                    Signals will appear here automatically and refresh with every scan.
+                    All signals (manual or auto, any timeframe) appear here automatically.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -6819,10 +6996,16 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # Staleness check
         now_ts   = time.time()
-        stale_15 = (now_ts - st.session_state.get("cpr_scan_time_15m", 0)) > 1800
-        stale_30 = (now_ts - st.session_state.get("cpr_scan_time_30m", 0)) > 3600
-        stale_1h = (now_ts - st.session_state.get("cpr_scan_time_1h",  0)) > 7200
-        any_stale = stale_15 or stale_30 or stale_1h
+        now_ts   = time.time()
+        # Check if any active scan is stale (intraday = 30min, daily+ = 4hr)
+        def _is_stale(tag, intraday_secs):
+            ts = st.session_state.get(f"cpr_scan_time_{tag}", 0)
+            return ts > 0 and (now_ts - ts) > intraday_secs
+        any_stale = any([
+            _is_stale("15m",  1800), _is_stale("30m",  3600),
+            _is_stale("1h",   7200), _is_stale("1d",  14400),
+            _is_stale("1wk", 86400), _is_stale("1mo", 86400),
+        ])
 
         if any_stale:
             st.warning(
@@ -6847,8 +7030,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
         # ── Filters ───────────────────────────────────────────────────────────
         fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
         with fc1:
-            tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
-                                        default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour"],
+            tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour","📅 Daily","📆 Weekly","🗓️ Monthly"],
+                                        default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour","📅 Daily","📆 Weekly","🗓️ Monthly"],
                                         key="sig_tf_filter", label_visibility="collapsed")
         with fc2:
             side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
@@ -6860,7 +7043,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # Apply filters
         filtered = [s for s in all_signals
-                    if s["tf"] in (tf_filter if tf_filter else ["⏱️ 30 Min","🕐 1 Hour"])
+                    if (not tf_filter or s["tf"] in tf_filter)
                     and (side_filter == "All"
                          or (side_filter == "BUY only"  and s["side"] == "BUY")
                          or (side_filter == "SELL only" and s["side"] == "SELL"))
@@ -7157,8 +7340,8 @@ def _trade_buttons(s: dict):
                   "starting": st.session_state.get("ft_start", 100000.0)})
         st.toast(f"📋 {broker_name} trade logged in Forward Test — {sym} {s['side']} {qty}× @ ₹{ltp}", icon="✅")
 
-    # ── 4 columns: Groww | Zerodha | Upstox Live | Fwd Test ─────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    # ── 5 columns: Groww | Zerodha | Upstox | 🧪 Fwd Test | 🤖 Auto Trade ────
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
         if mkt_open:
@@ -7234,7 +7417,64 @@ def _trade_buttons(s: dict):
             st.session_state["current_page"] = "Forward Testing"
             st.rerun()
 
-    # ── Upstox order confirmation panel ──────────────────────────────────
+    with c5:
+        # 🤖 Auto Trade — immediately executes via ft_add_signal (same as scanner auto)
+        _auto_key = f"auto_{sym}_{s['side']}_{s['tf']}"
+        if _auto_ok and mkt_open:
+            if st.button("🤖 Auto Trade", key=_auto_key, use_container_width=True,
+                         help="Instantly add to Forward Testing auto-trader (respects SL & target)"):
+                try:
+                    live = _ft_get_ltp(sym) or s.get("entry", 0)
+                except Exception:
+                    live = s.get("entry", 0)
+                _sig_auto = {
+                    "symbol":    sym,
+                    "side":      s["side"],
+                    "entry":     live or s.get("entry", 0),
+                    "sl":        s.get("sl",  0),
+                    "t1":        s.get("t1",  0),
+                    "t2":        s.get("t2",  0),
+                    "rr1":       s.get("rr1", 2.0),
+                    "tf":        s.get("tf",  "—"),
+                    "strength":  s.get("strength", 0),
+                    "candle":    s.get("candle",   "—"),
+                    "rationale": s.get("rationale","CPR Signal"),
+                    "strategy":  s.get("strategy", s.get("rationale","CPR Signal"))[:50],
+                    "ltp":       live or s.get("ltp", 0),
+                    "cprw":      s.get("cpr_w", 1.0),
+                }
+                ft_add_signal(_sig_auto, source=f"🤖 Manual·AutoTrade · {s.get('tf','—').upper()}")
+                if up_live:
+                    # Also place real Upstox order if connected
+                    try:
+                        _qty = max(1, int(st.session_state.get("ft_balance", 100000) * 0.05 / max(live, 1)))
+                        _ord = upstox_place_order(sym, s["side"], _qty)
+                        if _ord["success"]:
+                            st.toast(f"✅ 🤖 {sym} {s['side']} order placed on Upstox! Order ID: {_ord['order_id']}", icon="🤖")
+                        else:
+                            st.toast(f"🤖 Added to FT. Upstox order failed: {_ord['message'][:60]}", icon="⚠️")
+                    except Exception as _oe:
+                        st.toast(f"🤖 {sym} added to Forward Testing (Upstox: {str(_oe)[:50]})", icon="🤖")
+                else:
+                    st.toast(f"🤖 {sym} {s['side']} auto-added to Forward Testing!", icon="🤖")
+                _send_telegram(_tg_trade_msg({
+                    "symbol": sym, "side": s["side"], "entry": live,
+                    "target": s.get("t1",0), "sl": s.get("sl",0),
+                    "qty": 1, "cost": live, "rr": s.get("rr1",2.0), "pnl": 0,
+                    "tf": s.get("tf","—"),
+                }, "ENTRY"))
+                st.rerun()
+        elif mkt_open and not _auto_ok:
+            st.markdown(
+                f"<div style='{lock_style}' title='Auto trade window: 9:45–14:45 IST'>⏰ Auto Opens 9:45</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div style='{lock_style}' title='{next_open}'>🔒 Auto Trade</div>",
+                unsafe_allow_html=True,
+            )
+
     preview = st.session_state.get("upstox_order_preview")
     if preview and preview.get("symbol") == sym:
         try:    ltp = _ft_get_ltp(sym) or s.get("entry",0)
