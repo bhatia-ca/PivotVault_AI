@@ -379,7 +379,7 @@ def upstox_place_order(symbol: str, side: str, qty: int,
         "validity":          "DAY",
         "price":             price,
         "tag":               "PIVOTVAULT",
-        "instrument_token":  instrument_key,
+        "instrument_key":    instrument_key,
         "order_type":        order_type,
         "transaction_type":  side.upper(),   # "BUY" or "SELL"
         "disclosed_quantity": 0,
@@ -435,7 +435,7 @@ def upstox_place_gtt(symbol: str, side: str, qty: int,
             "type":              "SINGLE",
             "quantity":          qty,
             "product":           product,
-            "instrument_token":  instrument_key,
+            "instrument_key":    instrument_key,
             "transaction_type":  exit_side,
             "rules": [{
                 "strategy":      "EXIT",
@@ -585,8 +585,8 @@ def upstox_get_live_ltp_batch(symbols: list) -> dict:
 
 def _upstox_connected() -> bool:
     """Return True if a valid Upstox access token is in session state."""
-    token = st.session_state.get("upstox_access_token", "")
-    return bool(token and len(token.strip()) > 100 and token.strip().startswith("eyJ"))
+    token = st.session_state.get("upstox_access_token", "").strip()
+    return bool(token and len(token) > 20)   # Upstox tokens are JWTs but length varies
 
 def _upstox_has_credentials() -> bool:
     """True if API key+secret saved (even if token expired)."""
@@ -4807,32 +4807,25 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     sym_list = symbols[:max_stocks]
+    sym_list = symbols[:max_stocks]
     sym_data = {}
 
-    # Step 1: Batch-fetch ALL symbols via yfinance in chunks of 100 tickers.
-    # yf.download() fetches a whole chunk in one HTTP session -- ~10-20x faster
-    # than one Ticker.history() call per symbol.
-    CHUNK = 100
-    for i in range(0, len(sym_list), CHUNK):
-        batch = sym_list[i:i + CHUNK]
-        sym_data.update(_batch_fetch_yfinance(batch))
+    # ── Batch-fetch ALL 500 symbols via yfinance — chunked + parallel ───────────
+    # yf.download() fetches a batch in ONE HTTP session. We split into 3 chunks
+    # and run them in parallel threads so all 500 are done in ~the time of one.
+    CHUNK = 200   # 200 tickers per batch call
+    batches = [sym_list[i:i + CHUNK] for i in range(0, len(sym_list), CHUNK)]
 
-    # Step 2: Fill gaps with Upstox for symbols that yfinance missed.
-    if _upstox_connected() or _upstox_has_credentials():
-        missing = [s for s in sym_list if s not in sym_data]
-        if missing:
-            workers = min(30, len(missing))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(_fetch_upstox, s): s for s in missing}
-                for fut in as_completed(futures):
-                    sym = futures[fut]
-                    try:
-                        df = fut.result()
-                        if not df.empty and len(df) >= 10:
-                            sym_data[sym] = df
-                    except Exception:
-                        pass
+    with ThreadPoolExecutor(max_workers=len(batches)) as _pool:
+        _futs = {_pool.submit(_batch_fetch_yfinance, b): b for b in batches}
+        for _fut in as_completed(_futs):
+            try:
+                sym_data.update(_fut.result())
+            except Exception:
+                pass
 
+    # Upstox historical removed from scan loop (slow per-symbol calls).
+    # Live LTP from Upstox is applied AFTER scoring on final signals only.
 
     for sym in sym_list:
         try:
@@ -5230,7 +5223,22 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     if not rows:
         return pd.DataFrame()
     df_out = pd.DataFrame(rows)
-    return df_out.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).reset_index(drop=True)
+    df_out = df_out.sort_values(["Strength%","CPR Width%"], ascending=[False,True]).reset_index(drop=True)
+
+    # ── Upstox live LTP enrichment on final signals only (NOT all 500 stocks) ──
+    # One batch call for the ~10-50 signal symbols → fast, no slowdown at all.
+    if _upstox_connected() and "Symbol" in df_out.columns:
+        try:
+            sig_syms = df_out["Symbol"].dropna().tolist()
+            ltp_map  = upstox_get_live_ltp_batch(sig_syms)
+            if ltp_map:
+                df_out["Entry"] = df_out.apply(
+                    lambda r: round(ltp_map.get(r["Symbol"], r["Entry"]), 2), axis=1
+                )
+        except Exception:
+            pass
+
+    return df_out
 
 
 def build_scanner_pdf(top_bull: pd.DataFrame, top_bear: pd.DataFrame,
@@ -8137,8 +8145,8 @@ def page_broker_settings():
                 t = uat.strip()
                 if not t:
                     st.warning("Paste your access token first.")
-                elif len(t) < 50 or not t.startswith("eyJ"):
-                    st.error("❌ Invalid token — must start with 'eyJ' and be 500+ chars.")
+                elif len(t) < 20:
+                    st.error("❌ Invalid token — too short. Paste the full access token from Upstox.")
                 else:
                     st.session_state.update({
                         "upstox_access_token":  t,
