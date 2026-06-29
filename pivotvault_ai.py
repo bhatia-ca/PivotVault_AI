@@ -4807,7 +4807,6 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             return pd.DataFrame()
 
     sym_list = symbols[:max_stocks]
-    sym_list = symbols[:max_stocks]
     sym_data = {}
 
     # ── Batch-fetch ALL 500 symbols via yfinance — chunked + parallel ───────────
@@ -4827,11 +4826,23 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     # Upstox historical removed from scan loop (slow per-symbol calls).
     # Live LTP from Upstox is applied AFTER scoring on final signals only.
 
-    for sym in sym_list:
+    # ── Fast WMA (numpy, no rolling apply) ─────────────────────────────────────
+    def _wma_np(arr: np.ndarray, n: int) -> np.ndarray:
+        """Weighted moving average — pure numpy, ~50x faster than rolling apply."""
+        out = np.full(len(arr), np.nan)
+        w   = np.arange(1, n + 1, dtype=float)
+        ws  = w.sum()
+        for i in range(n - 1, len(arr)):
+            out[i] = np.dot(arr[i - n + 1:i + 1], w) / ws
+        return out
+
+    # ── Per-symbol scoring function (runs in parallel) ──────────────────────────
+    def _score_symbol(sym):
+        """Score one symbol. Returns a row-dict or None if filtered/errored."""
         try:
             df = sym_data.get(sym, pd.DataFrame())
             if df.empty or len(df) < 10:
-                continue
+                return None
 
             close  = df["Close"];  high = df["High"]
             low_s  = df["Low"];    vol  = df["Volume"]
@@ -4851,7 +4862,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             elif interval == "1h":  max_width = 2.5   # swing — allow wider
             else:                   max_width = 2.0
             if width > max_width:
-                continue
+                return None
 
             ltp = float(close.iloc[-1])
 
@@ -5070,7 +5081,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             strength = round(max(bull_pts, bear_pts) / max(total, 1) * 100)
 
             if pattern_main == "Neutral":
-                continue
+                return None
 
             # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
@@ -5104,12 +5115,12 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # Normal intraday noise / bid-ask spread triggers these immediately.
             _sl_dist_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
             if _sl_dist_pct < 0.50:
-                continue  # SL too tight — normal noise will hit it, skip signal
+                return None  # SL too tight — normal noise will hit it, skip signal
 
             # ── PVAIv2: MINIMUM RR GATE ─────────────────────────────────────
             # After applying wider ATR-based SL, ensure reward still justifies risk.
             if rr1 < 1.5:
-                continue  # Reward/Risk < 1.5x after wider SL — not worth taking
+                return None  # Reward/Risk < 1.5x after wider SL — not worth taking
 
             cpr_type = "Narrow" if width<0.25 else ("Moderate" if width<0.5 else "Wide")
 
@@ -5218,7 +5229,15 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 "Risk Rs":    round(risk,2),
             })
         except Exception:
-            continue
+            return None
+
+    # ── Parallel scoring across all symbols ─────────────────────────────────────
+    rows = []
+    _score_workers = min(32, len(sym_list))
+    with ThreadPoolExecutor(max_workers=_score_workers) as _sp:
+        for row in _sp.map(_score_symbol, sym_list):
+            if row is not None:
+                rows.append(row)
 
     if not rows:
         return pd.DataFrame()
