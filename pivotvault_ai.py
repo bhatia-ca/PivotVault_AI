@@ -4579,6 +4579,8 @@ def detect_candlestick_pattern(df: pd.DataFrame) -> tuple:
     bear0 = C0 < O0
     bull1 = C1 > O1
     bear1 = C1 < O1
+    bull2 = C2 > O2
+    bear2 = C2 < O2
 
     # ── 1. Bullish Engulfing at CPR ──────────────────────────────────────────
     # Ochoa: When price engulfs prior candle after touching BC — powerful bull signal
@@ -4873,13 +4875,26 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             width = abs(TC - BC) / P * 100 if P else 0
 
             # CPR width limits per timeframe — Ochoa: narrow = trending day
-            # 30M is primary (best quality), 15M tighter, 1H slightly wider
-            if interval == "15m":   max_width = 2.0   # tight for scalp
-            elif interval == "30m": max_width = 1.5   # 30M primary — strictest
-            elif interval == "1h":  max_width = 2.5   # swing — allow wider
-            else:                   max_width = 2.0
+            # 30M is primary (best quality), 15M tighter, 1H slightly wider.
+            # Daily/Weekly/Monthly naturally carry wider CPRs than intraday —
+            # they no longer share the 15m default bucket.
+            if interval == "15m":     max_width = 2.0   # tight for scalp
+            elif interval == "30m":   max_width = 1.5   # 30M primary — strictest
+            elif interval == "1h":    max_width = 2.5   # swing — allow wider
+            elif interval == "1d":    max_width = 3.0   # daily CPR runs wider
+            elif interval in ("1wk","1mo"): max_width = 4.0  # positional — wider still
+            else:                     max_width = 2.0
             if width > max_width:
-                return None
+                # Don't auto-reject wide-CPR bars outright — Extreme Reversal and
+                # Outside Reversal are specifically designed for volatile, wide-CPR
+                # days. If the latest bar is itself an over-extended move (≥1.8×
+                # the recent average range), let it through for full scoring;
+                # otherwise it's just a genuinely choppy/wide day — skip it.
+                _w_bar_avg = float((high - low_s).rolling(10).mean().iloc[-1] or 0)
+                _w_bar_cur = float(high.iloc[-1] - low_s.iloc[-1])
+                _is_extreme_move = _w_bar_avg > 0 and (_w_bar_cur / _w_bar_avg) >= 1.8
+                if not _is_extreme_move:
+                    return None
 
             ltp = float(close.iloc[-1])
 
@@ -4889,8 +4904,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
             # ── HMA-20 ───────────────────────────────────────────────────────
             def wma(s, n):
-                w = np.arange(1, n+1)
-                return s.rolling(n).apply(lambda x: np.dot(x,w)/w.sum(), raw=True)
+                return pd.Series(_wma_np(s.to_numpy(dtype=float), n), index=s.index)
             hma    = wma(2*wma(close,10)-wma(close,20), 4)
             hma_up = bool(hma.iloc[-1]>hma.iloc[-2]) if len(hma.dropna())>=2 else None
 
@@ -4930,10 +4944,19 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # ── Candlestick ──────────────────────────────────────────────────
             candle_name, candle_dir, candle_bonus = detect_candlestick_pattern(df)
 
+            # ── Current-candle direction (needed for Extreme/Outside Reversal) ─
+            O_last = float(df["Open"].iloc[-1])
+            C_last = float(close.iloc[-1])
+            bull0  = C_last > O_last
+            bear0  = C_last < O_last
+
             # ── Virgin CPR check ─────────────────────────────────────────────
-            # CPR is virgin if price never closed inside it in last 10 bars
-            inside_cpr = ((close.iloc[-12:-2] >= BC) & (close.iloc[-12:-2] <= TC)).any()
-            virgin_cpr = not inside_cpr
+            # CPR is virgin if price never TOUCHED it (wick or close) in last 10 bars.
+            # Using High/Low (not just Close) catches wicks that pierced the zone
+            # without closing inside it — a stricter, more accurate virgin test.
+            touched_cpr = ((df["Low"].iloc[-12:-2]  <= TC) &
+                           (df["High"].iloc[-12:-2] >= BC)).any()
+            virgin_cpr  = not touched_cpr
 
             # ── Two-Day CPR Relationship (Frank Ochoa) ───────────────────────
             # Compare today's CPR with yesterday's CPR
@@ -4980,10 +5003,10 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # Bar sweeps beyond prev H/L then reverses back inside
             outside_bull = (bar_mult >= 1.25 and
                             float(low_s.iloc[-1])  < float(low_s.iloc[-2]) and
-                            float(close.iloc[-1])  > float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+                            float(close.iloc[-1])  > float(df["Open"].iloc[-2] if "Open" in df else close.iloc[-2]))
             outside_bear = (bar_mult >= 1.25 and
                             float(high.iloc[-1])   > float(high.iloc[-2]) and
-                            float(close.iloc[-1])  < float(open.iloc[-2] if "Open" in df else close.iloc[-2]))
+                            float(close.iloc[-1])  < float(df["Open"].iloc[-2] if "Open" in df else close.iloc[-2]))
 
             # ── Frank Ochoa Scoring ──────────────────────────────────────────
             bull_pts = bear_pts = 0
@@ -5099,6 +5122,13 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
             if pattern_main == "Neutral":
                 return None
+
+            # ── Conviction margin gate ───────────────────────────────────────
+            # A 1-point win (e.g. 6 vs 5) is a near coin-flip decided by a single
+            # weak factor — Strength% alone doesn't show this since it's a ratio.
+            # Require a real margin between bull/bear scores before calling a side.
+            if abs(bull_pts - bear_pts) < 2:
+                return None  # Too close a call — low conviction, skip
 
             # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
