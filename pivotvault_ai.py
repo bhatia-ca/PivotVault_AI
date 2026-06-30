@@ -4686,10 +4686,38 @@ def compute_rr_levels(ltp: float, pattern_dir: str, tc: float, bc: float,
         "tgt1": tgt1, "tgt2": tgt2, "tgt3": tgt3,
         "rr1": rr1, "rr2": rr2, "trail_sl": trail_sl,
     }
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_yf_batch(tickers_str: str, period: str, interval: str) -> bytes:
+    """
+    Module-level cached yfinance download.
+    Returns the raw DataFrame serialised as parquet bytes so st.cache_data can hash it.
+    Cached for 15 min — repeated scans (auto-refresh, re-runs) reuse this, zero network.
+    """
+    import io
+    try:
+        raw = yf.download(
+            tickers_str,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+            repair=False,
+            timeout=30,
+        )
+        if raw is None or raw.empty:
+            return b""
+        buf = io.BytesIO()
+        raw.to_parquet(buf)
+        return buf.getvalue()
+    except Exception:
+        return b""
 
 
-@st.cache_data(ttl=900)
 
+
+@st.cache_data(ttl=900, show_spinner=False)
 def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                       max_stocks: int = 200) -> pd.DataFrame:
     """
@@ -4741,12 +4769,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     yf_iv = yf_interval_map.get(interval, interval)
 
     def _batch_fetch_yfinance(sym_batch: list) -> dict:
-        """
-        Fetch OHLCV for a batch of symbols in ONE yfinance call.
-        yf.download() fetches an entire chunk in parallel internally -- much
-        faster than one Ticker.history() call per symbol.
-        Returns {symbol: DataFrame} for symbols with enough data.
-        """
+        """Use module-level cached download — zero network on repeat calls."""
+        import io
         result = {}
         if not sym_batch:
             return result
@@ -4755,18 +4779,12 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 (s if is_us_symbol(s) else s + ".NS"): s
                 for s in sym_batch
             }
-            tickers_str = " ".join(ticker_map.keys())
-            raw = yf.download(
-                tickers_str,
-                period=period,
-                interval=yf_iv,
-                auto_adjust=True,
-                progress=False,
-                group_by="ticker",
-                threads=True,
-                repair=False,
-            )
-            if raw is None or raw.empty:
+            tickers_str = " ".join(sorted(ticker_map.keys()))  # sorted = stable cache key
+            raw_bytes = _cached_yf_batch(tickers_str, period, yf_iv)
+            if not raw_bytes:
+                return result
+            raw = pd.read_parquet(io.BytesIO(raw_bytes))
+            if raw.empty:
                 return result
             if len(sym_batch) == 1:
                 df = _normalise_df(raw.copy())
@@ -4774,15 +4792,14 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 if not df.empty and len(df) >= 10:
                     result[sym] = df
             else:
-                top_level = raw.columns.get_level_values(0).unique().tolist() if isinstance(raw.columns, pd.MultiIndex) else []
+                top_level = (raw.columns.get_level_values(0).unique().tolist()
+                             if isinstance(raw.columns, pd.MultiIndex) else [])
                 for ticker_sym, sym in ticker_map.items():
                     try:
                         if ticker_sym in top_level:
                             df = _normalise_df(raw[ticker_sym].copy())
-                        else:
-                            continue
-                        if not df.empty and len(df) >= 10:
-                            result[sym] = df
+                            if not df.empty and len(df) >= 10:
+                                result[sym] = df
                     except Exception:
                         pass
         except Exception:
@@ -5776,6 +5793,18 @@ def _get_top5_best_trades(market_list: list) -> list:
             if "Pattern" not in result.columns: return []
             directional = result[result["Pattern"] != "Neutral"].copy()
             if directional.empty: return []
+            # ── BEST-SETUP QUALITY GATES (same as Trade Signals feed) ──────────
+            directional["_sl_dist_pct"]   = (abs(directional["Entry"] - directional["SL"])
+                                              / directional["Entry"].replace(0, np.nan) * 100)
+            directional["_spot_dist_pct"] = (abs(directional["LTP"] - directional["Entry"])
+                                              / directional["Entry"].replace(0, np.nan) * 100)
+            directional = directional[
+                (directional["RR1"]            >= 2.0) &
+                (directional["Strength%"]      >= 75)  &
+                (directional["_sl_dist_pct"]   >= 0.50) &
+                (directional["_spot_dist_pct"] >= 0.25)
+            ].copy()
+            if directional.empty: return []
             directional["_tf_tag"]     = cfg["tag"]
             directional["_tf_label"]   = cfg["label"]
             directional["_tf_color"]   = cfg["color"]
@@ -6024,12 +6053,12 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         # ── Manual TF scanner continues below ─────────────────────────────
         TF_CONFIG = {
-            "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"10d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
-            "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"20d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
-            "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"60d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
-            "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"120d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
-            "📆 1 Week  — Positional":      {"interval":"1wk","period":"2y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
-            "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"5y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
+            "⚡ 15 Min  — Fast Scalping":   {"interval":"15m","period":"5d", "tag":"15m","refresh":900,   "color":"#7c3aed","bg":"#f5f3ff","label":"Fast Scalping",  "refresh_label":"15 min"},
+            "⏱️ 30 Min  — Momentum":        {"interval":"30m","period":"7d", "tag":"30m","refresh":1800,  "color":"#ea580c","bg":"#fff7ed","label":"Momentum",       "refresh_label":"30 min"},
+            "🕐 1 Hour  — Swing Scalping":  {"interval":"1h", "period":"14d", "tag":"1h", "refresh":3600,  "color":"#1d4ed8","bg":"#eff6ff","label":"Swing Scalping", "refresh_label":"1 hour"},
+            "📅 1 Day   — Swing Trading":   {"interval":"1d", "period":"45d","tag":"1d", "refresh":14400, "color":"#1a6b3c","bg":"#edf7ee","label":"Swing Trading",  "refresh_label":"4 hours"},
+            "📆 1 Week  — Positional":      {"interval":"1wk","period":"1y",  "tag":"1wk","refresh":86400, "color":"#d97706","bg":"#fdf9ec","label":"Positional",     "refresh_label":"24 hours"},
+            "🗓️ 1 Month — Prime Trading":   {"interval":"1mo","period":"2y",  "tag":"1mo","refresh":86400, "color":"#dc2626","bg":"#fdf0ee","label":"Prime Trading",  "refresh_label":"24 hours"},
         }
 
         # ── Header ────────────────────────────────────────────────────────────────
@@ -6958,6 +6987,32 @@ def page_scanner_signals(nse500: pd.DataFrame):
             if not df.empty:
                 scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
                 for _, r in df.iterrows():
+                    # ── BEST-SETUP QUALITY GATES ────────────────────────────
+                    # Only signals passing ALL four rules reach the signals feed:
+                    #  1. R:R >= 2.0   2. Strength >= 75%
+                    #  3. SL distance >= 0.50% from entry
+                    #  4. Spot/LTP vs Entry distance >= 0.25% (entry not already blown through)
+                    _rr1_val   = float(r.get("RR1", 0) or 0)
+                    _str_val   = float(r.get("Strength%", 0) or 0)
+                    _entry_val = float(r.get("Entry", 0) or 0)
+                    _sl_val    = float(r.get("SL", 0) or 0)
+                    _ltp_val   = float(r.get("LTP", 0) or 0)
+
+                    if _entry_val <= 0:
+                        continue
+                    _sl_dist_pct   = abs(_entry_val - _sl_val)  / _entry_val * 100
+                    _spot_dist_pct = abs(_ltp_val   - _entry_val) / _entry_val * 100 if _ltp_val > 0 else 0
+
+                    if _rr1_val < 2.0:
+                        continue                       # Rule 1: R:R >= 2.0
+                    if _str_val < 75:
+                        continue                       # Rule 2: Strength >= 75%
+                    if _sl_dist_pct < 0.50:
+                        continue                       # Rule 3: SL >= 0.50% from entry
+                    if _spot_dist_pct < 0.25:
+                        continue                       # Rule 4: Spot must be >=0.25% from entry
+                                                        #         (price hasn't already run past the trigger)
+
                     _sig = {
                         "tf":       tf_filter_key,   # matches multiselect options exactly
                         "tf_label": label,            # full label with AUTO badge for display
@@ -6983,6 +7038,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         "atr":       r.get("ATR", 0),
                         "stoch":     r.get("Stoch%K", "—"),
                         "rationale": r.get("Rationale",""),
+                        "sl_dist_pct":   round(_sl_dist_pct, 2),
+                        "spot_dist_pct": round(_spot_dist_pct, 2),
                     }
                     _sig["strategy_name"] = _build_strategy_name(_sig)
                     _sig["strategy_id"]   = _strategy_short_id(_sig)
@@ -7064,9 +7121,15 @@ def page_scanner_signals(nse500: pd.DataFrame):
             side_filter = st.radio("Direction", ["All","BUY only","SELL only"],
                                     horizontal=True, key="sig_side_filter", label_visibility="collapsed")
         with fc3:
-            min_str = st.slider("Min Strength%", 0, 100, 60, key="sig_min_str")
+            min_str = st.slider("Min Strength%", 0, 100, 75, key="sig_min_str")
         with fc4:
-            min_rr = st.slider("Min R:R", 0.0, 5.0, 1.0, step=0.1, key="sig_min_rr")
+            min_rr = st.slider("Min R:R", 0.0, 5.0, 2.0, step=0.1, key="sig_min_rr")
+
+        st.caption(
+            "✅ Best-Setup filter active: R:R ≥ 2.0 · Strength ≥ 75% · "
+            "SL ≥ 0.50% from entry · Spot price ≥ 0.25% from entry "
+            "(entry not already run past). Sliders above narrow further."
+        )
 
         # Apply filters
         filtered = [s for s in all_signals
