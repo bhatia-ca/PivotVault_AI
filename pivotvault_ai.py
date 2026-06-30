@@ -5778,10 +5778,11 @@ def _signal_rank_score_global(row, tf_tag: str) -> float:
 
 
 def _get_top5_best_trades(market_list: list) -> list:
+    # Top 5 now scans 30m + 1h only (15m dropped) — cuts parallel scan load by 1/3.
+    # Periods match the optimized values used by the manual scanner.
     TF_SCAN_CONFIGS = [
-        {"interval": "15m", "period": "10d",  "tag": "15m", "label": "\u26a1 15 Min", "color": "#7c3aed"},
-        {"interval": "30m", "period": "20d",  "tag": "30m", "label": "\u23f1\ufe0f 30 Min", "color": "#ea580c"},
-        {"interval": "1h",  "period": "60d",  "tag": "1h",  "label": "\U0001f55010 1 Hour", "color": "#1d4ed8"},
+        {"interval": "30m", "period": "7d",   "tag": "30m", "label": "\u23f1\ufe0f 30 Min", "color": "#ea580c"},
+        {"interval": "1h",  "period": "14d",  "tag": "1h",  "label": "\U0001f55010 1 Hour", "color": "#1d4ed8"},
     ]
     def _scan_one_tf(cfg):
         try:
@@ -5814,10 +5815,10 @@ def _get_top5_best_trades(market_list: list) -> list:
         except Exception:
             return []
     all_signals = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
         try:
-            for future in as_completed(futures, timeout=35):
+            for future in as_completed(futures, timeout=25):
                 try:
                     all_signals.extend(future.result())
                 except Exception:
@@ -5888,13 +5889,13 @@ def page_scanner_signals(nse500: pd.DataFrame):
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:0.72rem;color:#5a6a48;"
             "padding:0.4rem 0.9rem;margin-bottom:0.5rem;background:#f0f4e8;"
             "border-radius:6px;border-left:3px solid #4e6130;'>"
-            "⚡ <b>15 Min &amp; 30 Min &amp; 1 Hour</b> → Auto-scan + Forward Testing &nbsp;|&nbsp; "
+            "⚡ <b>30 Min &amp; 1 Hour</b> → Auto-scan + Forward Testing &nbsp;|&nbsp; "
             "🖐 <b>1d / 1wk / 1mo</b> → Manual execution required &nbsp;|&nbsp; "
             "📡 <b>Data feed:</b> yfinance always active (Upstox enhances speed when token present)</div>",
             unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════
-        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS 15m · 30m · 1H
+        #  🏆 TOP 5 BEST TRADES — AUTO-SCANNED ACROSS 30m · 1H (15m dropped for speed)
         # ═══════════════════════════════════════════════════════════════════
         _TOP5_KEY      = "top5_best_trades"
         _TOP5_TIME_KEY = "top5_best_trades_time"
@@ -5908,7 +5909,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 "<span style='font-size:1.5rem;'>🏆</span> "
                 "<b style='font-size:1rem;color:#1a1f0e;'>Top 5 Best Trades</b> "
                 "<span style='font-size:0.68rem;color:#5a6a48;'>"
-                "Auto-ranked across ⚡15m · ⏱️30m · 🕐1H · Frank Ochoa Score · Refreshes every 15 min"
+                "Auto-ranked across ⏱️30m · 🕐1H · Frank Ochoa Score · Refreshes every 15 min"
                 "</span></div>", unsafe_allow_html=True)
         with _th2:
             if st.button("🔄 Refresh Top 5", key="refresh_top5_btn", use_container_width=True):
@@ -5917,7 +5918,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
 
         if _top5_needs or _TOP5_KEY not in st.session_state:
             _mkt_list = get_market_list(st.session_state.get("scanner_market", "🇮🇳 NSE 500"))
-            with st.spinner("⚡ Scanning 15m · 30m · 1H in parallel for best setups…"):
+            with st.spinner("⚡ Scanning 30m · 1H in parallel for best setups…"):
                 _top5_result = _get_top5_best_trades(_mkt_list)
             st.session_state[_TOP5_KEY]      = _top5_result
             st.session_state[_TOP5_TIME_KEY] = time.time()
@@ -5931,7 +5932,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         _ttag = _ts.get("_tf_tag", "—")
                         _tf_grp.setdefault(_ttag, []).append(_ts)
                     for _ttag, _tsigs in _tf_grp.items():
-                        _tf_map = {"15m":"⚡ 15 Min","30m":"⏱️ 30 Min","1h":"🕐 1 Hour"}
+                        _tf_map = {"30m":"⏱️ 30 Min","1h":"🕐 1 Hour"}
                         _tf_lbl = _tf_map.get(_ttag, _ttag.upper())
                         _summary = (
                             f"🏆 <b>TOP SIGNALS — {_tf_lbl}</b>  [Auto Scan · Top 5]\n"
