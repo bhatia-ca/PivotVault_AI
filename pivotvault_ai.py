@@ -4872,12 +4872,10 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             TC  = (P - BC) + P
             width = abs(TC - BC) / P * 100 if P else 0
 
-            # CPR width limits per timeframe — Ochoa: narrow = trending day
-            # 30M is primary (best quality), 15M tighter, 1H slightly wider
-            if interval == "15m":   max_width = 2.0   # tight for scalp
-            elif interval == "30m": max_width = 1.5   # 30M primary — strictest
-            elif interval == "1h":  max_width = 2.5   # swing — allow wider
-            else:                   max_width = 2.0
+            # CPR width — classify day type; no hard cut here.
+            # Hard filtering by width alone removes 80%+ of NSE 500 on normal days.
+            # Quality is handled by Day Type + strength + R:R gates downstream.
+            max_width = 5.0  # only cut extreme outliers (split/data errors)
             if width > max_width:
                 return None
 
@@ -5019,10 +5017,10 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                 elif cpr_overlap:  day_type = "Sideways"
                 else:              day_type = "Volatile"
 
-            # ── GATE: Skip Sideways day type — low probability for CPR breakouts ──
-            # Frank Ochoa: overlapping CPR = no directional bias, skip breakout trades
-            if day_type == "Sideways":
-                return None
+            # ── Sideways day — penalise but don't hard-cut (daily resample can misclassify) ──
+            # Sideways signals need extra confluence: they require strength >= 85% to survive
+            # the downstream gate, vs 75% for Trending/Moderate days.
+            _sideways_penalty = (day_type == "Sideways")
 
             # ── ATR Bar-Size for Extreme/Outside Reversal ────────────────────
             bar_sizes = (high-low_s).rolling(10).mean()
@@ -5048,8 +5046,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
                             float(close.iloc[-1])<float(open_.iloc[-2]))
 
             # ── Minimum ATR filter (FIX: illiquid/tight stocks) ──────────────
-            if ltp > 0 and (atr/ltp*100) < 0.3:
-                return None   # stock too illiquid / non-moving for CPR method
+            if ltp > 0 and (atr/ltp*100) < 0.1:
+                return None   # truly zero-movement stock — data error
 
             # ══════════════════════════════════════════════════════════════════
             # FRANK OCHOA SCORING — Improved Confluence Model
@@ -5065,8 +5063,9 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             elif below_bc:
                 bear_pts += 3; bear_reasons.append("Price below CPR")
             else:
-                # Price inside CPR — no directional edge, skip
-                return None
+                # Price inside CPR — compression zone; Doji/Inside Bar setups still valid
+                # Give 0 CPR position pts but allow other factors to score
+                pass
 
             # Virgin CPR bonus (2 pts) — highest quality setup
             if virgin_cpr and above_tc:
@@ -5185,6 +5184,11 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
             strength = round(max(bull_pts, bear_pts) / max(total, 1) * 100)
 
+            # Sideways penalty: require higher strength for overlapping CPR days
+            if _sideways_penalty:
+                if strength < 85:
+                    return None   # Sideways day needs 85%+ confluence to proceed
+
             # ── TARGETS & SL — Unified formula (FIX #2 + #3) ────────────────
             # FIX #2: Entry is the GREATER of the theoretical CPR trigger and
             #         current LTP, so the shown price is always executable.
@@ -5242,8 +5246,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             if _sl_dist_pct < 0.50:
                 return None
 
-            # ── GATE 2: R:R must be ≥2.0 (raised from 1.5) ──────────────────
-            if rr1 < 2.0:
+            # ── GATE 2: R:R must be ≥1.5 at scorer; Trade Signals feed gates to ≥2.0 ──
+            if rr1 < 1.5:
                 return None
 
             # ── GATE 3: Minimum ATR check (catches near-zero ATR edge cases) ─
@@ -7115,9 +7119,16 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         continue                       # Rule 2: Strength >= 75%
                     if _sl_dist_pct < 0.50:
                         continue                       # Rule 3: SL >= 0.50% from entry
-                    if _spot_dist_pct < 0.25:
-                        continue                       # Rule 4: Spot must be >=0.25% from entry
-                                                        #         (price hasn't already run past the trigger)
+                    # Rule 4: price must not have already blown past entry by >2%
+                    # (i.e. chasing — entry price is no longer reachable at a good fill)
+                    _side_val = "BUY" if r.get("Pattern","") == "Bullish" else "SELL"
+                    if _ltp_val > 0 and _entry_val > 0:
+                        _blown_past = (
+                            (_side_val == "BUY"  and _ltp_val > _entry_val * 1.02) or
+                            (_side_val == "SELL" and _ltp_val < _entry_val * 0.98)
+                        )
+                        if _blown_past:
+                            continue   # price already ran 2%+ past entry — skip
 
                     # ── RULE 5: MTF Agreement (30m + 1h must agree on direction) ──
                     # If both 30m and 1h scan results exist, the signal direction
@@ -7140,7 +7151,8 @@ def page_scanner_signals(nse500: pd.DataFrame):
                                     _mtf_ok = True    # confirmed agreement — pass
                                     break
                     if not _mtf_ok:
-                        continue   # Rule 5: MTF conflict — skip signal
+                        continue   # Rule 5: HTF actively disagrees — skip signal
+                    # Note: if HTF has no data for this symbol yet, _mtf_ok=True (pass through)
 
                     _sig = {
                         "tf":       tf_filter_key,   # matches multiselect options exactly
