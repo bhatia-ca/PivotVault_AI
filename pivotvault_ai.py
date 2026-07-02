@@ -4413,7 +4413,7 @@ def page_watchlist():
     else:
         st.info("No watchlist stocks have active signals. Run CPR Scanner (15Min/1Hour) to generate signals.")
         if st.button("Go to CPR Scanner", key="wl_go_scanner"):
-            st.session_state["current_page"] = "CPR Scanner"
+            st.session_state["current_page"] = "Scanner & Signals"
             st.rerun()
 
     st.divider()
@@ -4878,12 +4878,12 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # 30M is primary (best quality), 15M tighter, 1H slightly wider.
             # Daily/Weekly/Monthly naturally carry wider CPRs than intraday —
             # they no longer share the 15m default bucket.
-            if interval == "15m":          max_width = 2.5
-            elif interval == "30m":        max_width = 3.0
-            elif interval == "1h":         max_width = 4.0
-            elif interval == "1d":         max_width = 5.0
-            elif interval in ("1wk","1mo"): max_width = 6.0
-            else:                          max_width = 3.0
+            if interval == "15m":     max_width = 2.0   # tight for scalp
+            elif interval == "30m":   max_width = 1.5   # 30M primary — strictest
+            elif interval == "1h":    max_width = 2.5   # swing — allow wider
+            elif interval == "1d":    max_width = 3.0   # daily CPR runs wider
+            elif interval in ("1wk","1mo"): max_width = 4.0  # positional — wider still
+            else:                     max_width = 2.0
             if width > max_width:
                 # Don't auto-reject wide-CPR bars outright — Extreme Reversal and
                 # Outside Reversal are specifically designed for volatile, wide-CPR
@@ -5127,8 +5127,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # A 1-point win (e.g. 6 vs 5) is a near coin-flip decided by a single
             # weak factor — Strength% alone doesn't show this since it's a ratio.
             # Require a real margin between bull/bear scores before calling a side.
-            if abs(bull_pts - bear_pts) < 1:
-                return None  # Perfect tie only
+            if abs(bull_pts - bear_pts) < 2:
+                return None  # Too close a call — low conviction, skip
 
             # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
@@ -5280,7 +5280,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
     # ── Parallel scoring across all symbols ─────────────────────────────────────
     rows = []
-    _score_workers = min(8, len(sym_list))
+    _score_workers = min(32, len(sym_list))
     with ThreadPoolExecutor(max_workers=_score_workers) as _sp:
         for row in _sp.map(_score_symbol, sym_list):
             if row is not None:
@@ -5824,26 +5824,16 @@ def _get_top5_best_trades(market_list: list) -> list:
             if "Pattern" not in result.columns: return []
             directional = result[result["Pattern"] != "Neutral"].copy()
             if directional.empty: return []
-            # ── BEST-SETUP QUALITY GATES (mirrors Trade Signals feed) ───────
-            _ep   = directional["Entry"].replace(0, np.nan)
-            directional["_sl_dist_pct"]   = abs(directional["Entry"] - directional["SL"]) / _ep * 100
-            directional["_spot_dist_pct"] = abs(directional["LTP"]   - directional["Entry"]) / _ep * 100
-            directional["_dist_to_t2"]    = abs(directional["LTP"]   - directional["T2"])
-
-            _bull = directional["Pattern"] == "Bullish"
-            _bear = directional["Pattern"] == "Bearish"
-            # blown-past 1% gate (tightened from 2%)
-            _blown = ((_bull & (directional["LTP"] > directional["Entry"] * 1.01)) |
-                      (_bear & (directional["LTP"] < directional["Entry"] * 0.99)))
-            # spot closer to T2 than to entry → move mostly done
-            _near_t2 = (directional["T2"] > 0) & (directional["_dist_to_t2"] < directional["_spot_dist_pct"] * _ep / 100)
+            # ── BEST-SETUP QUALITY GATES (same as Trade Signals feed) ──────────
+            directional["_sl_dist_pct"]   = (abs(directional["Entry"] - directional["SL"])
+                                              / directional["Entry"].replace(0, np.nan) * 100)
+            directional["_spot_dist_pct"] = (abs(directional["LTP"] - directional["Entry"])
+                                              / directional["Entry"].replace(0, np.nan) * 100)
             directional = directional[
-                (directional["RR1"]            >= 2.0)  &
-                (directional["Strength%"]      >= 75)   &
+                (directional["RR1"]            >= 2.0) &
+                (directional["Strength%"]      >= 75)  &
                 (directional["_sl_dist_pct"]   >= 0.50) &
-                (directional["_spot_dist_pct"] <= 1.0)  &  # spot within 1% of entry
-                (~_blown)                                &  # not already blown past
-                (~_near_t2)                                 # not closer to T2 than entry
+                (directional["_spot_dist_pct"] >= 0.25)
             ].copy()
             if directional.empty: return []
             directional["_tf_tag"]     = cfg["tag"]
@@ -5855,11 +5845,19 @@ def _get_top5_best_trades(market_list: list) -> list:
         except Exception:
             return []
     all_signals = []
-    for cfg in TF_SCAN_CONFIGS:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
         try:
-            all_signals.extend(_scan_one_tf(cfg))
-        except Exception:
-            pass
+            for future in as_completed(futures, timeout=25):
+                try:
+                    all_signals.extend(future.result())
+                except Exception:
+                    pass
+        except TimeoutError:
+            for future in futures:
+                if future.done():
+                    try: all_signals.extend(future.result())
+                    except Exception: pass
     if not all_signals: return []
     all_signals.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
     seen, top5 = set(), []
@@ -5871,12 +5869,9 @@ def _get_top5_best_trades(market_list: list) -> list:
     return top5
 
 def page_scanner_signals(nse500: pd.DataFrame):
-    """CPR Scanner + Trade Signals — tab selected by page."""
+    """CPR Scanner + Trade Signals merged."""
     import json
-    _page_mode = st.session_state.get("_scanner_page_mode", "scanner")
-    _tab_labels = ["📡  CPR Scanner", "🎯  Trade Signals"]
-    _tab_default = 1 if _page_mode == "signals" else 0
-    tab_scan, tab_sig = st.tabs(_tab_labels)
+    tab_scan, tab_sig = st.tabs(["📡  Scanner", "🎯  Trade Signals"])
     with tab_scan:
         # ── Global Market Toggle (persisted across refresh) ───────────────
         # Default: NSE 500. Nifty 100 also available. Dow 30 / Nasdaq 100 for US testing.
@@ -7024,17 +7019,15 @@ def page_scanner_signals(nse500: pd.DataFrame):
                 scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
                 for _, r in df.iterrows():
                     # ── BEST-SETUP QUALITY GATES ────────────────────────────
-                    # Only signals passing ALL rules reach the signals feed:
+                    # Only signals passing ALL four rules reach the signals feed:
                     #  1. R:R >= 2.0   2. Strength >= 75%
-                    #  3. SL >= 0.50% from entry
-                    #  4. Spot must be NEAR entry (within 1%) — not near T2
+                    #  3. SL distance >= 0.50% from entry
+                    #  4. Spot/LTP vs Entry distance >= 0.25% (entry not already blown through)
                     _rr1_val   = float(r.get("RR1", 0) or 0)
                     _str_val   = float(r.get("Strength%", 0) or 0)
                     _entry_val = float(r.get("Entry", 0) or 0)
                     _sl_val    = float(r.get("SL", 0) or 0)
                     _ltp_val   = float(r.get("LTP", 0) or 0)
-                    _t1_val    = float(r.get("T1", 0) or 0)
-                    _t2_val    = float(r.get("T2", 0) or 0)
 
                     if _entry_val <= 0:
                         continue
@@ -7047,30 +7040,9 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         continue                       # Rule 2: Strength >= 75%
                     if _sl_dist_pct < 0.50:
                         continue                       # Rule 3: SL >= 0.50% from entry
-
-                    # ── Rule 4: Spot must be NEAR ENTRY, not near targets ────
-                    _side_val = "BUY" if r.get("Pattern","") == "Bullish" else "SELL"
-                    if _ltp_val > 0 and _entry_val > 0:
-
-                        # 4a: Price must not have already blown 1% past entry
-                        # (tightened from 2% — catches stocks already in the move)
-                        _blown = ((_side_val=="BUY"  and _ltp_val > _entry_val * 1.01) or
-                                  (_side_val=="SELL" and _ltp_val < _entry_val * 0.99))
-                        if _blown:
-                            continue
-
-                        # 4b: Spot must be closer to Entry than to T2
-                        # i.e. the trade has NOT already run most of its range.
-                        # If dist(spot→T2) < dist(spot→entry) the move is mostly done.
-                        if _t2_val > 0:
-                            _dist_to_entry = abs(_ltp_val - _entry_val)
-                            _dist_to_t2    = abs(_ltp_val - _t2_val)
-                            if _dist_to_t2 < _dist_to_entry:
-                                continue   # spot closer to T2 than entry — skip
-
-                        # 4c: Spot must be within 1% of entry (tight proximity gate)
-                        if _spot_dist_pct > 1.0:
-                            continue   # entry too far from current price — not tradeable now
+                    if _spot_dist_pct < 0.25:
+                        continue                       # Rule 4: Spot must be >=0.25% from entry
+                                                        #         (price hasn't already run past the trigger)
 
                     _sig = {
                         "tf":       tf_filter_key,   # matches multiselect options exactly
@@ -7126,7 +7098,7 @@ def page_scanner_signals(nse500: pd.DataFrame):
             c1, c2, c3 = st.columns([1,2,1])
             with c2:
                 if st.button("📡 Go to CPR Scanner → Run Scan", use_container_width=True, key="goto_scanner"):
-                    st.session_state["current_page"] = "CPR Scanner"
+                    st.session_state["current_page"] = "Scanner & Signals"
                     st.rerun()
             return
 
@@ -10021,8 +9993,7 @@ def render_sidebar():
     ALL_PAGES = [
         ("Market Snapshot",     "📊 Market",     True),   # always visible — home
         ("Pivot Boss Analysis", "📈 Pivot Boss",  False),
-        ("CPR Scanner",         "📡 CPR Scanner",  False),
-        ("Trade Signals",       "🎯 Trade Signals",False),
+        ("Scanner & Signals",   "📡 Scanner",     False),
         ("Forward Testing",     "🧪 Fwd Test",    False),
         ("Trade Analysis",      "📊 Analysis",    False),
         ("Order Execution",     "⚡ Orders",      False),
@@ -10495,18 +10466,6 @@ def page_trade_analysis():
 
 
 
-def page_cpr_scanner(nse500: pd.DataFrame):
-    """CPR Scanner standalone page."""
-    st.session_state["_scanner_page_mode"] = "scanner"
-    page_scanner_signals(nse500)
-
-
-def page_trade_signals(nse500: pd.DataFrame):
-    """Trade Signals standalone page."""
-    st.session_state["_scanner_page_mode"] = "signals"
-    page_scanner_signals(nse500)
-
-
 def main():
     # Load persisted session + credentials on every run (survives refresh)
     _load_session()      # loads auth + calls _load_credentials inside
@@ -10548,8 +10507,7 @@ def main():
 
     if   page == "Market Snapshot":      page_market_snapshot(nse500)
     elif page == "Pivot Boss Analysis":  page_pivot_boss(nse500)
-    elif page == "CPR Scanner":          page_cpr_scanner(nse500)
-    elif page == "Trade Signals":        page_trade_signals(nse500)
+    elif page == "Scanner & Signals":    page_scanner_signals(nse500)
     elif page == "Forward Testing":      page_forward_test()
     elif page == "Trade Analysis":       page_trade_analysis()
     elif page == "Order Execution":      page_order_execution()
