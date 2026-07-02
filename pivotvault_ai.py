@@ -7052,12 +7052,10 @@ def page_signals_feed(nse500: pd.DataFrame):
             scan_times[label] = datetime.fromtimestamp(ts).strftime("%d %b %H:%M") if ts else "—"
             for _, r in df.iterrows():
                 # ── BEST-SETUP QUALITY GATES ────────────────────────────
-                # Only signals passing ALL four rules reach the signals feed:
-                #  1. R:R >= 2.0   2. Strength >= 75%
-                #  3. SL distance >= 0.50% from entry
-                #  4. Spot vs Entry distance <= 0.50% (price must still be
-                #     AT the trigger — anything further away is a stale/
-                #     already-run setup and gets dropped, not kept)
+                # Only signals passing rules 1-3 reach the feed. Rule 4 (spot
+                # distance) is NOT a hard drop here — it's computed and applied
+                # via the adjustable "Max Spot Distance %" slider below, so a
+                # tight default can't silently zero out every timeframe.
                 _rr1_val   = float(r.get("RR1", 0) or 0)
                 _str_val   = float(r.get("Strength%", 0) or 0)
                 _entry_val = float(r.get("Entry", 0) or 0)
@@ -7076,9 +7074,6 @@ def page_signals_feed(nse500: pd.DataFrame):
                     continue                       # Rule 2: Strength >= 75%
                 if _sl_dist_pct < 0.50:
                     continue                       # Rule 3: SL >= 0.50% from entry
-                if _spot_dist_pct > 0.50:
-                    continue                       # Rule 4: Spot must stay within 0.50% of entry
-                                                    #         (otherwise the entry level is stale/vague)
 
                 _sig = {
                     "tf":       tf_filter_key,   # matches multiselect options exactly
@@ -7180,7 +7175,7 @@ def page_signals_feed(nse500: pd.DataFrame):
     )
 
     # ── Filters ───────────────────────────────────────────────────────────
-    fc1, fc2, fc3, fc4 = st.columns([2, 2, 1.5, 1.5])
+    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 1.3, 1.3, 1.4])
     with fc1:
         tf_filter = st.multiselect("Timeframe", ["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour","📅 Daily","📆 Weekly","🗓️ Monthly"],
                                     default=["⚡ 15 Min","⏱️ 30 Min","🕐 1 Hour","📅 Daily","📆 Weekly","🗓️ Monthly"],
@@ -7192,12 +7187,14 @@ def page_signals_feed(nse500: pd.DataFrame):
         min_str = st.slider("Min Strength%", 0, 100, 75, key="sig_min_str")
     with fc4:
         min_rr = st.slider("Min R:R", 0.0, 5.0, 2.0, step=0.1, key="sig_min_rr")
+    with fc5:
+        max_spot_dist = st.slider("Max Spot Dist %", 0.1, 5.0, 0.5, step=0.1, key="sig_max_spot_dist")
 
     st.caption(
         "✅ Best-Setup filter active: R:R ≥ 2.0 · Strength ≥ 75% · "
-        "SL ≥ 0.50% from entry · Spot price within 0.50% of entry "
+        f"SL ≥ 0.50% from entry · Spot price within **{max_spot_dist:.1f}%** of entry "
         "(so the trigger is still actionable, not already run past). "
-        "Sliders above narrow further."
+        "Sliders above narrow further — widen Max Spot Dist if you're seeing zero signals."
     )
 
     # Apply filters
@@ -7207,13 +7204,15 @@ def page_signals_feed(nse500: pd.DataFrame):
                      or (side_filter == "BUY only"  and s["side"] == "BUY")
                      or (side_filter == "SELL only" and s["side"] == "SELL"))
                 and s["strength"] >= min_str
-                and s["rr1"] >= min_rr]
+                and s["rr1"] >= min_rr
+                and s["spot_dist_pct"] <= max_spot_dist]
 
     # Sort: strength desc, then CPR width asc
     filtered.sort(key=lambda x: (-x["strength"], x["cpr_w"]))
 
     if not filtered:
-        st.info(f"No signals match current filters. Try reducing Min Strength or Min R:R.")
+        st.info(f"No signals match current filters. Try widening **Max Spot Dist %** "
+                f"or reducing Min Strength / Min R:R.")
         return
 
     bull_sigs = [s for s in filtered if s["side"] == "BUY"]
