@@ -4834,7 +4834,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
     CHUNK = 200   # 200 tickers per batch call
     batches = [sym_list[i:i + CHUNK] for i in range(0, len(sym_list), CHUNK)]
 
-    with ThreadPoolExecutor(max_workers=len(batches)) as _pool:
+    with ThreadPoolExecutor(max_workers=min(3,len(batches))) as _pool:
         _futs = {_pool.submit(_batch_fetch_yfinance, b): b for b in batches}
         for _fut in as_completed(_futs):
             try:
@@ -4878,12 +4878,12 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # 30M is primary (best quality), 15M tighter, 1H slightly wider.
             # Daily/Weekly/Monthly naturally carry wider CPRs than intraday —
             # they no longer share the 15m default bucket.
-            if interval == "15m":     max_width = 2.0   # tight for scalp
-            elif interval == "30m":   max_width = 1.5   # 30M primary — strictest
-            elif interval == "1h":    max_width = 2.5   # swing — allow wider
-            elif interval == "1d":    max_width = 3.0   # daily CPR runs wider
-            elif interval in ("1wk","1mo"): max_width = 4.0  # positional — wider still
-            else:                     max_width = 2.0
+            if interval == "15m":          max_width = 2.5
+            elif interval == "30m":        max_width = 3.0   # widened: NSE 500 mid-caps average 2-3%
+            elif interval == "1h":         max_width = 4.0
+            elif interval == "1d":         max_width = 5.0
+            elif interval in ("1wk","1mo"): max_width = 6.0
+            else:                          max_width = 3.0
             if width > max_width:
                 # Don't auto-reject wide-CPR bars outright — Extreme Reversal and
                 # Outside Reversal are specifically designed for volatile, wide-CPR
@@ -5127,8 +5127,8 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
             # A 1-point win (e.g. 6 vs 5) is a near coin-flip decided by a single
             # weak factor — Strength% alone doesn't show this since it's a ratio.
             # Require a real margin between bull/bear scores before calling a side.
-            if abs(bull_pts - bear_pts) < 2:
-                return None  # Too close a call — low conviction, skip
+            if abs(bull_pts - bear_pts) < 1:
+                return None  # Perfect tie — no directional edge
 
             # ── Targets & SL ─────────────────────────────────────────────────
             trade_dir = "bull" if pattern_main == "Bullish" else "bear"
@@ -5280,7 +5280,7 @@ def scan_cpr_multi_tf(symbols: list, interval: str, period: str,
 
     # ── Parallel scoring across all symbols ─────────────────────────────────────
     rows = []
-    _score_workers = min(32, len(sym_list))
+    _score_workers = min(8, len(sym_list))  # capped for Streamlit Cloud thread limit
     with ThreadPoolExecutor(max_workers=_score_workers) as _sp:
         for row in _sp.map(_score_symbol, sym_list):
             if row is not None:
@@ -5845,19 +5845,12 @@ def _get_top5_best_trades(market_list: list) -> list:
         except Exception:
             return []
     all_signals = []
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {executor.submit(_scan_one_tf, cfg): cfg for cfg in TF_SCAN_CONFIGS}
+    # Sequential — avoids nested thread explosion crashing Streamlit Cloud
+    for cfg in TF_SCAN_CONFIGS:
         try:
-            for future in as_completed(futures, timeout=25):
-                try:
-                    all_signals.extend(future.result())
-                except Exception:
-                    pass
-        except TimeoutError:
-            for future in futures:
-                if future.done():
-                    try: all_signals.extend(future.result())
-                    except Exception: pass
+            all_signals.extend(_scan_one_tf(cfg))
+        except Exception:
+            pass
     if not all_signals: return []
     all_signals.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
     seen, top5 = set(), []
@@ -7040,9 +7033,13 @@ def page_scanner_signals(nse500: pd.DataFrame):
                         continue                       # Rule 2: Strength >= 75%
                     if _sl_dist_pct < 0.50:
                         continue                       # Rule 3: SL >= 0.50% from entry
-                    if _spot_dist_pct < 0.25:
-                        continue                       # Rule 4: Spot must be >=0.25% from entry
-                                                        #         (price hasn't already run past the trigger)
+                    # Rule 4: reject only if price already ran 2%+ past entry (chasing)
+                    _side_val = "BUY" if r.get("Pattern","") == "Bullish" else "SELL"
+                    if _ltp_val > 0 and _entry_val > 0:
+                        _blown = ((_side_val=="BUY" and _ltp_val>_entry_val*1.02) or
+                                  (_side_val=="SELL" and _ltp_val<_entry_val*0.98))
+                        if _blown:
+                            continue
 
                     _sig = {
                         "tf":       tf_filter_key,   # matches multiselect options exactly
